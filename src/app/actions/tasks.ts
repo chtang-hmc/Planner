@@ -66,6 +66,48 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   revalidatePath('/tasks')
 }
 
+// ── Quick triage (no reflection) — used in weekly review ────────────────────
+export type TriageAction = 'done' | 'someday' | 'cancel' | 'activate'
+
+export async function triageTask(taskId: string, action: TriageAction) {
+  const db = createServiceClient()
+  let patch: Record<string, unknown>
+  switch (action) {
+    case 'done':
+      patch = { status: 'done', completed_at: new Date().toISOString() }
+      break
+    case 'someday':
+      patch = { type: 'someday', status: 'inbox' }
+      break
+    case 'cancel':
+      patch = { status: 'cancelled' }
+      break
+    case 'activate':
+      patch = { type: 'task', status: 'active' }
+      break
+  }
+  const { error } = await db.from('tasks').update(patch).eq('id', taskId)
+  if (error) throw new Error(error.message)
+  revalidatePath('/tasks')
+  revalidatePath('/review')
+}
+
+// ── Save weekly review record ────────────────────────────────────────────────
+export async function saveWeeklyReview(data: {
+  week_start: string
+  completed_count: number
+  postponed_count: number
+  notes: string | null
+}) {
+  const db = createServiceClient()
+  const { error } = await db.from('weekly_reviews').insert({
+    ...data,
+    completed_at: new Date().toISOString(),
+  })
+  if (error) throw new Error(error.message)
+  revalidatePath('/review')
+}
+
 // ── Create a new task ────────────────────────────────────────────────────────
 export async function createTask(data: {
   title: string
