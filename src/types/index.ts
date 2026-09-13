@@ -17,7 +17,7 @@ export interface Project {
 
 export interface Task {
   id: string
-  project_id: string
+  project_id: string | null      // null = unassigned / inbox
   parent_id: string | null       // set on subtasks
   title: string
   description: string | null
@@ -125,6 +125,16 @@ export function computeUrgency(task: Pick<Task, 'priority' | 'urgency_curve' | '
   }
 
   return Math.min(priorityPts + pressure, 100)
+}
+
+// ── Inbox / unassigned sentinel ─────────────────────────────────────────────
+// Used wherever a Task has no project_id — renders as "Inbox" in the UI
+export const INBOX_PROJECT: Project = {
+  id: '',
+  name: 'Inbox',
+  color: '#94a3b8',   // slate-400
+  archived: false,
+  created_at: '',
 }
 
 // ── Quick-add parsed result (from Claude API) ───────────────────────────────

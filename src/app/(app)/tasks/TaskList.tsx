@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { Task, Project, EnergyLevel } from '@/types'
+import { Task, Project, EnergyLevel, INBOX_PROJECT } from '@/types'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
+import AddTaskModal from '@/components/AddTaskModal'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 const CURVE_ICON = { linear: '╱', exponential: '⌒', step: '⌐' }
@@ -47,6 +48,9 @@ export default function TaskList({ tasks, projects }: Props) {
   // Task detail
   const [detailTask, setDetailTask] = useState<(Task & { project: Project }) | null>(null)
 
+  // Add task modal
+  const [showAddTask, setShowAddTask] = useState(false)
+
   const filtered = tasks.filter(t => {
     if (doneIds.has(t.id)) return false
     if (!showSomeday && t.type === 'someday') return false
@@ -78,7 +82,10 @@ export default function TaskList({ tasks, projects }: Props) {
               <span className="text-slate-400 tabular-nums">
                 {filtered.length} tasks · {formatMinutes(totalMinutes)}
               </span>
-              <button className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity text-xs">
+              <button
+                onClick={() => setShowAddTask(true)}
+                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity text-xs"
+              >
                 + Add task
               </button>
             </div>
@@ -134,7 +141,7 @@ export default function TaskList({ tasks, projects }: Props) {
               return (
                 <div
                   key={task.id}
-                  onClick={() => setDetailTask(task)}
+                  onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                   className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
                 >
                   {/* Done button */}
@@ -156,12 +163,17 @@ export default function TaskList({ tasks, projects }: Props) {
                       )}
                     </div>
                     <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
-                      <span
-                        className="text-xs font-medium px-1.5 py-0.5 rounded"
-                        style={{ background: task.project.color + '18', color: task.project.color }}
-                      >
-                        {task.project.name}
-                      </span>
+                      {(() => {
+                        const proj = task.project ?? INBOX_PROJECT
+                        return (
+                          <span
+                            className="text-xs font-medium px-1.5 py-0.5 rounded"
+                            style={{ background: proj.color + '18', color: proj.color }}
+                          >
+                            {proj.name}
+                          </span>
+                        )
+                      })()}
                       <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
                       {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
                       {due.label && (
@@ -209,6 +221,15 @@ export default function TaskList({ tasks, projects }: Props) {
           task={detailTask}
           projects={projects}
           onClose={() => setDetailTask(null)}
+        />
+      )}
+
+      {/* Add task modal */}
+      {showAddTask && (
+        <AddTaskModal
+          projects={projects}
+          onClose={() => setShowAddTask(false)}
+          onCreated={() => setShowAddTask(false)}
         />
       )}
     </>

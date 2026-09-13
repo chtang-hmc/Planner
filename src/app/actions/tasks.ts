@@ -69,7 +69,7 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
 // ── Create a new task ────────────────────────────────────────────────────────
 export async function createTask(data: {
   title: string
-  project_id: string
+  project_id?: string | null
   priority: number
   energy_required: string
   estimated_minutes: number | null
@@ -79,10 +79,17 @@ export async function createTask(data: {
   const db = createServiceClient()
   const { data: task, error } = await db
     .from('tasks')
-    .insert({ ...data, type: 'task', status: 'inbox', urgency_score: data.priority * 10 })
+    .insert({
+      ...data,
+      project_id: data.project_id || null,
+      type: 'task',
+      status: 'inbox',
+      urgency_score: data.priority * 10,
+    })
     .select()
     .single()
   if (error) throw new Error(error.message)
   revalidatePath('/tasks')
+  revalidatePath('/projects')
   return task
 }
