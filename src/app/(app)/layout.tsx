@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
+import TimerShell from '@/components/TimerShell'
 import { Project } from '@/types'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -11,11 +12,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .order('name')
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
-      <Sidebar projects={(projects ?? []) as Project[]} />
-      <main className="flex-1 overflow-y-auto">
-        {children}
-      </main>
-    </div>
+    <TimerShell>
+      <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+        <Sidebar projects={(projects ?? []) as Project[]} />
+        <main className="flex-1 overflow-y-auto">
+          {children}
+        </main>
+      </div>
+    </TimerShell>
   )
 }

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useTransition, useEffect } from 'react'
-import { Task, Project, UrgencyCurve, EnergyLevel } from '@/types'
+import { Task, Project, UrgencyCurve, EnergyLevel, computeUrgency } from '@/types'
 import { updateTask } from '@/app/actions/tasks'
+import { useTimer } from '@/contexts/TimerContext'
 
 const PRIORITY_OPTS = [
   { val: 1, label: 'Low',      color: 'text-slate-400' },
@@ -30,6 +31,9 @@ interface Props {
 }
 
 export default function TaskDetail({ task, projects, onClose }: Props) {
+  const timer = useTimer()
+  const isTimingThis = timer.phase !== 'idle' && timer.task?.id === task.id
+
   const [title, setTitle]         = useState(task.title)
   const [description, setDesc]    = useState(task.description ?? '')
   const [priority, setPriority]   = useState(task.priority)
@@ -39,6 +43,14 @@ export default function TaskDetail({ task, projects, onClose }: Props) {
   const [dueDate, setDueDate]     = useState(task.due_date ? task.due_date.slice(0, 10) : '')
   const [saved, setSaved]         = useState(false)
   const [isPending, startTransition] = useTransition()
+
+  // Live urgency preview — recomputes as user changes fields
+  const liveUrgency = computeUrgency({
+    priority,
+    urgency_curve: curve,
+    due_date:      dueDate ? new Date(dueDate).toISOString() : null,
+    created_at:    task.created_at,
+  })
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -207,17 +219,35 @@ export default function TaskDetail({ task, projects, onClose }: Props) {
             </div>
           </div>
 
-          {/* Urgency score readout */}
+          {/* Focus timer */}
+          {timer.phase === 'idle' ? (
+            <button
+              onClick={() => timer.start({ ...task, project: task.project })}
+              className="w-full py-2.5 rounded-xl border-2 border-teal-500 text-teal-600 dark:text-teal-400 text-sm font-semibold hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors flex items-center justify-center gap-2"
+            >
+              ▶ Start Focus
+            </button>
+          ) : isTimingThis ? (
+            <div className="w-full py-2.5 rounded-xl bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800 text-teal-600 dark:text-teal-400 text-sm font-semibold text-center">
+              ⏱ Timer running — see bottom-right
+            </div>
+          ) : (
+            <div className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 text-sm text-center">
+              Timer busy with another task
+            </div>
+          )}
+
+          {/* Urgency score readout — live preview from local state */}
           <div className="bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Current urgency score</p>
-              <p className="text-xs text-slate-400 mt-0.5">Recomputed nightly from priority + deadline</p>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Urgency score</p>
+              <p className="text-xs text-slate-400 mt-0.5">Updates live as you change priority or deadline</p>
             </div>
             <span className={`text-2xl font-semibold font-mono ${
-              task.urgency_score >= 70 ? 'text-red-500' :
-              task.urgency_score >= 40 ? 'text-amber-500' : 'text-slate-400'
+              liveUrgency >= 70 ? 'text-red-500' :
+              liveUrgency >= 40 ? 'text-amber-500' : 'text-slate-400'
             }`}>
-              {Math.round(task.urgency_score)}
+              {Math.round(liveUrgency)}
             </span>
           </div>
 

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Project } from '@/types'
+import { signOut } from '@/app/actions/auth'
 
 const NAV = [
   { href: '/tasks',     label: 'Tasks',     icon: '✓' },
@@ -60,10 +61,18 @@ export default function Sidebar({ projects }: { projects: Project[] }) {
       </div>
 
       {/* Bottom */}
-      <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+      <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
         <div className="px-2.5 text-xs text-slate-400 dark:text-slate-600">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
         </div>
+        <form action={signOut}>
+          <button
+            type="submit"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
+          >
+            <span className="font-mono">→</span> Sign out
+          </button>
+        </form>
       </div>
     </aside>
   )
