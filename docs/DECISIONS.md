@@ -18,9 +18,10 @@
 10. [Inline Search](#inline-search)
 11. [Drag-to-Reschedule](#drag-to-reschedule)
 12. [Priority-Colored Circles](#priority-colored-circles)
-13. [Color Themes](#color-themes)
-14. [Week Start](#week-start)
-15. [Server / Client Component Split](#server--client-component-split)
+13. [Projects](#projects)
+14. [Color Themes](#color-themes)
+15. [Week Start](#week-start)
+16. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -647,6 +648,24 @@ Having one implementation matters beyond tidiness: if the boundary used when *re
 Everything follows the setting: the Upcoming week strip (and its prev/next nav), the 16-week habit heatmap (columns and row labels), the weekly review period, the analytics energy heatmap, and the working-hours / energy grids in Settings.
 
 The **scheduling horizon stays rolling** 7 days from today. Aligning it to the week start would spend the already-elapsed days of the current week on the past, and the scheduler clamps slots to `now` — less planning, not more. Habit sessions are bounded to the current week via their `due_date` instead (see [Scheduling habits](#scheduling-habits)).
+
+---
+
+## Projects
+
+### Creating and changing from where you are
+
+`ProjectPicker` is a dropdown with inline creation, shared by the add-task modal and the task detail panel. Choosing "+ New project…" swaps the select for a name field and a colour row; creating selects the new project immediately.
+
+Shared rather than written twice: both places need to pick a project *and* make one without losing what you're typing, and two copies of a create-then-select flow is two places for it to drift.
+
+`createProject` returns the inserted row (it previously returned void) so the caller can select it without a refetch. The picker also keeps locally-created projects in state — the list arrives as a server prop and wouldn't include a new one until the page revalidates.
+
+`onChange` hands back the `Project` object alongside the id, so a caller can update its own display at once. The detail panel's header badge reads from `task.project`, a joined snapshot that would otherwise show the old project until the panel was reopened.
+
+The detail panel previously accepted a `projects` prop and never used it: a task's project was fixed at creation with no way to change it afterwards.
+
+Habits don't get a project picker — they're deliberately project-less.
 
 ---
 

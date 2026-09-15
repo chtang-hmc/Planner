@@ -6,6 +6,7 @@ import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, u
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
+import ProjectPicker from '@/components/ProjectPicker'
 import { rruleToLabel } from '@/lib/rrule-utils'
 
 // ── Subtask list ──────────────────────────────────────────────────────────────
@@ -434,7 +435,10 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   // Tasks with no project_id come back from the join as project: null despite
   // the Props type. Resolved here rather than at each call site so any caller
   // can pass a raw row — habits in particular are always project-less.
-  const project = task.project ?? INBOX_PROJECT
+  // Tracked locally so the header badge follows a project change immediately;
+  // task.project is a joined snapshot and wouldn't update until reopened.
+  const [taskProject, setTaskProject] = useState<Project | null>(task.project ?? null)
+  const project = taskProject ?? INBOX_PROJECT
   const isHabit = task.type === 'habit'
 
   // Exclusivity — habits linked here are never scheduled on the same day
@@ -677,6 +681,23 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               </div>
             )}
           </div>
+
+          {/* Project — habits are deliberately project-less */}
+          {!isHabit && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                Project
+              </label>
+              <ProjectPicker
+                projects={projects}
+                value={task.project_id ?? ''}
+                onChange={(id, proj) => {
+                  setTaskProject(proj)
+                  save({ project_id: id || null })
+                }}
+              />
+            </div>
+          )}
 
           {/* Where it happens + tie-up window */}
           <div>

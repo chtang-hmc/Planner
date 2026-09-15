@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useTransition } from 'react'
 import { Project, EnergyLevel } from '@/types'
 import { createTask } from '@/app/actions/tasks'
+import ProjectPicker from '@/components/ProjectPicker'
 import RecurrencePicker from '@/components/RecurrencePicker'
 
 interface ParsedResult {
@@ -45,6 +46,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [dueDate, setDueDate]   = useState('')
 
   const [rrule, setRrule] = useState<string | null>(null)
+
   const [weeklyTarget, setWeeklyTarget] = useState<string>('')
 
   // Pre-fill due date if provided (e.g. from Upcoming view "+ Add task" for a specific day)
@@ -189,14 +191,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Project</label>
-                  <select
-                    value={projectId}
-                    onChange={e => setProject(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
-                  >
-                    <option value="">— No project —</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <ProjectPicker projects={projects} value={projectId} onChange={setProject} />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Priority</label>
