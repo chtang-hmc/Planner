@@ -34,6 +34,8 @@ export interface Task {
   rrule: string | null               // iCal RRULE string for recurring tasks
   weekly_target: number | null       // habits only: how many times per week to aim for
   exclusive_group: string | null     // habits only: habits sharing a group are never scheduled on the same day
+  location: 'home' | 'away' | 'anywhere'   // where it happens; gates what can run during a tether
+  span_minutes: number | null        // total tie-up when longer than the work itself (laundry cycle)
   gcal_event_id: string | null       // GCal event id for scheduled focus block
   scheduled_start: string | null     // ISO timestamp — start of focus block
   scheduled_end: string | null       // ISO timestamp — end of focus block

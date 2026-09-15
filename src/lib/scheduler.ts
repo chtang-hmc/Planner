@@ -112,6 +112,29 @@ export interface SchedulerTask {
    * physical habits so a gym session isn't scheduled straight after lunch.
    */
   avoidAfterBreaks?: boolean
+  /**
+   * Where the task has to happen. Used with `spanMinutes` to keep incompatible
+   * work apart: you can't be at the gym while the washing machine needs you
+   * at home.
+   */
+  location?:         TaskLocation
+  /**
+   * Total time the task ties you up, when that is longer than the work itself.
+   *
+   * Washing sheets is ten minutes of attention across a two-hour cycle: the
+   * scheduled block is `duration_minutes` (the attention), while `spanMinutes`
+   * pins your location for the whole cycle. Other work can be scheduled inside
+   * the span — that's the point — as long as its location is compatible.
+   */
+  spanMinutes?:      number
+}
+
+/** Where a task happens. 'anywhere' is compatible with everything. */
+export type TaskLocation = 'home' | 'away' | 'anywhere'
+
+/** True when two locations can't be occupied at the same time. */
+function locationsClash(a: TaskLocation, b: TaskLocation): boolean {
+  return a !== 'anywhere' && b !== 'anywhere' && a !== b
 }
 
 /** Busy interval as [startMs, endMs] */
@@ -312,7 +335,17 @@ export function runScheduler(
   // spreadGroup → day-midnight ms values already used by that group
   const groupDays = new Map<string, Set<number>>()
 
+  // Windows where a long-running task pins the user somewhere. Unlike a placed
+  // block these do NOT consume the time — other work is welcome inside them,
+  // provided its location is compatible.
+  const tethers:   { start: number; end: number; loc: TaskLocation }[] = []
+  // Every placed block with its location, so a task that would tether cannot
+  // start when work that must happen elsewhere is already booked inside its span.
+  const placedLoc: { start: number; end: number; loc: TaskLocation }[] = []
+
   for (const task of sorted) {
+    const loc          = task.location ?? 'anywhere'
+    const spanMs       = (task.spanMinutes ?? 0) * 60_000
     const totalSegs    = task.atomic ? 1 : Math.ceil(task.duration_minutes / config.maxSessionMinutes)
     const dueMs        = task.due_date ? endOfDayMs(task.due_date, tz) : Infinity
     const blocksBefore = scheduled.length
@@ -355,12 +388,28 @@ export function runScheduler(
         // Day-scoped allBusy
         const dayBusy = allBusy.filter(([s, e]) => s < workEndMs && e > workStartMs)
 
-        const free = subtractIntervals([[workStartMs, workEndMs]], dayBusy)
+        // Tethers that pin the user somewhere incompatible are carved out of the
+        // free time rather than rejected per-slot: a slot beginning inside a
+        // tether should slide to just after it, not disappear. (Rejecting made
+        // a gym session unschedulable for the whole day because the only free
+        // interval happened to start mid-laundry.)
+        const blocking: Interval[] = tethers
+          .filter(t => locationsClash(t.loc, loc) && t.start < workEndMs && t.end > workStartMs)
+          .map(t => [t.start, t.end])
+
+        const free = subtractIntervals([[workStartMs, workEndMs]], [...dayBusy, ...blocking])
 
         for (const [fS, fE] of free) {
           const slotStart = Math.max(fS, nowMs)
           if (slotStart + segMs > fE) continue  // slot too small
           if (slotStart > dueMs) continue        // past deadline
+
+          // If THIS task would pin you, nothing already booked inside its span
+          // may need you somewhere else.
+          if (spanMs > 0 && seg === 0) {
+            const spanEnd = slotStart + spanMs
+            if (placedLoc.some(p => locationsClash(p.loc, loc) && slotStart < p.end && spanEnd > p.start)) continue
+          }
 
           const energy      = slotEnergyLevel(slotStart, energySchedule, tz)
           const energyMatch = ENERGY_RANK[energy] >= ENERGY_RANK[task.energy_required]
@@ -415,6 +464,11 @@ export function runScheduler(
       })
 
       placedBlocks.push([best.start, best.end])
+      placedLoc.push({ start: best.start, end: best.end, loc })
+      // The span runs from the first segment — the cycle starts when you load it.
+      if (spanMs > 0 && seg === 0) {
+        tethers.push({ start: best.start, end: best.start + spanMs, loc })
+      }
     }
 
     // Only "unschedulable" if zero segments of THIS candidate were placed.

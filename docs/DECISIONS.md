@@ -106,6 +106,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
 - `0007_habit_exclusive_group.sql` — `tasks.exclusive_group`; habits sharing a group are never scheduled on the same day
 - `0008_daily_breaks.sql` — `user_daily_breaks` (meal windows + cooldown), seeded with Lunch and Dinner; `tasks.avoid_after_breaks`
+- `0009_task_location_and_span.sql` — `tasks.span_minutes` + `tasks.location`; tethering work (laundry) and where a task happens
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -301,6 +302,25 @@ A break is not a calendar event: it's "an hour, somewhere in here", and the sche
 `tasks.avoid_after_breaks` carries the flag, set per habit from the detail panel.
 
 Degrades on a pre-0008 database: the breaks query resolves to null instead of throwing, so the scheduler runs with no breaks, and the flag reads false through `select('*')`.
+
+### Tethering work: location + span
+
+Some tasks take little effort but hold you in place. Washing sheets is ~10 minutes of attention across a two-hour cycle: you're free to do other things, but not to leave. An exclusive block models this badly — reserving two hours wastes them, reserving ten minutes lets the scheduler send you to the gym mid-cycle.
+
+Two columns (migration `0009`):
+
+- `tasks.span_minutes` — total tie-up, when longer than the work itself. The scheduled block stays `estimated_minutes` (the attention); the span only pins location.
+- `tasks.location` — `home` / `away` / `anywhere` (default). `anywhere` is compatible with everything; `home` and `away` clash.
+
+While a span runs, the scheduler records a **tether**: a window where your location is fixed. Unlike a placed block a tether does *not* consume time — compatible work is welcome inside it, which is the entire point. Incompatible work is not: mark Gym as `away` and it won't be scheduled during laundry.
+
+The check runs both ways. A task that would tether can't start when work needing you elsewhere is already booked inside its span, so ordering doesn't matter: laundry-then-gym and gym-then-laundry both produce a legal day.
+
+**Tethers are subtracted from free time, not rejected per-slot.** The slot search only considers the *start* of each free interval, so testing "does this slot overlap a tether" and skipping made a task unschedulable for the whole day whenever its one free interval happened to begin mid-tether — a gym session vanished rather than sliding to just after the laundry. Carving incompatible tethers out of the free intervals makes the next slot start at the tether's end naturally.
+
+Per the chosen behaviour only the active minutes appear as a block; the tie-up is enforced but not drawn, so the calendar shows "Wash sheets, 10 min" rather than a two-hour bar.
+
+Degrades on a pre-0009 database: task rows load with `select('*')`, so a missing `location` reads as undefined and falls back to `anywhere`, and no span means no tether. Writes go through `setTaskPlacement`, which returns a message rather than throwing.
 
 ### Scheduler: atomic work
 

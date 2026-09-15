@@ -452,6 +452,27 @@ export async function setHabitCompletion(
   return {}
 }
 
+/**
+ * Where a task happens and how long it ties you up.
+ *
+ * Separate from updateTask because these columns arrive in 0009: a failed write
+ * comes back as a message instead of throwing into the UI.
+ */
+export async function setTaskPlacement(
+  taskId: string,
+  patch: { location?: string; span_minutes?: number | null },
+): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const { error } = await db.from('tasks').update(patch).eq('id', taskId)
+  if (error) {
+    console.error('setTaskPlacement:', error.message)
+    return { error: 'Could not save — run migration 0009_task_location_and_span.sql first.' }
+  }
+  revalidatePath('/tasks')
+  revalidatePath('/habits')
+  return {}
+}
+
 // ── Update task fields ───────────────────────────────────────────────────────
 export async function updateTask(taskId: string, data: Record<string, unknown>) {
   const db = createServiceClient()

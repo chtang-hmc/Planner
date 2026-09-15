@@ -222,6 +222,8 @@ async function buildHabitCandidates(
           ? `group:${h.exclusive_group}`
           : `habit:${h.title}`,
         avoidAfterBreaks: !!h.avoid_after_breaks,
+        location:         h.location ?? 'anywhere',
+        spanMinutes:      h.span_minutes ?? undefined,
         // A session is one unbroken block. Without this a 120-minute session
         // against a 90-minute cap is split into two, so "2× a week" quietly
         // becomes four scheduled blocks on four days.
@@ -276,7 +278,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
   // If a task has subtasks, include the subtasks instead of the parent.
   const { data: taskRows } = await db
     .from('tasks')
-    .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
+    .select('*')                        // '*' so pre-0009 rows (no location/span) still load
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)              // top-level tasks only here
     .neq('type', 'habit')               // habits are expanded per weekly target below
@@ -288,7 +290,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
   const { data: subtaskRows } = parentIds.length > 0
     ? await db
         .from('tasks')
-        .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
+        .select('*')
         .in('parent_id', parentIds)
         .in('status', ['inbox', 'active'])
         .or('scheduled_by.is.null,scheduled_by.eq.auto')
@@ -311,6 +313,8 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       energy_required:  t.energy_required,
       duration_minutes: duration,
       due_date:         t.due_date,
+      location:         t.location ?? 'anywhere',
+      spanMinutes:      t.span_minutes ?? undefined,
     })
   }
 
@@ -325,6 +329,8 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       energy_required:  s.energy_required,
       duration_minutes: duration,
       due_date:         s.due_date,
+      location:         s.location ?? 'anywhere',
+      spanMinutes:      s.span_minutes ?? undefined,
     })
   }
 

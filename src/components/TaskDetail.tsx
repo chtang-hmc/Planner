@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, setHabitAvoidAfterBreaks, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -481,6 +481,19 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
     })
   }
 
+  // Where it happens + how long it ties you up
+  const [location,  setLocation]  = useState<string>(task.location ?? 'anywhere')
+  const [span,      setSpan]      = useState<string>(String(task.span_minutes ?? ''))
+  const [placeErr,  setPlaceErr]  = useState<string | null>(null)
+
+  function savePlacement(patch: { location?: string; span_minutes?: number | null }) {
+    setPlaceErr(null)
+    startTransition(async () => {
+      const res = await setTaskPlacement(task.id, patch)
+      if (res.error) setPlaceErr(res.error)
+    })
+  }
+
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,      setDeleting]      = useState(false)
   const [deleteError,   setDeleteError]   = useState<string | null>(null)
@@ -662,6 +675,55 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                 />
               </div>
             )}
+          </div>
+
+          {/* Where it happens + tie-up window */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+              Where
+            </label>
+            <div className="flex gap-1.5">
+              {[
+                { val: 'anywhere', label: 'Anywhere', icon: '◎' },
+                { val: 'home',     label: 'Home',     icon: '⌂' },
+                { val: 'away',     label: 'Out',      icon: '↗' },
+              ].map(o => (
+                <button
+                  key={o.val}
+                  onClick={() => { setLocation(o.val); savePlacement({ location: o.val }) }}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    location === o.val
+                      ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                  }`}
+                >
+                  {o.icon} {o.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-slate-400 shrink-0">Ties me up for</span>
+              <input
+                type="number"
+                min={1}
+                step={15}
+                value={span}
+                onChange={e => setSpan(e.target.value)}
+                onBlur={() => {
+                  const v = span ? parseInt(span) : null
+                  if (v !== (task.span_minutes ?? null)) savePlacement({ span_minutes: v })
+                }}
+                placeholder="—"
+                className="w-20 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+              />
+              <span className="text-xs text-slate-400">min total</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              For things like laundry: only the estimate is booked, but you stay put
+              for the full time and nothing that needs you elsewhere is scheduled into it.
+            </p>
+            {placeErr && <p className="text-xs text-amber-500 mt-1">{placeErr}</p>}
           </div>
 
           {/* Urgency curve — deadline pressure, so not shown for habits */}
