@@ -91,11 +91,13 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
 
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
     setScheduling(true)
     startTransition(async () => {
-      const res = await proposeSchedule(7)
+      const res = await proposeSchedule(7, tz)
       setSchedulePreview({
         blocks: res.scheduled.map(b => ({
           taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
@@ -112,7 +114,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (!gcalWriteEnabled) return
     setScheduling(true)
     startTransition(async () => {
-      const res = await planDay()
+      const res = await planDay(tz)
       setDayPlan({
         blocks: res.proposedBlocks.map(b => ({
           taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,

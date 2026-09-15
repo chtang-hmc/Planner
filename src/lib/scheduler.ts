@@ -60,6 +60,7 @@ export interface EnergyScheduleEntry {
 export interface SchedulerConfig {
   maxSessionMinutes: number  // default 90
   bufferMinutes:     number  // default 15
+  timezone:          string  // IANA tz, e.g. "America/Los_Angeles"
 }
 
 export interface SchedulerTask {
@@ -97,12 +98,47 @@ export interface SchedulerResult {
 
 const ENERGY_RANK: Record<EnergyLevel, number> = { low: 0, medium: 1, high: 2 }
 
+/**
+ * Returns the UTC timestamp (ms) for midnight at the start of `dateStr`
+ * (e.g. "2026-09-14") in the given IANA timezone.
+ *
+ * Strategy: start from UTC midnight on that date, then measure what local hour
+ * it currently shows in the target tz and shift accordingly.
+ */
+function localMidnight(dateStr: string, tz: string): number {
+  const utcMidnight = new Date(`${dateStr}T00:00:00Z`)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(utcMidnight)
+  const h = parseInt(parts.find(p => p.type === 'hour')!.value)
+  const m = parseInt(parts.find(p => p.type === 'minute')!.value)
+  const totalMins = h * 60 + m
+  // If totalMins <= 720 (noon): tz is ahead of UTC, so local midnight was earlier (subtract)
+  // If totalMins > 720: tz is behind UTC, so local midnight is later (add 24h - totalMins)
+  const offsetMins = totalMins <= 720 ? -totalMins : (24 * 60 - totalMins)
+  return utcMidnight.getTime() + offsetMins * 60_000
+}
+
+/** Returns local {dayOfWeek, hour} for a UTC timestamp in the given IANA timezone. */
+function localPartsAt(ms: number, tz: string): { dow: number; hour: number } {
+  const d = new Date(ms)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, weekday: 'short', hour: '2-digit', hour12: false,
+  }).formatToParts(d)
+  const weekdayStr = parts.find(p => p.type === 'weekday')!.value
+  const hour       = parseInt(parts.find(p => p.type === 'hour')!.value)
+  const DOW_MAP: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  }
+  return { dow: DOW_MAP[weekdayStr] ?? 0, hour }
+}
+
 function slotEnergyLevel(
-  slotStart: Date,
+  slotStartMs: number,
   energySchedule: EnergyScheduleEntry[],
+  tz: string,
 ): EnergyLevel {
-  const dow   = slotStart.getDay()
-  const hour  = slotStart.getHours()
+  const { dow, hour } = localPartsAt(slotStartMs, tz)
   const block = getTimeBlockId(hour)
   const entry = energySchedule.find(e => e.day_of_week === dow && e.time_block === block)
   return entry?.energy_level ?? 'medium'
@@ -152,14 +188,16 @@ export function runScheduler(
   const maxMs    = config.maxSessionMinutes * 60_000
   const bufferMs = config.bufferMinutes * 60_000
   const nowMs    = Date.now()
+  const tz       = config.timezone
 
-  // Build day boundaries for the horizon
-  const days: Date[] = []
+  // Build day boundaries for the horizon (as UTC ms of local midnight in user's tz)
+  const todayLocalStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
+  const days: number[] = []   // each value = UTC ms of local midnight for that day
   for (let i = 0; i < horizonDays; i++) {
-    const d = new Date()
+    const d = new Date(todayLocalStr)
     d.setDate(d.getDate() + i)
-    d.setHours(0, 0, 0, 0)
-    days.push(d)
+    const dateStr = d.toISOString().slice(0, 10)
+    days.push(localMidnight(dateStr, tz))
   }
 
   // Occupied intervals grow as we place blocks (stored raw, buffer applied on use)
@@ -197,34 +235,28 @@ export function runScheduler(
       interface Candidate { start: number; end: number; excess: number; energyMatch: boolean }
       const candidates: Candidate[] = []
 
-      for (const day of days) {
-        if (day.getTime() > dueMs) break
+      for (const dayMs of days) {
+        if (dayMs > dueMs) break
 
-        const dow = day.getDay()
+        const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
         const wh  = workingHours.find(w => w.day_of_week === dow)
         if (!wh || !wh.enabled) continue
 
-        const workStart = new Date(day)
-        workStart.setHours(wh.start_hour, wh.start_minute, 0, 0)
-        const workEnd = new Date(day)
-        workEnd.setHours(wh.end_hour, wh.end_minute, 0, 0)
+        // Working window = local midnight + hours offset (ms arithmetic, tz-safe)
+        const workStartMs = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
+        const workEndMs   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
 
         // Day-scoped allBusy
-        const dayBusy = allBusy.filter(([s, e]) =>
-          s < workEnd.getTime() && e > workStart.getTime()
-        )
+        const dayBusy = allBusy.filter(([s, e]) => s < workEndMs && e > workStartMs)
 
-        const free = subtractIntervals(
-          [[workStart.getTime(), workEnd.getTime()]],
-          dayBusy,
-        )
+        const free = subtractIntervals([[workStartMs, workEndMs]], dayBusy)
 
         for (const [fS, fE] of free) {
           const slotStart = Math.max(fS, nowMs)
           if (slotStart + segMs > fE) continue  // slot too small
           if (slotStart > dueMs) continue        // past deadline
 
-          const energy      = slotEnergyLevel(new Date(slotStart), energySchedule)
+          const energy      = slotEnergyLevel(slotStart, energySchedule, tz)
           const energyMatch = ENERGY_RANK[energy] >= ENERGY_RANK[task.energy_required]
           const excess      = (fE - fS) - segMs
 
@@ -289,9 +321,10 @@ export function buildAttackList(
   todaysTasks:    SchedulerTask[],
   scheduledToday: Array<{ taskId: string; start: Date; end: Date }>,
   energySchedule: EnergyScheduleEntry[],
+  timezone:       string,
 ): AttackItem[] {
-  const now  = new Date()
-  const currentEnergy = slotEnergyLevel(now, energySchedule)
+  const nowMs = Date.now()
+  const currentEnergy = slotEnergyLevel(nowMs, energySchedule, timezone)
 
   const items: AttackItem[] = todaysTasks.map(task => {
     const block       = scheduledToday.find(b => b.taskId === task.id)

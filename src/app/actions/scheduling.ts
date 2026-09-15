@@ -76,6 +76,7 @@ async function fetchSchedulingInputs() {
   const schedulerConfig: SchedulerConfig = {
     maxSessionMinutes: configRow?.max_session_minutes ?? 90,
     bufferMinutes:     configRow?.buffer_minutes ?? 15,
+    timezone:          'UTC',  // overridden per-call via { ...schedulerConfig, timezone }
   }
 
   return { workingHours, energySchedule, schedulerConfig }
@@ -120,7 +121,7 @@ export interface ProposeResult {
  *
  * @param horizonDays  7 = "schedule my week", 1 = "plan my day"
  */
-export async function proposeSchedule(horizonDays: number): Promise<ProposeResult> {
+export async function proposeSchedule(horizonDays: number, timezone: string = 'UTC'): Promise<ProposeResult> {
   const db = createServiceClient()
 
   // ── 1. Auth ────────────────────────────────────────────────────────────────
@@ -187,10 +188,10 @@ export async function proposeSchedule(horizonDays: number): Promise<ProposeResul
   }
 
   // ── 4. Busy intervals from GCal ────────────────────────────────────────────
-  const now      = new Date()
-  const timeMin  = new Date(now)
-  timeMin.setHours(0, 0, 0, 0)
-  const timeMax  = new Date(now)
+  const now         = new Date()
+  const todayStr    = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
+  const timeMin     = new Date(`${todayStr}T00:00:00Z`)  // start of local today (approx)
+  const timeMax     = new Date(timeMin)
   timeMax.setDate(timeMax.getDate() + horizonDays + 1)
 
   const busyIntervals = await fetchFreeBusy(token.access_token, timeMin, timeMax)
@@ -202,7 +203,7 @@ export async function proposeSchedule(horizonDays: number): Promise<ProposeResul
     energySchedule,
     busyIntervals,
     horizonDays,
-    schedulerConfig,
+    { ...schedulerConfig, timezone },
   )
 
   const serialized: SerializedBlock[] = scheduled.map(b => ({
@@ -328,17 +329,17 @@ export interface DayPlan {
  * Plan my day: schedule today's unscheduled tasks AND return a ranked attack
  * list of everything to work on today (scheduled + unscheduled in order).
  */
-export async function planDay(): Promise<DayPlan> {
+export async function planDay(timezone: string = 'UTC'): Promise<DayPlan> {
   const db = createServiceClient()
 
   const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
 
   // Propose blocks for today
-  const { scheduled, unschedulable, error } = await proposeSchedule(1)
+  const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone)
   if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
 
   // Fetch all of today's tasks (active, due today or overdue)
-  const todayISO = new Date().toISOString().slice(0, 10)
+  const todayISO = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
   const { data: todayTasks } = await db
     .from('tasks')
     .select('id, title, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
@@ -374,7 +375,7 @@ export async function planDay(): Promise<DayPlan> {
     ...scheduled.map(b => ({ taskId: b.taskId, start: new Date(b.startISO), end: new Date(b.endISO) })),
   ]
 
-  const rawAttack = buildAttackList(schedulerTasks, scheduledToday, energySchedule)
+  const rawAttack = buildAttackList(schedulerTasks, scheduledToday, energySchedule, timezone)
 
   const attackList: SerializedAttackItem[] = rawAttack.map(item => ({
     taskId:            item.taskId,

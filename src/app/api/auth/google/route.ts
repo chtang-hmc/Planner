@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 
-// calendar.events = read + create/edit/delete events (superset of calendar.readonly for events)
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events'
+// calendar.events = read + create/edit/delete events
+// calendar.readonly = required for freeBusy query (events scope alone is insufficient)
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.readonly',
+].join(' ')
 
 export async function GET() {
   const params = new URLSearchParams({

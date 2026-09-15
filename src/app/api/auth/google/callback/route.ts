@@ -41,7 +41,10 @@ export async function GET(request: NextRequest) {
     access_token,
     refresh_token,
     token_expiry,
-    scopes:       ['https://www.googleapis.com/auth/calendar.events'],
+    scopes:       [
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.readonly',
+    ],
     connected_at: new Date().toISOString(),
   })
 
