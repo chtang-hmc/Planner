@@ -322,6 +322,14 @@ Per the chosen behaviour only the active minutes appear as a block; the tie-up i
 
 Degrades on a pre-0009 database: task rows load with `select('*')`, so a missing `location` reads as undefined and falls back to `anywhere`, and no span means no tether. Writes go through `setTaskPlacement`, which returns a message rather than throwing.
 
+### Plan Day: what the ranked list contains
+
+The day's blocks and the ranked list beside them are built from different queries, and they used to disagree. The list filtered `due_date <= day`, which dropped two whole categories: anything **undated** — which is every habit — and anything the scheduler **pulled forward** from later to fill the day. With no task due today the list came out empty while the plan beside it was full.
+
+It now takes tasks that are due today or earlier, undated, or scheduled today. Far-future work stays out unless it actually earned a block, so the list reflects the plan rather than a separate idea of the day.
+
+Habits are given the same `priority * 10` baseline the scheduler uses; their stored `urgency_score` of 0 would otherwise bury them at the bottom of a list they belong near the top of.
+
 ### Scheduler: atomic work
 
 `SchedulerTask.atomic` marks work that can't be split across sittings — it takes one unbroken block instead of being chunked by `maxSessionMinutes`. Habit sessions set it (see [Scheduling habits](#scheduling-habits)); ordinary tasks don't, and still segment as before.

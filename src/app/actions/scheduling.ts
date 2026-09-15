@@ -547,26 +547,38 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
     energy_level: r.energy_level as 'low' | 'medium' | 'high',
   }))
 
-  // Fetch tasks due on or before the chosen day.
-  // due_dates are stored as YYYY-MM-DDT00:00:00Z (UTC midnight of the local date).
-  // Use `lte(dayStr + 'T00:00:00Z')` — tasks stored exactly at that midnight ARE included
-  // (e.g. "2026-09-15T00:00:00Z" <= "2026-09-15T00:00:00Z" → true).
-  const { data: todayTasks } = await db
+  // Candidates for the day's ranked list.
+  //
+  // This used to filter `due_date <= day`, which silently dropped two whole
+  // categories: anything with no due date — every habit — and anything the
+  // scheduler pulled forward from later to fill the day. The blocks above
+  // already include both, so the list disagreed with the plan beside it.
+  //
+  // Now: due today or earlier, or undated, or scheduled today. Far-future work
+  // stays out unless it actually earned a block.
+  const { data: allTasks } = await db
     .from('tasks')
-    .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
+    .select('*')
     .in('status', ['inbox', 'active'])
-    .lte('due_date', dayStr + 'T00:00:00Z')
+    .is('parent_id', null)
     .order('urgency_score', { ascending: false })
 
-  const schedulerTasks: SchedulerTask[] = (todayTasks ?? []).map(t => ({
-    id:               t.id,
-    title:            t.title,
-    priority:         t.priority,
-    urgency_score:    t.urgency_score,
-    energy_required:  t.energy_required,
-    duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
-    due_date:         t.due_date,
-  }))
+  const dayCutoff   = dayStr + 'T00:00:00Z'
+  const blockedToday = new Set(scheduled.map(b => b.taskId))
+
+  const schedulerTasks: SchedulerTask[] = (allTasks ?? [])
+    .filter(t => !t.due_date || t.due_date <= dayCutoff || blockedToday.has(t.id))
+    .map(t => ({
+      id:               t.id,
+      title:            t.title,
+      priority:         t.priority,
+      // Habits store 0 — they aren't deadline work — which would bury them at
+      // the bottom of the list. Same baseline the scheduler gives them.
+      urgency_score:    t.type === 'habit' ? t.priority * 10 : t.urgency_score,
+      energy_required:  t.energy_required,
+      duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
+      due_date:         t.due_date,
+    }))
 
   // All scheduled blocks for today (already in DB + newly proposed)
   const { data: existingScheduled } = await db
