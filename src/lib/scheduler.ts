@@ -145,6 +145,12 @@ export interface SchedulerTask {
    * it), but the next stage must land exactly that far after this one ends.
    */
   gapAfterMinutes?:  number
+  /**
+   * Position within the chain. Stages run in this order — you can't fold the
+   * sheets before they've been in the dryer — and the urgency sort that orders
+   * everything else would scramble them.
+   */
+  chainIndex?:       number
 }
 
 /** Where a task happens. 'anywhere' is compatible with everything. */
@@ -731,7 +737,11 @@ export function runScheduler(
     if (task.chainGroup) {
       if (handledChains.has(task.chainGroup)) continue
       handledChains.add(task.chainGroup)
-      placeChain(sorted.filter(t => t.chainGroup === task.chainGroup))
+      placeChain(
+        sorted
+          .filter(t => t.chainGroup === task.chainGroup)
+          .sort((a, b) => (a.chainIndex ?? 0) - (b.chainIndex ?? 0)),
+      )
       continue
     }
     placeSingle(task)

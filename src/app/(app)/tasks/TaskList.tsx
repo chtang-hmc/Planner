@@ -86,6 +86,8 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
+  // Parents whose subtasks are tucked away
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -191,6 +193,19 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (!matchesSearch(t)) return false
     return true
   })
+
+  // Subtasks nest under their parent instead of sitting loose in the list.
+  // A parent that survived the filter owns its children; a subtask whose parent
+  // was filtered out (or isn't in this view) still shows on its own, so nothing
+  // silently disappears.
+  const visibleIds = new Set(filtered.map(t => t.id))
+  const childrenOf = new Map<string, TaskRow[]>()
+  for (const t of filtered) {
+    if (t.parent_id && visibleIds.has(t.parent_id)) {
+      childrenOf.set(t.parent_id, [...(childrenOf.get(t.parent_id) ?? []), t])
+    }
+  }
+  const topLevel = filtered.filter(t => !(t.parent_id && visibleIds.has(t.parent_id)))
 
   const totalMinutes = filtered.reduce((s, t) => s + (t.adjusted_minutes ?? t.estimated_minutes ?? 0), 0)
 
@@ -355,16 +370,46 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
           {/* Task rows */}
           <div className="flex flex-col gap-1.5">
-            {filtered.map(task => {
+            {topLevel.flatMap(parentTask => {
+              const kids = childrenOf.get(parentTask.id) ?? []
+              const isCollapsed = collapsed.has(parentTask.id)
+              const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
+
+              return rows.map(task => {
+              const isChild = task.id !== parentTask.id
               const est = task.adjusted_minutes ?? task.estimated_minutes
               const due = formatDue(task.due_date)
 
               return (
                 <div
                   key={task.id}
+                  style={isChild ? { marginLeft: '1.5rem' } : undefined}
                   onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                   className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
                 >
+                  {/* Fold toggle on a parent; bullet on a child */}
+                  {isChild ? (
+                    <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 mt-1 select-none">•</span>
+                  ) : kids.length > 0 ? (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation()
+                        setCollapsed(prev => {
+                          const next = new Set(prev)
+                          if (next.has(parentTask.id)) next.delete(parentTask.id)
+                          else next.add(parentTask.id)
+                          return next
+                        })
+                      }}
+                      title={isCollapsed ? `Show ${kids.length} subtasks` : 'Hide subtasks'}
+                      className="w-3 shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
+                    >
+                      {isCollapsed ? '▶' : '▼'}
+                    </button>
+                  ) : (
+                    <span className="w-3 shrink-0" />
+                  )}
+
                   {/* Done button — colored by priority */}
                   <button
                     onClick={e => handleDone(task, e)}
@@ -405,12 +450,19 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                       {/* Subtasks appear in the list alongside everything else,
                           so say what they belong to — "Dahl" on its own is a
                           mystery once it's out of the parent's checklist. */}
-                      {task.parent && (
+                      {/* Only when it's loose in the list — nested under its
+                          parent the relationship is already obvious. */}
+                      {task.parent && !isChild && (
                         <span
                           className="text-xs text-slate-400 truncate max-w-[12rem]"
                           title={`Subtask of ${task.parent.title}`}
                         >
                           ↳ {task.parent.title}
+                        </span>
+                      )}
+                      {!isChild && kids.length > 0 && isCollapsed && (
+                        <span className="text-xs text-slate-400">
+                          {kids.length} subtask{kids.length !== 1 ? 's' : ''}
                         </span>
                       )}
                       <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
@@ -434,6 +486,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                   </div>
                 </div>
               )
+              })
             })}
 
             {filtered.length === 0 && (

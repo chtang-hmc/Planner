@@ -336,6 +336,8 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
         .from('tasks')
         .select('*')
         .in('parent_id', parentIds)
+        // Creation order is the running order for a staged chain
+        .order('created_at', { ascending: true })
         .in('status', ['inbox', 'active'])
         .or('scheduled_by.is.null,scheduled_by.eq.auto')
     : { data: [] }
@@ -365,7 +367,11 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
 
   const parents = new Map((taskRows ?? []).map(t => [t.id, t]))
 
+  // Running order within each parent, taken from the created_at order above
+  const chainIndex = new Map<string, number>()
+
   for (const s of subtaskRows ?? []) {
+    chainIndex.set(s.parent_id, (chainIndex.get(s.parent_id) ?? -1) + 1)
     const duration = s.adjusted_minutes ?? s.estimated_minutes
     if (!duration) continue
     const parent = parents.get(s.parent_id)
@@ -383,6 +389,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       // buffer around the run.
       chainGroup:       s.parent_id,
       gapAfterMinutes:  s.gap_after_minutes ?? undefined,
+      chainIndex:       chainIndex.get(s.parent_id)!,
       location:         s.location ?? 'anywhere',
       spanMinutes:      s.span_minutes ?? undefined,
       bufferMinutes:    s.buffer_minutes ?? undefined,
