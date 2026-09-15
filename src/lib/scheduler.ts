@@ -317,13 +317,25 @@ export function runScheduler(
       }
 
       // Prefer energy-matched; fall back to any. Within group: tightest fit, then earliest.
-      // Habit sessions sort by time instead, so repeated sessions walk forward
-      // through the week rather than clustering wherever the tightest gaps are.
       const matched = candidates.filter(c => c.energyMatch)
       const pool    = matched.length > 0 ? matched : candidates
-      pool.sort(task.spreadGroup
-        ? (a, b) => a.start - b.start
-        : (a, b) => a.excess - b.excess || a.start - b.start)
+
+      if (task.spreadGroup) {
+        // Spread across the week rather than filling from the front. Taking the
+        // earliest free day each time packs a 2×/week habit into Mon+Tue and
+        // leaves the weekend empty; picking the day furthest from the ones the
+        // group already occupies distributes them over the whole horizon.
+        const gapFromUsed = (dayMs: number) => {
+          if (!usedDays || usedDays.size === 0) return Infinity   // first session: earliest wins
+          let min = Infinity
+          for (const u of usedDays) min = Math.min(min, Math.abs(dayMs - u))
+          return min
+        }
+        pool.sort((a, b) => gapFromUsed(b.dayMs) - gapFromUsed(a.dayMs) || a.start - b.start)
+      } else {
+        pool.sort((a, b) => a.excess - b.excess || a.start - b.start)
+      }
+
       const best = pool[0]
 
       if (task.spreadGroup) {

@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveGroup, listHabitGroups, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -437,25 +437,34 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const project = task.project ?? INBOX_PROJECT
   const isHabit = task.type === 'habit'
 
-  // Exclusive group — habits sharing one are never scheduled on the same day
-  const [group,      setGroup]      = useState<string>(task.exclusive_group ?? '')
-  const [knownGroups, setKnownGroups] = useState<string[]>([])
+  // Exclusivity — habits linked here are never scheduled on the same day
+  const [habitList,  setHabitList]  = useState<HabitExclusivity[]>([])
   const [groupError, setGroupError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (isHabit) listHabitGroups().then(setKnownGroups).catch(() => {})
-  }, [isHabit])
+  const refreshHabits = () => listHabitExclusivity().then(setHabitList).catch(() => {})
+  useEffect(() => { if (isHabit) refreshHabits() }, [isHabit])
 
-  function saveGroup(next: string) {
-    const previous = group
-    setGroup(next)
+  const myGroup = habitList.find(h => h.title === task.title)?.group ?? null
+  const others  = habitList.filter(h => h.title !== task.title)
+
+  function toggleLink(otherTitle: string, linked: boolean) {
+    // Optimistic: mirror what the action will do so the checkbox responds now
+    const group = linked
+      ? (others.find(h => h.title === otherTitle)?.group ?? myGroup ?? [task.title, otherTitle].sort().join(' + '))
+      : null
+    const members = myGroup ? habitList.filter(h => h.group === myGroup).length : 0
+    setHabitList(prev => prev.map(h => {
+      if (linked) return (h.title === task.title || h.title === otherTitle) ? { ...h, group } : h
+      if (h.title === otherTitle) return { ...h, group: null }
+      if (h.title === task.title && members <= 2) return { ...h, group: null }
+      return h
+    }))
     setGroupError(null)
+
     startTransition(async () => {
-      const res = await setHabitExclusiveGroup(task.title, next || null)
-      if (res.error) {
-        setGroup(previous)          // don't let the UI claim a save that failed
-        setGroupError(res.error)
-      }
+      const res = await setHabitExclusiveLink(task.title, otherTitle, linked)
+      if (res.error) setGroupError(res.error)
+      refreshHabits()          // reconcile with the server either way
     })
   }
 
@@ -756,52 +765,37 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                     ) : (
                       <p className="text-xs text-violet-400 dark:text-violet-500">No weekly goal set.</p>
                     )}
-                    {/* Exclusive group */}
-                    <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
-                      <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-1">
-                        Not on the same day as
-                      </p>
-                      <p className="text-[11px] text-violet-400 dark:text-violet-500 mb-2">
-                        Habits sharing a group are never scheduled on one day.
-                      </p>
-                      <div className="flex gap-1.5 flex-wrap items-center">
-                        {knownGroups.filter(g => g !== group).map(g => (
-                          <button
-                            key={g}
-                            onClick={() => saveGroup(g)}
-                            className="px-2.5 py-1 rounded-lg text-xs border border-violet-200 dark:border-violet-800 text-violet-500 hover:border-violet-400 transition-colors"
-                          >
-                            {g}
-                          </button>
-                        ))}
-                        {group && (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-600 text-white">
-                            {group}
-                            <button
-                              onClick={() => saveGroup('')}
-                              title="Remove from group"
-                              className="hover:opacity-70"
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        )}
-                        <input
-                          type="text"
-                          defaultValue=""
-                          placeholder={group ? 'move to…' : 'e.g. Exercise'}
-                          onKeyDown={e => {
-                            if (e.key !== 'Enter') return
-                            const v = (e.target as HTMLInputElement).value.trim()
-                            if (!v) return
-                            saveGroup(v)
-                            ;(e.target as HTMLInputElement).value = ''
-                          }}
-                          className="w-28 px-2 py-1 rounded-lg text-xs border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 placeholder:text-violet-300 dark:placeholder:text-violet-700"
-                        />
+                    {/* Exclusivity — pick habits, not a group name */}
+                    {others.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
+                        <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-1">
+                          Never on the same day as
+                        </p>
+                        <p className="text-[11px] text-violet-400 dark:text-violet-500 mb-2">
+                          The scheduler keeps these on separate days. Ticking one links both sides.
+                        </p>
+                        <div className="flex flex-col gap-1">
+                          {others.map(h => {
+                            const linked = !!myGroup && h.group === myGroup
+                            return (
+                              <label
+                                key={h.title}
+                                className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={linked}
+                                  onChange={e => toggleLink(h.title, e.target.checked)}
+                                  className="w-3.5 h-3.5 rounded border-violet-300 dark:border-violet-700 accent-violet-600"
+                                />
+                                {h.title}
+                              </label>
+                            )
+                          })}
+                        </div>
+                        {groupError && <p className="text-xs text-amber-500 mt-1.5">{groupError}</p>}
                       </div>
-                      {groupError && <p className="text-xs text-amber-500 mt-1.5">{groupError}</p>}
-                    </div>
+                    )}
 
                     {/* Edit target */}
                     <div className="flex items-center gap-2 mt-2">

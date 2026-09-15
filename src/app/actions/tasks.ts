@@ -215,37 +215,14 @@ export async function completeTask(
 // row and spawns the next), so both of these operate on the title rather than a
 // single row id — the same identity the streak calendar uses.
 
-/**
- * Put a habit in an exclusive group (or clear it with null). Habits sharing a
- * group are never scheduled on the same day — e.g. Gym and Run as 'Exercise'.
- *
- * Applied to every row of the chain so the setting survives the next
- * completion, which spawns a fresh row.
- */
-export async function setHabitExclusiveGroup(
-  title: string,
-  group: string | null,
-): Promise<{ error?: string }> {
-  const db = createServiceClient()
-  const value = group?.trim() || null
-
-  const { error } = await db
-    .from('tasks')
-    .update({ exclusive_group: value })
-    .eq('type', 'habit')
-    .eq('title', title)
-
-  if (error) {
-    console.error('setHabitExclusiveGroup:', error.message)
-    return { error: 'Could not save — run migration 0007_habit_exclusive_group.sql first.' }
-  }
-
-  revalidatePath('/habits')
-  return {}
+/** A habit and the group it belongs to, for the exclusivity picker. */
+export interface HabitExclusivity {
+  title: string
+  group: string | null
 }
 
-/** Distinct exclusive groups already in use, for the picker. */
-export async function listHabitGroups(): Promise<string[]> {
+/** Every distinct habit, with its exclusive group. */
+export async function listHabitExclusivity(): Promise<HabitExclusivity[]> {
   const db = createServiceClient()
   // select('*') so a pre-0007 database returns rows without the column
   const { data } = await db
@@ -253,10 +230,76 @@ export async function listHabitGroups(): Promise<string[]> {
     .select('*')
     .eq('type', 'habit')
     .in('status', ['inbox', 'active'])
+    .is('parent_id', null)
 
-  const groups = new Set<string>()
-  for (const r of data ?? []) if (r.exclusive_group) groups.add(r.exclusive_group)
-  return [...groups].sort()
+  const byTitle = new Map<string, string | null>()
+  for (const r of data ?? []) {
+    if (!byTitle.has(r.title)) byTitle.set(r.title, r.exclusive_group ?? null)
+  }
+  return [...byTitle.entries()]
+    .map(([title, group]) => ({ title, group }))
+    .sort((a, b) => a.title.localeCompare(b.title))
+}
+
+/** Set the group on every row of a habit chain, so it survives the next spawn. */
+async function writeGroup(
+  db: ReturnType<typeof createServiceClient>,
+  title: string,
+  group: string | null,
+) {
+  return db.from('tasks').update({ exclusive_group: group }).eq('type', 'habit').eq('title', title)
+}
+
+/**
+ * Link or unlink two habits so they are never scheduled on the same day.
+ *
+ * Takes the *other habit* rather than a group name. Naming a group is the kind
+ * of thing that reads as "not on the same day as ___" and invites you to type
+ * the other habit's title — which silently creates two groups of one that
+ * exclude nothing. Picking the habit updates both sides in one go.
+ *
+ * Exclusivity is a set, not a pair: linking Gym–Run and then Run–Piano puts all
+ * three in one group, so none of them share a day.
+ */
+export async function setHabitExclusiveLink(
+  title: string,
+  otherTitle: string,
+  linked: boolean,
+): Promise<{ error?: string }> {
+  if (title === otherTitle) return { error: 'A habit cannot exclude itself' }
+
+  const db = createServiceClient()
+  const all = await listHabitExclusivity()
+  const mine  = all.find(h => h.title === title)
+  const other = all.find(h => h.title === otherTitle)
+  if (!mine || !other) return { error: 'Habit not found' }
+
+  let err: { message: string } | null = null
+
+  if (linked) {
+    // Join whichever group already exists, else start one named for the pair.
+    const group = other.group ?? mine.group ?? [title, otherTitle].sort().join(' + ')
+    err = (await writeGroup(db, title, group)).error
+      ?? (await writeGroup(db, otherTitle, group)).error
+  } else {
+    const group = mine.group
+    if (group) {
+      const members = all.filter(h => h.group === group)
+      // A group of one excludes nothing, so unlinking a pair clears both sides.
+      // With more members, only the habit being unticked leaves.
+      err = members.length <= 2
+        ? ((await writeGroup(db, title, null)).error ?? (await writeGroup(db, otherTitle, null)).error)
+        : (await writeGroup(db, otherTitle, null)).error
+    }
+  }
+
+  if (err) {
+    console.error('setHabitExclusiveLink:', err.message)
+    return { error: 'Could not save — run migration 0007_habit_exclusive_group.sql first.' }
+  }
+
+  revalidatePath('/habits')
+  return {}
 }
 
 /**
