@@ -164,6 +164,19 @@ export interface SchedulerResult {
   unschedulable: SchedulerTask[]   // no slot found within deadline
 }
 
+/**
+ * Label for a scheduled block.
+ *
+ * A subtask title alone is meaningless on a calendar — "Dahl" says nothing
+ * three days from now. Prefixing the parent gives the block its context:
+ * "Philosophy Readings - Dahl". Lives here rather than in the actions file
+ * because a 'use server' module may only export async functions, and both the
+ * preview and the Google Calendar event need it so the two always read alike.
+ */
+export function blockLabel(title: string, parentTitle?: string | null): string {
+  return parentTitle ? `${parentTitle} - ${title}` : title
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const ENERGY_RANK: Record<EnergyLevel, number> = { low: 0, medium: 1, high: 2 }

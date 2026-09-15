@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { blockLabel } from '@/lib/scheduler'
 import { createServiceClient } from '@/lib/supabase/server'
 import {
   syncCalendarEvents,
@@ -42,11 +43,20 @@ export async function scheduleTask(
   // Fetch enough task data to build the GCal event
   const { data: task, error: fetchErr } = await db
     .from('tasks')
-    .select('title, description, priority, gcal_event_id')
+    .select('title, description, priority, gcal_event_id, parent_id')
     .eq('id', taskId)
     .single()
 
   if (fetchErr || !task) return { error: 'Task not found' }
+
+  // Same "Parent - Subtask" label the scheduler uses, so a manually placed
+  // block reads identically to an auto-scheduled one.
+  let title = task.title
+  if (task.parent_id) {
+    const { data: parent } = await db
+      .from('tasks').select('title').eq('id', task.parent_id).maybeSingle()
+    title = blockLabel(task.title, parent?.title)
+  }
 
   try {
     // If a block already exists for this task, update it instead of creating a new one
@@ -59,7 +69,7 @@ export async function scheduleTask(
     } else {
       const gcalEventId = await createTaskBlock(
         token.access_token,
-        { title: task.title, description: task.description, priority: task.priority },
+        { title, description: task.description, priority: task.priority },
         startISO,
         endISO,
       )

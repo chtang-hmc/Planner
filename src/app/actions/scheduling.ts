@@ -13,6 +13,7 @@ import {
   type SchedulerConfig,
   type SchedulerTask,
   type BreakWindow,
+  blockLabel,
   type ProposedBlock,
   type AttackItem,
 } from '@/lib/scheduler'
@@ -362,12 +363,14 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     })
   }
 
+  const parentTitles = new Map((taskRows ?? []).map(t => [t.id, t.title as string]))
+
   for (const s of subtaskRows ?? []) {
     const duration = s.adjusted_minutes ?? s.estimated_minutes
     if (!duration) continue
     candidates.push({
       id:               s.id,
-      title:            s.title,
+      title:            blockLabel(s.title, parentTitles.get(s.parent_id)),
       priority:         s.priority,
       urgency_score:    s.urgency_score,
       energy_required:  s.energy_required,
@@ -479,10 +482,21 @@ export async function confirmSchedule(
   const taskIds = [...new Set(blocks.map(b => b.taskId))]
   const { data: taskRows } = await db
     .from('tasks')
-    .select('id, title, description, priority')
+    .select('id, title, description, priority, parent_id')
     .in('id', taskIds)
 
-  const taskMap = new Map((taskRows ?? []).map(t => [t.id, t]))
+  // Parent titles for any subtasks in this batch, so the calendar event carries
+  // the same "Parent - Subtask" label the preview showed.
+  const parentIds = [...new Set((taskRows ?? []).map(t => t.parent_id).filter(Boolean))] as string[]
+  const { data: parentRows } = parentIds.length > 0
+    ? await db.from('tasks').select('id, title').in('id', parentIds)
+    : { data: [] }
+  const parentTitles = new Map((parentRows ?? []).map(p => [p.id, p.title as string]))
+
+  const taskMap = new Map((taskRows ?? []).map(t => [
+    t.id,
+    { ...t, title: blockLabel(t.title, t.parent_id ? parentTitles.get(t.parent_id) : null) },
+  ]))
 
   // ── 3. Create new GCal events + update DB ────────────────────────────────
   let confirmed = 0
