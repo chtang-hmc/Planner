@@ -46,15 +46,15 @@ export default function SchedulePreviewModal({ blocks, unschedulable, onClose, o
   const [confirming, setConfirming] = useState(false)
   const [result, setResult]         = useState<{ confirmed: number; failed: number } | null>(null)
 
-  // Group blocks by day
+  // Group blocks by day. Built from a chronologically sorted copy so the day
+  // sections come out in date order — a Map preserves insertion order, and the
+  // scheduler places spread-group sessions out of sequence while hunting for
+  // the widest gap.
   const byDay = new Map<string, PreviewBlock[]>()
-  for (const b of blocks) {
+  for (const b of [...blocks].sort((a, b) => a.startISO.localeCompare(b.startISO))) {
     const key = new Date(b.startISO).toDateString()
     if (!byDay.has(key)) byDay.set(key, [])
     byDay.get(key)!.push(b)
-  }
-  for (const group of byDay.values()) {
-    group.sort((a, b) => a.startISO.localeCompare(b.startISO))
   }
 
   function handleConfirm() {

@@ -367,6 +367,14 @@ export function runScheduler(
     }
   }
 
+  // Chronological, not placement order. Blocks are appended as the greedy loop
+  // places them, and spread groups deliberately jump around the horizon looking
+  // for the widest gap — so placement order is not time order. Callers that
+  // group by day off the raw array end up with day sections out of sequence
+  // ("tomorrow, today, Sunday, Friday"). A schedule is inherently chronological,
+  // so sort here rather than in each consumer.
+  scheduled.sort((a, b) => a.start.getTime() - b.start.getTime())
+
   return { scheduled, unschedulable }
 }
 
