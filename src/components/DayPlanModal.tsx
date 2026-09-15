@@ -36,6 +36,7 @@ interface Props {
   attackList:     SerializedAttackItem[]
   proposedBlocks: PreviewBlock[]
   unschedulable:  SchedulerTask[]
+  dateStr:        string   // YYYY-MM-DD local date being planned
   onClose:        () => void
   onConfirmed:    () => void
 }
@@ -44,6 +45,7 @@ export default function DayPlanModal({
   attackList,
   proposedBlocks,
   unschedulable,
+  dateStr,
   onClose,
   onConfirmed,
 }: Props) {
@@ -75,7 +77,9 @@ export default function DayPlanModal({
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Today's attack plan</h2>
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              {new Date(dateStr + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} — attack plan
+            </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               {attackList.length} task{attackList.length !== 1 ? 's' : ''}
               {proposedBlocks.length > 0 && ` · ${proposedBlocks.length} new block${proposedBlocks.length !== 1 ? 's' : ''} to schedule`}
@@ -87,7 +91,7 @@ export default function DayPlanModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {attackList.length === 0 ? (
-            <p className="text-center text-slate-400 text-sm py-10">No tasks due today.</p>
+            <p className="text-center text-slate-400 text-sm py-10">No tasks due on this day.</p>
           ) : (
             <div className="flex flex-col gap-1.5">
               {attackList.map(item => (

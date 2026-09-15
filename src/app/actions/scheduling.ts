@@ -121,7 +121,7 @@ export interface ProposeResult {
  *
  * @param horizonDays  7 = "schedule my week", 1 = "plan my day"
  */
-export async function proposeSchedule(horizonDays: number, timezone: string = 'UTC'): Promise<ProposeResult> {
+export async function proposeSchedule(horizonDays: number, timezone: string = 'UTC', startDateStr?: string): Promise<ProposeResult> {
   const db = createServiceClient()
 
   // ── 1. Auth ────────────────────────────────────────────────────────────────
@@ -188,10 +188,10 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
   }
 
   // ── 4. Busy intervals from GCal ────────────────────────────────────────────
-  const now         = new Date()
-  const todayStr    = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
-  const timeMin     = new Date(`${todayStr}T00:00:00Z`)  // start of local today (approx)
-  const timeMax     = new Date(timeMin)
+  const now      = new Date()
+  const dayStr   = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
+  const timeMin  = new Date(`${dayStr}T00:00:00Z`)
+  const timeMax  = new Date(timeMin)
   timeMax.setDate(timeMax.getDate() + horizonDays + 1)
 
   const busyIntervals = await fetchFreeBusy(token.access_token, timeMin, timeMax)
@@ -203,7 +203,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     energySchedule,
     busyIntervals,
     horizonDays,
-    { ...schedulerConfig, timezone },
+    { ...schedulerConfig, timezone, startDateStr: dayStr },
   )
 
   const serialized: SerializedBlock[] = scheduled.map(b => ({
@@ -329,17 +329,19 @@ export interface DayPlan {
  * Plan my day: schedule today's unscheduled tasks AND return a ranked attack
  * list of everything to work on today (scheduled + unscheduled in order).
  */
-export async function planDay(timezone: string = 'UTC'): Promise<DayPlan> {
+export async function planDay(timezone: string = 'UTC', dateStr?: string): Promise<DayPlan> {
   const db = createServiceClient()
 
   const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
 
-  // Propose blocks for today
-  const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone)
+  const dayStr = dateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+
+  // Propose blocks for the chosen day
+  const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone, dayStr)
   if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
 
-  // Fetch all of today's tasks (active, due today or overdue)
-  const todayISO = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+  // Fetch tasks due on or before the chosen day
+  const todayISO = dayStr
   const { data: todayTasks } = await db
     .from('tasks')
     .select('id, title, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
@@ -363,8 +365,8 @@ export async function planDay(timezone: string = 'UTC'): Promise<DayPlan> {
     .select('id, scheduled_start, scheduled_end')
     .in('status', ['inbox', 'active'])
     .not('scheduled_start', 'is', null)
-    .gte('scheduled_start', todayISO + 'T00:00:00Z')
-    .lte('scheduled_start', todayISO + 'T23:59:59Z')
+    .gte('scheduled_start', dayStr + 'T00:00:00Z')
+    .lte('scheduled_start', dayStr + 'T23:59:59Z')
 
   const scheduledToday = [
     ...(existingScheduled ?? []).map(t => ({

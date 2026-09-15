@@ -92,6 +92,8 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [, startTransition] = useTransition()
 
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
+  const [planDayDate, setPlanDayDate] = useState(todayStr)
 
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
@@ -114,7 +116,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (!gcalWriteEnabled) return
     setScheduling(true)
     startTransition(async () => {
-      const res = await planDay(tz)
+      const res = await planDay(tz, planDayDate)
       setDayPlan({
         blocks: res.proposedBlocks.map(b => ({
           taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
@@ -218,14 +220,24 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
               )}
               {gcalWriteEnabled && (
                 <>
-                  <button
-                    onClick={handlePlanDay}
-                    disabled={scheduling}
-                    title="Plan my day — rank and schedule today's tasks"
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium"
-                  >
-                    {scheduling ? '…' : '📋 Plan day'}
-                  </button>
+                  {/* Plan day: date picker + action button */}
+                  <div className="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                    <input
+                      type="date"
+                      value={planDayDate}
+                      onChange={e => setPlanDayDate(e.target.value)}
+                      disabled={scheduling}
+                      className="px-2 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent-500 disabled:opacity-40"
+                    />
+                    <button
+                      onClick={handlePlanDay}
+                      disabled={scheduling || !planDayDate}
+                      title="Plan this day — rank and schedule its tasks"
+                      className="px-3 py-1.5 text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium bg-white dark:bg-slate-800"
+                    >
+                      {scheduling ? '…' : '📋 Plan'}
+                    </button>
+                  </div>
                   <button
                     onClick={handleScheduleWeek}
                     disabled={scheduling}
@@ -491,6 +503,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           proposedBlocks={dayPlan.blocks}
           attackList={dayPlan.attackList}
           unschedulable={dayPlan.unschedulable}
+          dateStr={planDayDate}
           onClose={() => setDayPlan(null)}
           onConfirmed={() => setDayPlan(null)}
         />

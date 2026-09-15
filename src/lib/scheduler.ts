@@ -61,6 +61,7 @@ export interface SchedulerConfig {
   maxSessionMinutes: number  // default 90
   bufferMinutes:     number  // default 15
   timezone:          string  // IANA tz, e.g. "America/Los_Angeles"
+  startDateStr?:     string  // YYYY-MM-DD local date to start horizon from; defaults to today
 }
 
 export interface SchedulerTask {
@@ -191,10 +192,10 @@ export function runScheduler(
   const tz       = config.timezone
 
   // Build day boundaries for the horizon (as UTC ms of local midnight in user's tz)
-  const todayLocalStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
+  const startStr = config.startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
   const days: number[] = []   // each value = UTC ms of local midnight for that day
   for (let i = 0; i < horizonDays; i++) {
-    const d = new Date(todayLocalStr)
+    const d = new Date(startStr)
     d.setDate(d.getDate() + i)
     const dateStr = d.toISOString().slice(0, 10)
     days.push(localMidnight(dateStr, tz))
