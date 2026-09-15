@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, setHabitAvoidAfterBreaks, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -447,6 +447,19 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const myGroup = habitList.find(h => h.title === task.title)?.group ?? null
   const others  = habitList.filter(h => h.title !== task.title)
 
+  const avoidAfterBreaks = habitList.find(h => h.title === task.title)?.avoidAfterBreaks ?? false
+
+  function toggleAvoidAfterBreaks(next: boolean) {
+    setHabitList(prev => prev.map(h =>
+      h.title === task.title ? { ...h, avoidAfterBreaks: next } : h))
+    setGroupError(null)
+    startTransition(async () => {
+      const res = await setHabitAvoidAfterBreaks(task.title, next)
+      if (res.error) setGroupError(res.error)
+      refreshHabits()
+    })
+  }
+
   function toggleLink(otherTitle: string, linked: boolean) {
     // Optimistic: mirror what the action will do so the checkbox responds now
     const group = linked
@@ -796,6 +809,24 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                         {groupError && <p className="text-xs text-amber-500 mt-1.5">{groupError}</p>}
                       </div>
                     )}
+
+                    {/* Post-meal cooldown */}
+                    <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={avoidAfterBreaks}
+                          onChange={e => toggleAvoidAfterBreaks(e.target.checked)}
+                          className="mt-0.5 w-3.5 h-3.5 rounded border-violet-300 dark:border-violet-700 accent-violet-600"
+                        />
+                        <span className="text-xs text-slate-700 dark:text-slate-300">
+                          Not right after a meal
+                          <span className="block text-[11px] text-violet-400 dark:text-violet-500">
+                            Leaves the cooldown after lunch and dinner clear (Settings → Meal breaks).
+                          </span>
+                        </span>
+                      </label>
+                    </div>
 
                     {/* Edit target */}
                     <div className="flex items-center gap-2 mt-2">

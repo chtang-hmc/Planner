@@ -6,6 +6,7 @@ import { ACCENTS, AccentId, applyAccent, getStoredAccent } from '@/components/Pr
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
+import type { DailyBreak } from '@/app/actions/scheduling'
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 
@@ -351,11 +352,12 @@ interface SettingsViewProps {
   maxSession:       number
   bufferMinutes:    number
   weekStartDay:     number
+  breaks:           DailyBreak[]
 }
 
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
-  workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay,
+  workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
 }: SettingsViewProps) {
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
@@ -385,6 +387,7 @@ export default function SettingsView({
           maxSession={maxSession}
           bufferMinutes={bufferMinutes}
           weekStartDay={weekStartDay}
+          breaks={breaks}
         />
       </div>
     </div>

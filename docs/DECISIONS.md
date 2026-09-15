@@ -105,6 +105,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0005_habit_weekly_target.sql` — `tasks.weekly_target`; `completions_this_week` + `week_start` on `habit_streaks`
 - `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
 - `0007_habit_exclusive_group.sql` — `tasks.exclusive_group`; habits sharing a group are never scheduled on the same day
+- `0008_daily_breaks.sql` — `user_daily_breaks` (meal windows + cooldown), seeded with Lunch and Dinner; `tasks.avoid_after_breaks`
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -286,6 +287,20 @@ If a task already has a `gcal_event_id`, `scheduleTask` patches the existing eve
 
 - Days already used by the group are skipped when collecting slot candidates.
 - Slot choice sorts by **start time** rather than tightest-fit, so sessions walk forward through the week instead of clustering wherever the snuggest gaps happen to be.
+
+### Daily breaks (meals)
+
+`user_daily_breaks` (migration `0008`) — a label, a duration, a **window** it must fall inside, and a cooldown. Seeded with Lunch (60 min between 11:00 and 13:15) and Dinner (60 min between 17:00 and 19:30), both with a 60-minute cooldown.
+
+A break is not a calendar event: it's "an hour, somewhere in here", and the scheduler picks the actual time per day. Breaks are reserved **before any task is placed**, so a meal gets first claim on its window rather than losing it to whatever work happened to sort first. Each takes the earliest free slot in its window; if the window is fully booked by real calendar events that day, the break is skipped rather than forced.
+
+**Planner-only.** Breaks reserve time inside the scheduler but are never written to Google Calendar — they produce no `ProposedBlock`, so `confirmSchedule` has nothing to create. Chosen deliberately: the point is protecting the time from *this* app, not filling the calendar with a recurring daily event.
+
+`cooldown_minutes` blocks the period *after* a break for tasks with `avoidAfterBreaks` — "no gym or running for an hour after eating". Cooldowns are deliberately **not** buffered by `bufferMinutes`: the window is already an explicit "not for this long", and padding it would quietly extend the rule beyond what was asked. Reserved break intervals *are* buffered, like any other busy time.
+
+`tasks.avoid_after_breaks` carries the flag, set per habit from the detail panel.
+
+Degrades on a pre-0008 database: the breaks query resolves to null instead of throwing, so the scheduler runs with no breaks, and the flag reads false through `select('*')`.
 
 ### Scheduler: atomic work
 

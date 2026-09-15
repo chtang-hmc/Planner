@@ -6,6 +6,8 @@ import {
   saveEnergyLevel,
   saveSchedulingConfig,
   saveWeekStartDay,
+  saveDailyBreak,
+  type DailyBreak,
 } from '@/app/actions/scheduling'
 import { TIME_BLOCK_DEFS, type TimeBlockId, type WorkingHours, type EnergyScheduleEntry } from '@/lib/scheduler'
 import { WEEK_START_OPTIONS, weekDayOrder } from '@/lib/week'
@@ -345,6 +347,93 @@ function SessionConfig({
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// ── Meal breaks ───────────────────────────────────────────────────────────────
+
+function BreaksConfig({ initial }: { initial: DailyBreak[] }) {
+  const [rows,  setRows]  = useState(initial)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [, startTransition] = useTransition()
+
+  function patch(id: number, p: Partial<DailyBreak>) {
+    const previous = rows
+    const next = rows.map(r => (r.id === id ? { ...r, ...p } : r))
+    setRows(next)
+    setError(null)
+    startTransition(async () => {
+      const res = await saveDailyBreak(id, p)
+      if (res.error) { setRows(previous); setError(res.error); return }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  if (rows.length === 0) return null
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+          Meal breaks
+        </h3>
+        {saved && <span className="text-xs text-accent-500 font-medium">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Protected time the scheduler keeps free. Each break is placed anywhere inside
+        its window. The cooldown blocks habits marked “not right after a meal”.
+      </p>
+
+      <div className="flex flex-col gap-2">
+        {rows.map(b => (
+          <div
+            key={b.id}
+            className="flex items-center gap-2 flex-wrap p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+          >
+            <label className="flex items-center gap-2 cursor-pointer shrink-0 w-24">
+              <input
+                type="checkbox"
+                checked={b.enabled}
+                onChange={e => patch(b.id, { enabled: e.target.checked })}
+                className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-accent-500"
+              />
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{b.label}</span>
+            </label>
+
+            <input
+              type="number" min={5} step={5} value={b.duration_minutes}
+              onChange={e => patch(b.id, { duration_minutes: parseInt(e.target.value) || 0 })}
+              className="w-14 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+            />
+            <span className="text-xs text-slate-400">min, between</span>
+
+            <input
+              type="time" value={toTimeStr(b.start_hour, b.start_minute)}
+              onChange={e => { const [h, m] = parseTime(e.target.value); patch(b.id, { start_hour: h, start_minute: m }) }}
+              className="border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+            <span className="text-xs text-slate-400">and</span>
+            <input
+              type="time" value={toTimeStr(b.end_hour, b.end_minute)}
+              onChange={e => { const [h, m] = parseTime(e.target.value); patch(b.id, { end_hour: h, end_minute: m }) }}
+              className="border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+
+            <span className="text-xs text-slate-400 ml-auto">cooldown</span>
+            <input
+              type="number" min={0} step={15} value={b.cooldown_minutes}
+              onChange={e => patch(b.id, { cooldown_minutes: parseInt(e.target.value) || 0 })}
+              className="w-14 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+            />
+            <span className="text-xs text-slate-400">min</span>
+          </div>
+        ))}
+      </div>
+
+      {error && <p className="text-xs text-amber-500 mt-2">{error}</p>}
+    </div>
+  )
+}
+
 // ── Week start ────────────────────────────────────────────────────────────────
 
 function WeekStartConfig({ initial }: { initial: number }) {
@@ -408,6 +497,7 @@ interface Props {
   maxSession:     number
   bufferMinutes:  number
   weekStartDay:   number
+  breaks:         DailyBreak[]
 }
 
 export default function SchedulingSettings({
@@ -416,6 +506,7 @@ export default function SchedulingSettings({
   maxSession,
   bufferMinutes,
   weekStartDay,
+  breaks,
 }: Props) {
   return (
     <section>
@@ -428,6 +519,7 @@ export default function SchedulingSettings({
         <WorkingHoursSection initial={workingHours} weekStartDay={weekStartDay} />
         <EnergyGrid initial={energySchedule} weekStartDay={weekStartDay} />
         <SessionConfig initialMax={maxSession} initialBuffer={bufferMinutes} />
+        <BreaksConfig initial={breaks} />
         <WeekStartConfig initial={weekStartDay} />
       </div>
     </section>

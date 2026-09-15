@@ -12,6 +12,7 @@ import {
   type TimeBlockId,
   type SchedulerConfig,
   type SchedulerTask,
+  type BreakWindow,
   type ProposedBlock,
   type AttackItem,
 } from '@/lib/scheduler'
@@ -54,10 +55,17 @@ async function fetchSchedulingInputs() {
     { data: whRows },
     { data: esRows },
     { data: configRow },
+    { data: breakRows },
   ] = await Promise.all([
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
     db.from('user_scheduling_config').select('*').limit(1).single(),
+    // Missing table (pre-0008) resolves to null rather than throwing, so the
+    // scheduler just runs without breaks.
+    db.from('user_daily_breaks').select('*').order('start_hour').then(
+      r => r,
+      () => ({ data: null }),
+    ),
   ])
 
   const workingHours: WorkingHours[] = (whRows ?? []).map(r => ({
@@ -75,10 +83,23 @@ async function fetchSchedulingInputs() {
     energy_level: r.energy_level as 'low' | 'medium' | 'high',
   }))
 
+  const breaks: BreakWindow[] = (breakRows ?? [])
+    .filter(r => r.enabled)
+    .map(r => ({
+      label:           r.label,
+      durationMinutes: r.duration_minutes,
+      startHour:       r.start_hour,
+      startMinute:     r.start_minute,
+      endHour:         r.end_hour,
+      endMinute:       r.end_minute,
+      cooldownMinutes: r.cooldown_minutes,
+    }))
+
   const schedulerConfig: SchedulerConfig = {
     maxSessionMinutes: configRow?.max_session_minutes ?? 90,
     bufferMinutes:     configRow?.buffer_minutes ?? 15,
     timezone:          'UTC',  // overridden per-call via { ...schedulerConfig, timezone }
+    breaks,
   }
 
   return { workingHours, energySchedule, schedulerConfig }
@@ -200,6 +221,7 @@ async function buildHabitCandidates(
         spreadGroup:      h.exclusive_group
           ? `group:${h.exclusive_group}`
           : `habit:${h.title}`,
+        avoidAfterBreaks: !!h.avoid_after_breaks,
         // A session is one unbroken block. Without this a 120-minute session
         // against a 90-minute cap is split into two, so "2× a week" quietly
         // becomes four scheduled blocks on four days.
@@ -622,6 +644,42 @@ export async function saveSchedulingConfig(
     await db.from('user_scheduling_config').insert({ max_session_minutes, buffer_minutes })
   }
   revalidatePath('/settings')
+}
+
+export interface DailyBreak {
+  id:               number
+  label:            string
+  duration_minutes: number
+  start_hour:       number
+  start_minute:     number
+  end_hour:         number
+  end_minute:       number
+  cooldown_minutes: number
+  enabled:          boolean
+}
+
+export async function listDailyBreaks(): Promise<DailyBreak[]> {
+  const db = createServiceClient()
+  const { data } = await db
+    .from('user_daily_breaks')
+    .select('*')
+    .order('start_hour')
+    .then(r => r, () => ({ data: null }))   // pre-0008: no table yet
+  return (data ?? []) as DailyBreak[]
+}
+
+export async function saveDailyBreak(
+  id: number,
+  patch: Partial<Omit<DailyBreak, 'id'>>,
+): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const { error } = await db.from('user_daily_breaks').update(patch).eq('id', id)
+  if (error) {
+    console.error('saveDailyBreak:', error.message)
+    return { error: 'Could not save — run migration 0008_daily_breaks.sql first.' }
+  }
+  revalidatePath('/settings')
+  return {}
 }
 
 /** Read the configured first day of the week (Monday until 0006 is applied). */

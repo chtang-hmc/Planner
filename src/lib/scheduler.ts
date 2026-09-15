@@ -57,11 +57,30 @@ export interface EnergyScheduleEntry {
   energy_level: EnergyLevel
 }
 
+/**
+ * A recurring daily break that must fit somewhere inside a window — a meal,
+ * not a fixed appointment. The scheduler picks the actual time each day.
+ */
+export interface BreakWindow {
+  label:            string
+  durationMinutes:  number
+  startHour:        number   // window opens (local)
+  startMinute:      number
+  endHour:          number   // window closes (local)
+  endMinute:        number
+  /**
+   * Minutes after the break ends during which tasks marked `avoidAfterBreaks`
+   * cannot be scheduled — "no running for an hour after eating".
+   */
+  cooldownMinutes:  number
+}
+
 export interface SchedulerConfig {
   maxSessionMinutes: number  // default 90
   bufferMinutes:     number  // default 15
   timezone:          string  // IANA tz, e.g. "America/Los_Angeles"
   startDateStr?:     string  // YYYY-MM-DD local date to start horizon from; defaults to today
+  breaks?:           BreakWindow[]
 }
 
 export interface SchedulerTask {
@@ -88,6 +107,11 @@ export interface SchedulerTask {
    * 2×/week target silently produces four scheduled blocks.
    */
   atomic?:           boolean
+  /**
+   * Keep this off the cooldown period after a break (see BreakWindow). Set on
+   * physical habits so a gym session isn't scheduled straight after lunch.
+   */
+  avoidAfterBreaks?: boolean
 }
 
 /** Busy interval as [startMs, endMs] */
@@ -251,6 +275,37 @@ export function runScheduler(
     return bScore - aScore
   })
 
+  // ── Daily breaks ──────────────────────────────────────────────────────────
+  // Placed before any task, so a meal gets first claim on its window rather
+  // than losing it to whatever work happened to sort first. Each break takes
+  // the earliest free slot inside its window that fits.
+  const breakIntervals:    Interval[] = []   // reserved — busy for everything
+  const cooldownIntervals: Interval[] = []   // busy only for avoidAfterBreaks tasks
+
+  for (const dayMs of days) {
+    for (const br of config.breaks ?? []) {
+      const winStart = dayMs + (br.startHour * 60 + br.startMinute) * 60_000
+      const winEnd   = dayMs + (br.endHour   * 60 + br.endMinute)   * 60_000
+      const needMs   = br.durationMinutes * 60_000
+      if (winEnd - winStart < needMs) continue
+
+      // Only real calendar events compete here; nothing is placed yet.
+      const free = subtractIntervals(
+        [[winStart, winEnd]],
+        busyIntervals.filter(([s, e]) => s < winEnd && e > winStart),
+      )
+      const slot = free.find(([fS, fE]) => fE - fS >= needMs)
+      if (!slot) continue          // window fully booked that day — skip it
+
+      const start = slot[0]
+      const end   = start + needMs
+      breakIntervals.push([start, end])
+      if (br.cooldownMinutes > 0) {
+        cooldownIntervals.push([end, end + br.cooldownMinutes * 60_000])
+      }
+    }
+  }
+
   const scheduled:     ProposedBlock[] = []
   const unschedulable: SchedulerTask[] = []
 
@@ -273,6 +328,10 @@ export function runScheduler(
       const allBusy: Interval[] = [
         ...busyIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
         ...placedBlocks.map(([s, e]):  Interval  => [s - bufferMs, e + bufferMs]),
+        ...breakIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
+        // Cooldowns are not buffered: the window is already an explicit
+        // "not for this long", and padding it would quietly extend the rule.
+        ...(task.avoidAfterBreaks ? cooldownIntervals : []),
       ]
 
       interface Candidate { start: number; end: number; excess: number; energyMatch: boolean; dayMs: number }

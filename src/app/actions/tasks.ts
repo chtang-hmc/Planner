@@ -215,10 +215,31 @@ export async function completeTask(
 // row and spawns the next), so both of these operate on the title rather than a
 // single row id — the same identity the streak calendar uses.
 
+/** Keep a habit off the cooldown window after meals (gym, running). */
+export async function setHabitAvoidAfterBreaks(
+  title: string,
+  avoid: boolean,
+): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const { error } = await db
+    .from('tasks')
+    .update({ avoid_after_breaks: avoid })
+    .eq('type', 'habit')
+    .eq('title', title)
+
+  if (error) {
+    console.error('setHabitAvoidAfterBreaks:', error.message)
+    return { error: 'Could not save — run migration 0008_daily_breaks.sql first.' }
+  }
+  revalidatePath('/habits')
+  return {}
+}
+
 /** A habit and the group it belongs to, for the exclusivity picker. */
 export interface HabitExclusivity {
   title: string
   group: string | null
+  avoidAfterBreaks: boolean
 }
 
 /** Every distinct habit, with its exclusive group. */
@@ -232,13 +253,15 @@ export async function listHabitExclusivity(): Promise<HabitExclusivity[]> {
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)
 
-  const byTitle = new Map<string, string | null>()
+  const byTitle = new Map<string, HabitExclusivity>()
   for (const r of data ?? []) {
-    if (!byTitle.has(r.title)) byTitle.set(r.title, r.exclusive_group ?? null)
+    if (!byTitle.has(r.title)) byTitle.set(r.title, {
+      title: r.title,
+      group: r.exclusive_group ?? null,
+      avoidAfterBreaks: !!r.avoid_after_breaks,
+    })
   }
-  return [...byTitle.entries()]
-    .map(([title, group]) => ({ title, group }))
-    .sort((a, b) => a.title.localeCompare(b.title))
+  return [...byTitle.values()].sort((a, b) => a.title.localeCompare(b.title))
 }
 
 /** Set the group on every row of a habit chain, so it survives the next spawn. */
