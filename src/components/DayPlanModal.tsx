@@ -158,22 +158,31 @@ export default function DayPlanModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 border-t border-slate-100 dark:border-slate-800 flex gap-2 shrink-0">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-slate-400 hover:border-slate-300 transition-colors"
-          >
-            Dismiss
-          </button>
-          {proposedBlocks.length > 0 && (
-            <button
-              onClick={handleConfirm}
-              disabled={confirming || confirmed}
-              className="flex-1 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity"
-            >
-              {confirmed ? 'Scheduled ✓' : confirming ? 'Scheduling…' : `Block ${proposedBlocks.length} on calendar`}
-            </button>
+        <div className="px-5 py-4 border-t border-slate-100 dark:border-slate-800 shrink-0">
+          {proposedBlocks.length === 0 && attackList.length > 0 && (
+            <p className="text-xs text-slate-400 text-center mb-3">
+              No open slots found for this day —{' '}
+              <a href="/settings" className="underline hover:text-accent-500">check your working hours in Settings</a>
+              {' '}or pick a different day.
+            </p>
           )}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="flex-1 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-slate-400 hover:border-slate-300 transition-colors"
+            >
+              Dismiss
+            </button>
+            {proposedBlocks.length > 0 && (
+              <button
+                onClick={handleConfirm}
+                disabled={confirming || confirmed}
+                className="flex-1 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity"
+              >
+                {confirmed ? 'Scheduled ✓' : confirming ? 'Scheduling…' : `Block ${proposedBlocks.length} on calendar`}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
