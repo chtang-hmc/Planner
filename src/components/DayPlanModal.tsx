@@ -23,6 +23,7 @@ function fmtDur(mins: number | null) {
 interface SerializedAttackItem {
   taskId:           string
   taskTitle:        string
+  priority:         number
   urgencyScore:     number
   durationMinutes:  number | null
   energyRequired:   string
@@ -52,17 +53,29 @@ export default function DayPlanModal({
   const [, startTransition] = useTransition()
   const [confirming, setConfirming] = useState(false)
   const [confirmed,  setConfirmed]  = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
 
   function handleConfirm() {
     if (proposedBlocks.length === 0) return
     setConfirming(true)
+    setConfirmError(null)
     startTransition(async () => {
-      await confirmSchedule(
-        proposedBlocks.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
-      )
-      setConfirmed(true)
-      setConfirming(false)
-      setTimeout(onConfirmed, 1000)
+      try {
+        const result = await confirmSchedule(
+          proposedBlocks.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
+        )
+        if (result.confirmed === 0 && result.failed > 0) {
+          setConfirmError(result.error ?? `Failed to create ${result.failed} calendar event${result.failed !== 1 ? 's' : ''}`)
+          setConfirming(false)
+          return
+        }
+        setConfirmed(true)
+        setConfirming(false)
+        setTimeout(onConfirmed, 1000)
+      } catch (err) {
+        setConfirmError(err instanceof Error ? err.message : 'Unexpected error')
+        setConfirming(false)
+      }
     })
   }
 
@@ -111,7 +124,7 @@ export default function DayPlanModal({
                   </span>
 
                   {/* Priority dot */}
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_DOT[4] ?? 'bg-slate-400'}`} />
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_DOT[item.priority] ?? 'bg-slate-400'}`} />
 
                   {/* Title + meta */}
                   <div className="flex-1 min-w-0">
@@ -165,6 +178,9 @@ export default function DayPlanModal({
               <a href="/settings" className="underline hover:text-accent-500">check your working hours in Settings</a>
               {' '}or pick a different day.
             </p>
+          )}
+          {confirmError && (
+            <p className="text-xs text-red-500 text-center mb-3">{confirmError}</p>
           )}
           <div className="flex gap-2">
             <button

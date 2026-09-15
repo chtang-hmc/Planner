@@ -2,10 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
-import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock } from '@/lib/google-calendar'
+import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEventIds } from '@/lib/google-calendar'
 import {
   runScheduler,
   buildAttackList,
+  localMidnight,
   type WorkingHours,
   type EnergyScheduleEntry,
   type TimeBlockId,
@@ -98,6 +99,7 @@ export interface SerializedBlock {
 export interface SerializedAttackItem {
   taskId:            string
   taskTitle:         string
+  priority:          number
   urgencyScore:      number
   durationMinutes:   number | null
   energyRequired:    string
@@ -105,6 +107,74 @@ export interface SerializedAttackItem {
   isScheduled:       boolean
   energyMatchNow:    boolean
   rank:              number
+}
+
+// ── Habit sessions ────────────────────────────────────────────────────────────
+
+/** Monday of the current UTC week, as YYYY-MM-DD. Mirrors completeTask. */
+function currentWeekStart(): string {
+  const d   = new Date()
+  const dow = d.getUTCDay()                        // 0=Sun … 6=Sat
+  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1))
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Expand each habit with a weekly target into one candidate per session still
+ * owed this week (target minus sessions already completed). Sessions share a
+ * spreadGroup so they land on separate days.
+ *
+ * Habits carry urgency_score 0 in the DB — they aren't deadline work — so for
+ * scheduling they're given the same baseline an undated task of that priority
+ * would get (priority × 10). Without it they'd sort dead last and only ever get
+ * scheduled in leftover space.
+ */
+async function buildHabitCandidates(
+  db: ReturnType<typeof createServiceClient>
+): Promise<SchedulerTask[]> {
+  const { data: habits } = await db
+    .from('tasks')
+    .select('id, title, priority, energy_required, estimated_minutes, adjusted_minutes, weekly_target')
+    .eq('type', 'habit')
+    .in('status', ['inbox', 'active'])
+    .is('parent_id', null)
+    .not('weekly_target', 'is', null)
+    .or('scheduled_by.is.null,scheduled_by.eq.auto')
+
+  if (!habits || habits.length === 0) return []
+
+  const { data: streakRows } = await db
+    .from('habit_streaks')
+    .select('task_id, completions_this_week, week_start')
+    .in('task_id', habits.map(h => h.id))
+
+  const streaks  = new Map((streakRows ?? []).map(s => [s.task_id, s]))
+  const weekStart = currentWeekStart()
+  const out: SchedulerTask[] = []
+
+  for (const h of habits) {
+    const duration = h.adjusted_minutes ?? h.estimated_minutes
+    if (!duration) continue          // no session length set — can't schedule it
+
+    const streak = streaks.get(h.id)
+    const done   = streak && streak.week_start === weekStart ? streak.completions_this_week : 0
+    const owed   = Math.max(0, (h.weekly_target ?? 0) - done)
+
+    for (let i = 0; i < owed; i++) {
+      out.push({
+        id:               h.id,
+        title:            h.title,
+        priority:         h.priority,
+        urgency_score:    h.priority * 10,
+        energy_required:  h.energy_required,
+        duration_minutes: duration,
+        due_date:         null,
+        spreadGroup:      h.id,
+      })
+    }
+  }
+
+  return out
 }
 
 // ── proposeSchedule ───────────────────────────────────────────────────────────
@@ -139,6 +209,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)              // top-level tasks only here
+    .neq('type', 'habit')               // habits are expanded per weekly target below
     .or('scheduled_by.is.null,scheduled_by.eq.auto')  // exclude manual locks; neq would drop NULLs
     .order('urgency_score', { ascending: false })
 
@@ -187,10 +258,20 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     })
   }
 
+  // ── 3b. Habit sessions ─────────────────────────────────────────────────────
+  // A habit with a weekly target and a session length becomes N candidates —
+  // one per session still owed this week. They share a spreadGroup so the
+  // scheduler puts them on different days, and carry no due_date so they can
+  // land anywhere in the horizon (the habit row's own due_date is just the
+  // next occurrence marker and would otherwise pin every session to one day).
+  const habitCandidates = await buildHabitCandidates(db)
+  candidates.push(...habitCandidates)
+
   // ── 4. Busy intervals from GCal ────────────────────────────────────────────
   const now      = new Date()
   const dayStr   = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
-  const timeMin  = new Date(`${dayStr}T00:00:00Z`)
+  // Use local midnight so UTC+ users don't miss morning busy events
+  const timeMin  = new Date(localMidnight(dayStr, timezone))
   const timeMax  = new Date(timeMin)
   timeMax.setDate(timeMax.getDate() + horizonDays + 1)
 
@@ -244,24 +325,32 @@ export async function confirmSchedule(
   const token = await getValidToken()
   if (!token) return { confirmed: 0, failed: 0, error: 'Google Calendar not connected' }
 
-  // ── 1. Clear all previously auto-scheduled tasks ──────────────────────────
-  const { data: autoScheduled } = await db
-    .from('tasks')
-    .select('id, gcal_event_id')
-    .eq('scheduled_by', 'auto')
-    .not('gcal_event_id', 'is', null)
-
-  await Promise.allSettled(
-    (autoScheduled ?? []).map(t =>
-      deleteTaskBlock(token.access_token, t.gcal_event_id!).catch(() => {})
-    )
+  // ── 1. Snapshot existing auto-scheduled events BEFORE touching anything ────
+  // Listed from GCal by tag, not from task rows: a task holds one
+  // gcal_event_id but may own several blocks (segmented tasks, habit sessions),
+  // so the column alone would leave the extra events behind on every re-run.
+  // Snapshotting first also means these are, by definition, all old — the
+  // events created below are not in this set, so we can create first and delete
+  // after without a partial GCal failure wiping the existing calendar.
+  //
+  // Window starts at now: past blocks are history and stay put. It extends past
+  // the last new block so stale future blocks from a longer previous schedule
+  // are still swept up.
+  const nowISO = new Date().toISOString()
+  const lastEnd = blocks.reduce(
+    (max, b) => (b.endISO > max ? b.endISO : max),
+    nowISO,
   )
+  const sweepEnd = new Date(new Date(lastEnd).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString()
 
-  // Clear scheduling fields for all auto-scheduled tasks
-  await db
-    .from('tasks')
-    .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
-    .eq('scheduled_by', 'auto')
+  let staleEventIds: string[] = []
+  try {
+    staleEventIds = await listAutoScheduledEventIds(token.access_token, nowISO, sweepEnd)
+  } catch (err) {
+    // A failed sweep must not block scheduling — worst case some old blocks
+    // linger, which is what the previous behaviour did anyway.
+    console.error('Failed to list existing auto-scheduled events', err)
+  }
 
   // ── 2. Fetch task info for the proposed blocks ────────────────────────────
   const taskIds = [...new Set(blocks.map(b => b.taskId))]
@@ -272,9 +361,14 @@ export async function confirmSchedule(
 
   const taskMap = new Map((taskRows ?? []).map(t => [t.id, t]))
 
-  // ── 3. Create GCal events + update DB ────────────────────────────────────
+  // ── 3. Create new GCal events + update DB ────────────────────────────────
   let confirmed = 0
   let failed    = 0
+
+  // A task with several blocks can only record one on its row; keep the
+  // earliest so "next scheduled block" reads correctly in the UI. Cleanup no
+  // longer depends on this value.
+  const rowWrites = new Map<string, { startISO: string; endISO: string; eventId: string }>()
 
   for (const block of blocks) {
     const task = taskMap.get(block.taskId)
@@ -283,22 +377,52 @@ export async function confirmSchedule(
     try {
       const gcalEventId = await createTaskBlock(
         token.access_token,
-        { title: task.title, description: task.description, priority: task.priority },
+        { id: task.id, title: task.title, description: task.description, priority: task.priority },
         block.startISO,
         block.endISO,
+        true,   // auto-scheduled — tagged so the next run can clear it
       )
-      await db.from('tasks').update({
-        gcal_event_id:   gcalEventId,
-        scheduled_start: block.startISO,
-        scheduled_end:   block.endISO,
-        scheduled_by:    'auto',
-      }).eq('id', block.taskId)
+      const existing = rowWrites.get(block.taskId)
+      if (!existing || block.startISO < existing.startISO) {
+        rowWrites.set(block.taskId, {
+          startISO: block.startISO, endISO: block.endISO, eventId: gcalEventId,
+        })
+      }
       confirmed++
     } catch (err) {
       console.error('Failed to schedule block', block.taskId, err)
       failed++
     }
   }
+
+  for (const [taskId, w] of rowWrites) {
+    await db.from('tasks').update({
+      gcal_event_id:   w.eventId,
+      scheduled_start: w.startISO,
+      scheduled_end:   w.endISO,
+      scheduled_by:    'auto',
+    }).eq('id', taskId)
+  }
+
+  // ── 4. Delete the previous auto-schedule ──────────────────────────────────
+  // Only once the new events exist. Skipped when creates were attempted and all
+  // of them failed, so a total GCal outage leaves the old schedule intact — but
+  // an empty proposal is a deliberate "clear everything" and still sweeps.
+  if (staleEventIds.length > 0 && (confirmed > 0 || blocks.length === 0)) {
+    await Promise.allSettled(
+      staleEventIds.map(id => deleteTaskBlock(token.access_token, id).catch(() => {}))
+    )
+  }
+
+  // Clear DB fields for tasks that were auto-scheduled before but aren't now
+  const stillScheduled = [...rowWrites.keys()]
+  const clearQuery = db
+    .from('tasks')
+    .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
+    .eq('scheduled_by', 'auto')
+  await (stillScheduled.length > 0
+    ? clearQuery.not('id', 'in', `(${stillScheduled.join(',')})`)
+    : clearQuery)
 
   revalidatePath('/tasks')
   revalidatePath('/projects')
@@ -332,13 +456,20 @@ export interface DayPlan {
 export async function planDay(timezone: string = 'UTC', dateStr?: string): Promise<DayPlan> {
   const db = createServiceClient()
 
-  const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
-
   const dayStr = dateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
 
-  // Propose blocks for the chosen day
+  // Propose blocks for the chosen day (internally fetches scheduling inputs)
   const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone, dayStr)
   if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
+
+  // Fetch only the energy schedule for buildAttackList — avoids double-fetching
+  // working hours and config that proposeSchedule already consumed above.
+  const { data: esRows } = await db.from('user_energy_schedule').select('*')
+  const energySchedule: EnergyScheduleEntry[] = (esRows ?? []).map(r => ({
+    day_of_week:  r.day_of_week,
+    time_block:   r.time_block as TimeBlockId,
+    energy_level: r.energy_level as 'low' | 'medium' | 'high',
+  }))
 
   // Fetch tasks due on or before the chosen day.
   // due_dates are stored as YYYY-MM-DDT00:00:00Z (UTC midnight of the local date).
@@ -346,7 +477,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   // (e.g. "2026-09-15T00:00:00Z" <= "2026-09-15T00:00:00Z" → true).
   const { data: todayTasks } = await db
     .from('tasks')
-    .select('id, title, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
+    .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
     .in('status', ['inbox', 'active'])
     .lte('due_date', dayStr + 'T00:00:00Z')
     .order('urgency_score', { ascending: false })
@@ -354,7 +485,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   const schedulerTasks: SchedulerTask[] = (todayTasks ?? []).map(t => ({
     id:               t.id,
     title:            t.title,
-    priority:         2,
+    priority:         t.priority,
     urgency_score:    t.urgency_score,
     energy_required:  t.energy_required,
     duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
@@ -384,6 +515,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   const attackList: SerializedAttackItem[] = rawAttack.map(item => ({
     taskId:            item.taskId,
     taskTitle:         item.taskTitle,
+    priority:          item.priority,
     urgencyScore:      item.urgencyScore,
     durationMinutes:   item.durationMinutes,
     energyRequired:    item.energyRequired,
@@ -410,6 +542,8 @@ export async function saveWorkingHours(
   await db.from('user_working_hours').upsert({
     day_of_week, start_hour, start_minute, end_hour, end_minute, enabled,
   }, { onConflict: 'day_of_week' })
+  revalidatePath('/settings')
+  revalidatePath('/tasks')
 }
 
 export async function saveEnergyLevel(
@@ -422,6 +556,7 @@ export async function saveEnergyLevel(
     { day_of_week, time_block, energy_level },
     { onConflict: 'day_of_week,time_block' },
   )
+  revalidatePath('/settings')
 }
 
 export async function saveSchedulingConfig(
@@ -438,6 +573,7 @@ export async function saveSchedulingConfig(
   } else {
     await db.from('user_scheduling_config').insert({ max_session_minutes, buffer_minutes })
   }
+  revalidatePath('/settings')
 }
 
 // ── Subtask helpers ───────────────────────────────────────────────────────────

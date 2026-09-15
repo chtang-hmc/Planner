@@ -45,6 +45,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [dueDate, setDueDate]   = useState('')
 
   const [rrule, setRrule] = useState<string | null>(null)
+  const [weeklyTarget, setWeeklyTarget] = useState<string>('')
 
   // Pre-fill due date if provided (e.g. from Upcoming view "+ Add task" for a specific day)
   useEffect(() => {
@@ -97,10 +98,11 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
         project_id: mode === 'habit' ? null : projectId,
         priority,
         energy_required: energy,
-        estimated_minutes: mode === 'habit' ? null : (estimate ? parseInt(estimate) : null),
+        estimated_minutes: estimate ? parseInt(estimate) : null,
         due_date: mode === 'habit' ? null : (dueDate ? new Date(dueDate).toISOString() : null),
         urgency_curve: 'linear',
         rrule: rrule || null,
+        weekly_target: mode === 'habit' && weeklyTarget ? parseInt(weeklyTarget) : null,
         taskType: mode === 'habit' ? 'habit' : undefined,
       })
       onCreated()
@@ -251,16 +253,80 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                 className="w-full border border-violet-200 dark:border-violet-800 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
+                  Times per week
+                </label>
+                <div className="flex gap-1">
+                  {[2, 3, 4, 5].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setWeeklyTarget(weeklyTarget === String(n) ? '' : String(n))}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                        weeklyTarget === String(n)
+                          ? 'bg-violet-600 border-violet-600 text-white'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300 hover:text-violet-500'
+                      }`}
+                    >
+                      {n}×
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={7}
+                  value={weeklyTarget}
+                  onChange={e => setWeeklyTarget(e.target.value)}
+                  placeholder="or type a number"
+                  className="mt-1.5 w-full border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono placeholder:text-slate-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
+                  Session length
+                </label>
+                <div className="flex gap-1">
+                  {[30, 45, 60, 90].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setEstimate(estimate === String(n) ? '' : String(n))}
+                      className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                        estimate === String(n)
+                          ? 'bg-violet-600 border-violet-600 text-white'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300 hover:text-violet-500'
+                      }`}
+                    >
+                      {n}m
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={estimate}
+                  onChange={e => setEstimate(e.target.value)}
+                  placeholder="minutes"
+                  className="mt-1.5 w-full border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono placeholder:text-slate-300"
+                />
+              </div>
+            </div>
             <div>
               <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
                 Schedule
-                {!rrule && <span className="ml-2 normal-case text-violet-500 font-normal">● Anytime — shows up every day</span>}
+                {!rrule && <span className="ml-1 normal-case text-violet-500 font-normal">● Any day</span>}
               </label>
               <RecurrencePicker value={rrule} onChange={setRrule} />
-              <p className="text-xs text-slate-400 mt-2">
-                Leave blank for anytime habits (gym, reading). Set a schedule for fixed-day habits.
-              </p>
             </div>
+            <p className="text-xs text-slate-400 -mt-2">
+              {weeklyTarget && estimate
+                ? `Scheduling your week will book ${weeklyTarget} × ${estimate}m sessions on separate days.`
+                : 'Set a weekly target and session length to have this booked into your schedule automatically.'}
+            </p>
           </div>
         )}
 

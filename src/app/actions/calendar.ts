@@ -76,6 +76,7 @@ export async function scheduleTask(
 
   revalidatePath('/tasks')
   revalidatePath('/projects')
+  revalidatePath('/habits')
   return {}
 }
 
@@ -109,5 +110,6 @@ export async function unscheduleTask(taskId: string): Promise<{ error?: string }
 
   revalidatePath('/tasks')
   revalidatePath('/projects')
+  revalidatePath('/habits')
   return {}
 }

@@ -72,6 +72,12 @@ export interface SchedulerTask {
   energy_required:   EnergyLevel
   duration_minutes:  number   // adjusted_minutes ?? estimated_minutes, caller picks
   due_date:          string | null  // ISO
+  /**
+   * Tasks sharing a spreadGroup are placed on distinct days. Used for habit
+   * sessions: "gym 4×/week" expands into 4 candidates with one group, so they
+   * land on four different days instead of stacking into a single afternoon.
+   */
+  spreadGroup?:      string
 }
 
 /** Busy interval as [startMs, endMs] */
@@ -106,7 +112,7 @@ const ENERGY_RANK: Record<EnergyLevel, number> = { low: 0, medium: 1, high: 2 }
  * Strategy: start from UTC midnight on that date, then measure what local hour
  * it currently shows in the target tz and shift accordingly.
  */
-function localMidnight(dateStr: string, tz: string): number {
+export function localMidnight(dateStr: string, tz: string): number {
   const utcMidnight = new Date(`${dateStr}T00:00:00Z`)
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
@@ -237,9 +243,13 @@ export function runScheduler(
   const scheduled:     ProposedBlock[] = []
   const unschedulable: SchedulerTask[] = []
 
+  // spreadGroup → day-midnight ms values already used by that group
+  const groupDays = new Map<string, Set<number>>()
+
   for (const task of sorted) {
     const totalSegs    = Math.ceil(task.duration_minutes / config.maxSessionMinutes)
     const dueMs        = task.due_date ? endOfDayMs(task.due_date, tz) : Infinity
+    const blocksBefore = scheduled.length
     let remaining      = task.duration_minutes
     let allPlaced      = true
 
@@ -254,11 +264,15 @@ export function runScheduler(
         ...placedBlocks.map(([s, e]):  Interval  => [s - bufferMs, e + bufferMs]),
       ]
 
-      interface Candidate { start: number; end: number; excess: number; energyMatch: boolean }
+      interface Candidate { start: number; end: number; excess: number; energyMatch: boolean; dayMs: number }
       const candidates: Candidate[] = []
+
+      // Days already taken by a sibling session of the same habit
+      const usedDays = task.spreadGroup ? groupDays.get(task.spreadGroup) : undefined
 
       for (const dayMs of days) {
         if (dayMs > dueMs) break
+        if (usedDays?.has(dayMs)) continue   // one session per day per habit
 
         const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
         const wh  = workingHours.find(w => w.day_of_week === dow)
@@ -282,7 +296,7 @@ export function runScheduler(
           const energyMatch = ENERGY_RANK[energy] >= ENERGY_RANK[task.energy_required]
           const excess      = (fE - fS) - segMs
 
-          candidates.push({ start: slotStart, end: slotStart + segMs, excess, energyMatch })
+          candidates.push({ start: slotStart, end: slotStart + segMs, excess, energyMatch, dayMs })
         }
       }
 
@@ -292,10 +306,20 @@ export function runScheduler(
       }
 
       // Prefer energy-matched; fall back to any. Within group: tightest fit, then earliest.
+      // Habit sessions sort by time instead, so repeated sessions walk forward
+      // through the week rather than clustering wherever the tightest gaps are.
       const matched = candidates.filter(c => c.energyMatch)
       const pool    = matched.length > 0 ? matched : candidates
-      pool.sort((a, b) => a.excess - b.excess || a.start - b.start)
+      pool.sort(task.spreadGroup
+        ? (a, b) => a.start - b.start
+        : (a, b) => a.excess - b.excess || a.start - b.start)
       const best = pool[0]
+
+      if (task.spreadGroup) {
+        const set = groupDays.get(task.spreadGroup) ?? new Set<number>()
+        set.add(best.dayMs)
+        groupDays.set(task.spreadGroup, set)
+      }
 
       scheduled.push({
         taskId:        task.id,
@@ -311,8 +335,11 @@ export function runScheduler(
       placedBlocks.push([best.start, best.end])
     }
 
-    // Task is only "unschedulable" if zero segments were placed
-    if (!allPlaced && !scheduled.some(b => b.taskId === task.id)) {
+    // Only "unschedulable" if zero segments of THIS candidate were placed.
+    // Scoped to this candidate rather than the task id: habit sessions share an
+    // id, so a taskId check would silently swallow every session after the
+    // first — "gym 4×/week" would quietly become 2 with nothing reported.
+    if (!allPlaced && scheduled.length === blocksBefore) {
       unschedulable.push(task)
     }
   }
@@ -325,6 +352,7 @@ export function runScheduler(
 export interface AttackItem {
   taskId:           string
   taskTitle:        string
+  priority:         number
   urgencyScore:     number
   durationMinutes:  number | null
   energyRequired:   EnergyLevel
@@ -356,6 +384,7 @@ export function buildAttackList(
     return {
       taskId:         task.id,
       taskTitle:      task.title,
+      priority:       task.priority,
       urgencyScore:   task.urgency_score,
       durationMinutes: task.duration_minutes,
       energyRequired: task.energy_required,
@@ -377,17 +406,24 @@ export function buildAttackList(
     return bScore - aScore
   })
 
-  // Interleave: scheduled tasks stay at their times, unscheduled fill between
+  // Interleave: scheduled tasks stay in time order; an unscheduled task appears
+  // before a scheduled block only when its urgency+energy score exceeds that block's.
+  // This preserves calendar commitments while surfacing high-urgency free work.
   const merged: AttackItem[] = []
   let ui = 0
   for (const s of scheduled) {
-    // Add any unscheduled tasks that would fit before this scheduled block
+    const sScore = s.urgencyScore + (s.energyMatchNow ? 10 : 0)
     while (ui < unscheduled.length) {
-      merged.push(unscheduled[ui++])
+      const uScore = unscheduled[ui].urgencyScore + (unscheduled[ui].energyMatchNow ? 10 : 0)
+      if (uScore > sScore) {
+        merged.push(unscheduled[ui++])
+      } else {
+        break
+      }
     }
     merged.push(s)
   }
-  // Remaining unscheduled
+  // Remaining unscheduled go after all scheduled blocks
   while (ui < unscheduled.length) merged.push(unscheduled[ui++])
 
   return merged.map((item, i) => ({ ...item, rank: i + 1 }))

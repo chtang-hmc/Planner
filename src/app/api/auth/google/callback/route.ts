@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
+import { syncCalendarEvents } from '@/lib/google-calendar'
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
@@ -48,8 +49,9 @@ export async function GET(request: NextRequest) {
     connected_at: new Date().toISOString(),
   })
 
-  // Kick off the initial sync (fire-and-forget is fine)
-  fetch(`${origin}/api/calendar/sync`, { method: 'POST' }).catch(console.error)
+  // Kick off the initial sync (fire-and-forget is fine — call the lib directly,
+  // not via fetch, per CLAUDE.md "No HTTP self-calls in server actions")
+  syncCalendarEvents().catch(console.error)
 
   return NextResponse.redirect(`${origin}/tasks`)
 }

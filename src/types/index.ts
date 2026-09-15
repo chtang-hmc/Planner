@@ -32,6 +32,7 @@ export interface Task {
   urgency_score: number              // 0–100, recomputed nightly
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks
+  weekly_target: number | null       // habits only: how many times per week to aim for
   gcal_event_id: string | null       // GCal event id for scheduled focus block
   scheduled_start: string | null     // ISO timestamp — start of focus block
   scheduled_end: string | null       // ISO timestamp — end of focus block
@@ -76,10 +77,12 @@ export interface EnergyPattern {
 }
 
 export interface HabitStreak {
-  task_id: string       // PK — habit is a recurring task
+  task_id: string              // PK — habit is a recurring task
   current_streak: number
   longest_streak: number
-  last_completed: string  // date string YYYY-MM-DD
+  last_completed: string       // date string YYYY-MM-DD
+  completions_this_week: number  // resets each Monday; tracks weekly goal progress
+  week_start: string | null    // Monday of the current tracking week (YYYY-MM-DD)
 }
 
 export interface CalendarEvent {

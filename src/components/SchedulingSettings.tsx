@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import {
   saveWorkingHours,
   saveEnergyLevel,
@@ -35,18 +35,25 @@ function parseTime(s: string): [number, number] {
 // ── Working hours ─────────────────────────────────────────────────────────────
 
 function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
-  const [rows, setRows] = useState<WorkingHours[]>(() => {
+  const initRows = (() => {
     const map = new Map(initial.map(r => [r.day_of_week, r]))
     return Array.from({ length: 7 }, (_, i) => map.get(i) ?? {
       day_of_week: i, start_hour: 9, start_minute: 0, end_hour: 18, end_minute: 0, enabled: i >= 1 && i <= 5,
     })
-  })
+  })()
+  const [rows, setRows] = useState<WorkingHours[]>(initRows)
+  // Ref always holds the latest rows so rapid updates don't read stale closures.
+  // Updated synchronously in update() before setRows batches the re-render.
+  const rowsRef = useRef<WorkingHours[]>(initRows)
   const [mode, setMode] = useState<'simple' | 'custom'>('simple')
   const [, startTransition] = useTransition()
 
   function update(dow: number, patch: Partial<WorkingHours>) {
-    setRows(prev => prev.map(r => r.day_of_week === dow ? { ...r, ...patch } : r))
-    const row = { ...rows.find(r => r.day_of_week === dow)!, ...patch }
+    // Compute the new rows from the ref (always latest, even between React re-renders)
+    const updated = rowsRef.current.map(r => r.day_of_week === dow ? { ...r, ...patch } : r)
+    rowsRef.current = updated   // update ref synchronously before the next call can run
+    setRows(updated)
+    const row = updated.find(r => r.day_of_week === dow)!
     startTransition(() => saveWorkingHours(
       row.day_of_week, row.start_hour, row.start_minute,
       row.end_hour, row.end_minute, row.enabled,

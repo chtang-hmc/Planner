@@ -99,9 +99,12 @@ export async function completeTask(
       const nextDate = getNextOccurrence(taskRow.rrule, anchor)
       if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
     } else if (isHabit) {
+      // UTC midnight of the next calendar day — local midnight would land a few
+      // hours either side of the UTC day boundary and the habits page (which
+      // filters on UTC day edges) would show the habit a day early or late.
       const tomorrow = new Date(today)
-      tomorrow.setDate(tomorrow.getDate() + 1)
-      tomorrow.setHours(0, 0, 0, 0)
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
+      tomorrow.setUTCHours(0, 0, 0, 0)
       nextDue = tomorrow.toISOString()
     }
 
@@ -125,6 +128,7 @@ export async function completeTask(
         urgency_score,
         estimated_minutes:  taskRow.estimated_minutes,
         rrule:              taskRow.rrule,
+        weekly_target:      taskRow.weekly_target ?? null,
         due_date:           nextDue,
         created_at:         now,
       })
@@ -132,6 +136,13 @@ export async function completeTask(
 
     // Upsert habit streak
     const todayStr = today.toISOString().slice(0, 10)
+
+    // Monday of the current UTC week (used for weekly goal tracking)
+    const weekStartDate = new Date(today)
+    const dow = weekStartDate.getUTCDay() // 0=Sun … 6=Sat
+    weekStartDate.setUTCDate(weekStartDate.getUTCDate() - (dow === 0 ? 6 : dow - 1))
+    const weekStartStr = weekStartDate.toISOString().slice(0, 10)
+
     const { data: streak } = await db
       .from('habit_streaks')
       .select('*')
@@ -139,23 +150,32 @@ export async function completeTask(
       .maybeSingle()
 
     if (streak) {
-      // Check if last completion was yesterday (consecutive day = increment)
+      // Consecutive-day streak
       const yesterday = new Date(today)
       yesterday.setDate(yesterday.getDate() - 1)
       const yesterdayStr = yesterday.toISOString().slice(0, 10)
       const consecutive = streak.last_completed === yesterdayStr
       const newStreak = consecutive ? streak.current_streak + 1 : 1
+
+      // Weekly count — reset if the stored week_start is from a different week
+      const sameWeek = streak.week_start === weekStartStr
+      const newWeeklyCount = sameWeek ? (streak.completions_this_week + 1) : 1
+
       await db.from('habit_streaks').update({
-        current_streak: newStreak,
-        longest_streak: Math.max(newStreak, streak.longest_streak),
-        last_completed: todayStr,
+        current_streak:        newStreak,
+        longest_streak:        Math.max(newStreak, streak.longest_streak),
+        last_completed:        todayStr,
+        completions_this_week: newWeeklyCount,
+        week_start:            weekStartStr,
       }).eq('task_id', taskId)
     } else {
       await db.from('habit_streaks').insert({
-        task_id: taskId,
-        current_streak: 1,
-        longest_streak: 1,
-        last_completed: todayStr,
+        task_id:               taskId,
+        current_streak:        1,
+        longest_streak:        1,
+        last_completed:        todayStr,
+        completions_this_week: 1,
+        week_start:            weekStartStr,
       })
     }
   }
@@ -197,6 +217,7 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   if (error) throw new Error(error.message)
   revalidatePath('/tasks')
   revalidatePath('/projects')
+  revalidatePath('/habits')   // habits are edited from /habits via TaskDetail
 }
 
 // ── Quick triage (no reflection) — used in weekly review ────────────────────
@@ -288,6 +309,7 @@ export async function createTask(data: {
   due_date: string | null
   urgency_curve: string
   rrule?: string | null
+  weekly_target?: number | null
   /** Explicit type override — 'habit' skips urgency scoring */
   taskType?: 'task' | 'recurring' | 'habit'
 }) {
@@ -315,6 +337,7 @@ export async function createTask(data: {
       due_date:           data.due_date,
       urgency_curve:      data.urgency_curve,
       rrule:              data.rrule || null,
+      weekly_target:      data.weekly_target ?? null,
       type:               resolvedType,
       status:             'inbox',
       urgency_score,
@@ -325,6 +348,7 @@ export async function createTask(data: {
   if (error) throw new Error(error.message)
   revalidatePath('/tasks')
   revalidatePath('/projects')
+  if (resolvedType === 'habit') revalidatePath('/habits')
   return task
 }
 

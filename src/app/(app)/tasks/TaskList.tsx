@@ -41,13 +41,29 @@ function formatMinutes(m: number | null): string {
   return rem ? `${h}h ${rem}m` : `${h}h`
 }
 
+function localDateStr(d: Date) {
+  return d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0')
+}
+
 function formatDue(iso: string | null): { label: string; urgent: boolean } {
   if (!iso) return { label: '', urgent: false }
-  const diff = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
-  if (diff < 0)  return { label: 'Overdue', urgent: true }
-  if (diff === 0) return { label: 'Today',   urgent: true }
-  if (diff === 1) return { label: 'Tomorrow', urgent: false }
-  return { label: `${diff}d`, urgent: false }
+  // Compare calendar dates in LOCAL time to avoid "overdue" appearing for
+  // tasks due "today" once it's past midnight UTC but still today locally.
+  const taskDate  = iso.slice(0, 10)                        // YYYY-MM-DD stored
+  const today     = new Date()
+  const todayStr  = localDateStr(today)
+  const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1)
+  const tmrwStr   = localDateStr(tomorrow)
+
+  if (taskDate < todayStr) return { label: 'Overdue',  urgent: true  }
+  if (taskDate === todayStr) return { label: 'Today',   urgent: true  }
+  if (taskDate === tmrwStr)  return { label: 'Tomorrow', urgent: false }
+
+  // For further dates, count calendar days from today's local midnight
+  const ms = new Date(taskDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()
+  return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
 }
 
 interface Props {
@@ -105,16 +121,19 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (!gcalWriteEnabled) return
     setScheduling(true)
     startTransition(async () => {
-      const res = await proposeSchedule(7, tz)
-      setSchedulePreview({
-        blocks: res.scheduled.map(b => ({
-          taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
-          startISO: b.startISO, endISO: b.endISO,
-          segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
-        })),
-        unschedulable: res.unschedulable,
-      })
-      setScheduling(false)
+      try {
+        const res = await proposeSchedule(7, tz)
+        setSchedulePreview({
+          blocks: res.scheduled.map(b => ({
+            taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+            startISO: b.startISO, endISO: b.endISO,
+            segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+          })),
+          unschedulable: res.unschedulable,
+        })
+      } finally {
+        setScheduling(false)
+      }
     })
   }
 
@@ -122,17 +141,20 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (!gcalWriteEnabled) return
     setScheduling(true)
     startTransition(async () => {
-      const res = await planDay(tz, planDayDate)
-      setDayPlan({
-        blocks: res.proposedBlocks.map(b => ({
-          taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
-          startISO: b.startISO, endISO: b.endISO,
-          segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
-        })),
-        attackList: res.attackList,
-        unschedulable: res.unschedulable,
-      })
-      setScheduling(false)
+      try {
+        const res = await planDay(tz, planDayDate)
+        setDayPlan({
+          blocks: res.proposedBlocks.map(b => ({
+            taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+            startISO: b.startISO, endISO: b.endISO,
+            segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+          })),
+          attackList: res.attackList,
+          unschedulable: res.unschedulable,
+        })
+      } finally {
+        setScheduling(false)
+      }
     })
   }
 
@@ -427,12 +449,44 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                         {isPending && <span className="text-violet-500 text-xs">…</span>}
                       </button>
 
-                      {/* Name + frequency */}
+                      {/* Name + frequency + weekly progress */}
                       <div className="flex-1 min-w-0">
                         <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.title}</span>
-                        {task.rrule && (
-                          <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
-                        )}
+                        {(() => {
+                          const target = task.weekly_target
+                          const done   = streak?.completions_this_week ?? 0
+                          if (!target) {
+                            return task.rrule
+                              ? <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
+                              : null
+                          }
+                          const met = done >= target
+                          return (
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {/* Frequency dots */}
+                              <span className="flex gap-0.5">
+                                {Array.from({ length: target }, (_, i) => (
+                                  <span
+                                    key={i}
+                                    className={`inline-block w-2 h-2 rounded-full ${
+                                      i < done
+                                        ? met ? 'bg-emerald-500' : 'bg-violet-500'
+                                        : 'bg-slate-200 dark:bg-slate-700'
+                                    }`}
+                                  />
+                                ))}
+                              </span>
+                              <span className={`text-xs font-medium tabular-nums ${
+                                met ? 'text-emerald-500' : 'text-violet-400 dark:text-violet-500'
+                              }`}>
+                                {done}/{target}{met ? ' ✓' : ''}
+                              </span>
+                              {task.rrule && (
+                                <span className="text-xs text-slate-300 dark:text-slate-600">· {rruleToLabel(task.rrule)}</span>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
 
                       {/* Streak */}

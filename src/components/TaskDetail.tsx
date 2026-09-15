@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useEffect, useRef } from 'react'
-import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, computeUrgency, computeUrgencyBreakdown } from '@/types'
+import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
 import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
@@ -63,7 +63,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
 
   function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string }) {
     setItems(prev => prev.map(s => s.id === sub.id ? { ...s, ...patch } : s))
-    startTransition(() => updateSubtaskFields(sub.id, taskId, patch))
+    startTransition(async () => { await updateSubtaskFields(sub.id, taskId, patch) })
   }
 
   const done  = items.filter(s => s.status === 'done').length
@@ -407,7 +407,8 @@ function ScheduleSection({
 }
 
 interface Props {
-  task: Task & { project: Project }
+  /** `project` is null for tasks with no project_id — the join returns null. */
+  task: Task & { project: Project | null }
   projects: Project[]
   streak: HabitStreak | null
   gcalWriteEnabled: boolean
@@ -426,8 +427,14 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const [estimate, setEstimate]   = useState(String(task.estimated_minutes ?? ''))
   const [dueDate, setDueDate]     = useState(task.due_date ? task.due_date.slice(0, 10) : '')
   const [rrule, setRrule]         = useState<string | null>(task.rrule ?? null)
+  const [weeklyTarget, setWeeklyTarget] = useState<string>(String(task.weekly_target ?? ''))
   const [saved, setSaved]         = useState(false)
   const [isPending, startTransition] = useTransition()
+
+  // Tasks with no project_id come back from the join as project: null despite
+  // the Props type. Resolved here rather than at each call site so any caller
+  // can pass a raw row — habits in particular are always project-less.
+  const project = task.project ?? INBOX_PROJECT
 
   // Live urgency breakdown — recomputes as user changes fields
   const urgencyInput = {
@@ -472,9 +479,9 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <span
             className="text-xs font-medium px-2 py-0.5 rounded"
-            style={{ background: task.project.color + '18', color: task.project.color }}
+            style={{ background: project.color + '18', color: project.color }}
           >
-            {task.project.name}
+            {project.name}
           </span>
           <div className="flex items-center gap-2">
             {saved && <span className="text-xs text-accent-500 font-medium">Saved ✓</span>}
@@ -562,7 +569,9 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
           {/* Time estimate + due date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Estimate (min)</label>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                {task.type === 'habit' ? 'Session length (min)' : 'Estimate (min)'}
+              </label>
               <input
                 type="number"
                 min={1}
@@ -637,8 +646,10 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
 
           {/* Habit streak — for habits and recurring tasks */}
           {(task.type === 'habit' || task.type === 'recurring') && (
-            <div className="bg-violet-50 dark:bg-violet-950/40 border border-violet-100 dark:border-violet-900 rounded-xl px-4 py-3">
-              <p className="text-xs font-medium text-violet-500 dark:text-violet-400 uppercase tracking-wide mb-2">Habit streak</p>
+            <div className="bg-violet-50 dark:bg-violet-950/40 border border-violet-100 dark:border-violet-900 rounded-xl px-4 py-3 flex flex-col gap-3">
+              <p className="text-xs font-medium text-violet-500 dark:text-violet-400 uppercase tracking-wide">Habit streak</p>
+
+              {/* Streak stats */}
               {streak ? (
                 <div className="flex items-end justify-between">
                   <div>
@@ -667,13 +678,81 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                   Complete this task to start your streak.
                 </p>
               )}
+
+              {/* Weekly goal */}
+              {(() => {
+                const target = task.weekly_target
+                const done   = streak?.completions_this_week ?? 0
+                return (
+                  <div className="border-t border-violet-100 dark:border-violet-900 pt-3">
+                    <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-2">Weekly goal</p>
+                    {target ? (
+                      <div className="flex items-center gap-3">
+                        {/* Progress dots */}
+                        <span className="flex gap-1">
+                          {Array.from({ length: target }, (_, i) => (
+                            <span
+                              key={i}
+                              className={`w-3 h-3 rounded-full ${
+                                i < done
+                                  ? done >= target ? 'bg-emerald-500' : 'bg-violet-500'
+                                  : 'bg-violet-200 dark:bg-violet-800'
+                              }`}
+                            />
+                          ))}
+                        </span>
+                        <span className={`text-sm font-semibold tabular-nums ${
+                          done >= target ? 'text-emerald-500' : 'text-violet-600 dark:text-violet-400'
+                        }`}>
+                          {done}/{target}{done >= target ? ' ✓' : ''}
+                        </span>
+                        <span className="text-xs text-violet-400 dark:text-violet-500">this week</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-violet-400 dark:text-violet-500">No weekly goal set.</p>
+                    )}
+                    {/* Edit target */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-xs text-violet-400 dark:text-violet-500 shrink-0">Target</span>
+                      <div className="flex gap-1">
+                        {[2, 3, 4, 5, 6, 7].map(n => (
+                          <button
+                            key={n}
+                            onClick={() => {
+                              const newTarget = weeklyTarget === String(n) ? '' : String(n)
+                              setWeeklyTarget(newTarget)
+                              save({ weekly_target: newTarget ? n : null })
+                            }}
+                            className={`w-7 h-7 rounded-lg text-xs font-semibold border transition-colors ${
+                              weeklyTarget === String(n)
+                                ? 'bg-violet-600 border-violet-600 text-white'
+                                : 'border-violet-200 dark:border-violet-800 text-violet-400 hover:border-violet-400'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        {weeklyTarget && (
+                          <button
+                            onClick={() => { setWeeklyTarget(''); save({ weekly_target: null }) }}
+                            className="w-7 h-7 rounded-lg text-xs border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-red-400 hover:border-red-300 transition-colors"
+                            title="Remove goal"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
 
           {/* Focus timer */}
           {timer.phase === 'idle' ? (
             <button
-              onClick={() => timer.start({ ...task, project: task.project })}
+              onClick={() => timer.start({ ...task, project })}
               className="w-full py-2.5 rounded-xl border-2 border-accent-500 text-accent-600 dark:text-accent-400 text-sm font-semibold hover:bg-accent-50 dark:hover:bg-accent-900/20 transition-colors flex items-center justify-center gap-2"
             >
               ▶ Start Focus
