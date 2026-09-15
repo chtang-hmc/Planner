@@ -1,14 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
+import { proposeSchedule, planDay } from '@/app/actions/scheduling'
+import type { SchedulerTask } from '@/lib/scheduler'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
+import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
+import DayPlanModal from '@/components/DayPlanModal'
 import UpcomingView from './UpcomingView'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
@@ -37,13 +41,29 @@ function formatMinutes(m: number | null): string {
   return rem ? `${h}h ${rem}m` : `${h}h`
 }
 
+function localDateStr(d: Date) {
+  return d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0')
+}
+
 function formatDue(iso: string | null): { label: string; urgent: boolean } {
   if (!iso) return { label: '', urgent: false }
-  const diff = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
-  if (diff < 0)  return { label: 'Overdue', urgent: true }
-  if (diff === 0) return { label: 'Today',   urgent: true }
-  if (diff === 1) return { label: 'Tomorrow', urgent: false }
-  return { label: `${diff}d`, urgent: false }
+  // Compare calendar dates in LOCAL time to avoid "overdue" appearing for
+  // tasks due "today" once it's past midnight UTC but still today locally.
+  const taskDate  = iso.slice(0, 10)                        // YYYY-MM-DD stored
+  const today     = new Date()
+  const todayStr  = localDateStr(today)
+  const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1)
+  const tmrwStr   = localDateStr(tomorrow)
+
+  if (taskDate < todayStr) return { label: 'Overdue',  urgent: true  }
+  if (taskDate === todayStr) return { label: 'Today',   urgent: true  }
+  if (taskDate === tmrwStr)  return { label: 'Tomorrow', urgent: false }
+
+  // For further dates, count calendar days from today's local midnight
+  const ms = new Date(taskDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()
+  return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
 }
 
 interface Props {
@@ -76,6 +96,67 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // Add task modal
   const [showAddTask, setShowAddTask]       = useState(false)
   const [addTaskDueDate, setAddTaskDueDate] = useState<string | undefined>(undefined)
+
+  // Scheduling modals
+  const [schedulePreview, setSchedulePreview] = useState<{
+    blocks: PreviewBlock[]; unschedulable: SchedulerTask[]
+  } | null>(null)
+  const [dayPlan, setDayPlan] = useState<{
+    blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']; unschedulable: SchedulerTask[]
+  } | null>(null)
+  const [scheduling, setScheduling] = useState(false)
+  const [, startTransition] = useTransition()
+
+  // tz and planDayDate must be client-side only — Intl on the server returns UTC,
+  // not the user's browser timezone. useEffect ensures these are set after hydration.
+  const [tz, setTz] = useState('UTC')
+  const [planDayDate, setPlanDayDate] = useState('')
+  useEffect(() => {
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    setTz(browserTz)
+    setPlanDayDate(new Intl.DateTimeFormat('en-CA', { timeZone: browserTz }).format(new Date()))
+  }, [])
+
+  function handleScheduleWeek() {
+    if (!gcalWriteEnabled) return
+    setScheduling(true)
+    startTransition(async () => {
+      try {
+        const res = await proposeSchedule(7, tz)
+        setSchedulePreview({
+          blocks: res.scheduled.map(b => ({
+            taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+            startISO: b.startISO, endISO: b.endISO,
+            segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+          })),
+          unschedulable: res.unschedulable,
+        })
+      } finally {
+        setScheduling(false)
+      }
+    })
+  }
+
+  function handlePlanDay() {
+    if (!gcalWriteEnabled) return
+    setScheduling(true)
+    startTransition(async () => {
+      try {
+        const res = await planDay(tz, planDayDate)
+        setDayPlan({
+          blocks: res.proposedBlocks.map(b => ({
+            taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+            startISO: b.startISO, endISO: b.endISO,
+            segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+          })),
+          attackList: res.attackList,
+          unschedulable: res.unschedulable,
+        })
+      } finally {
+        setScheduling(false)
+      }
+    })
+  }
 
   // Search filter helper
   const q = query.trim().toLowerCase()
@@ -159,15 +240,45 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
               </button>
             </div>
 
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-2 text-xs">
               {view === 'list' && (
-                <span className="text-slate-400 tabular-nums">
+                <span className="text-slate-400 tabular-nums hidden sm:inline">
                   {filtered.length} tasks · {formatMinutes(totalMinutes)}
                 </span>
               )}
+              {gcalWriteEnabled && (
+                <>
+                  {/* Plan day: date picker + action button */}
+                  <div className="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                    <input
+                      type="date"
+                      value={planDayDate}
+                      onChange={e => setPlanDayDate(e.target.value)}
+                      disabled={scheduling}
+                      className="px-2 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent-500 disabled:opacity-40"
+                    />
+                    <button
+                      onClick={handlePlanDay}
+                      disabled={scheduling || !planDayDate}
+                      title="Plan this day — rank and schedule its tasks"
+                      className="px-3 py-1.5 text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium bg-white dark:bg-slate-800"
+                    >
+                      {scheduling ? '…' : '📋 Plan'}
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleScheduleWeek}
+                    disabled={scheduling}
+                    title="Schedule my week — auto-fill the week with your tasks"
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium"
+                  >
+                    {scheduling ? '…' : '🗓 Schedule week'}
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => openAddTask()}
-                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity text-xs"
+                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity"
               >
                 + Add task
               </button>
@@ -338,12 +449,44 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                         {isPending && <span className="text-violet-500 text-xs">…</span>}
                       </button>
 
-                      {/* Name + frequency */}
+                      {/* Name + frequency + weekly progress */}
                       <div className="flex-1 min-w-0">
                         <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.title}</span>
-                        {task.rrule && (
-                          <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
-                        )}
+                        {(() => {
+                          const target = task.weekly_target
+                          const done   = streak?.completions_this_week ?? 0
+                          if (!target) {
+                            return task.rrule
+                              ? <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
+                              : null
+                          }
+                          const met = done >= target
+                          return (
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {/* Frequency dots */}
+                              <span className="flex gap-0.5">
+                                {Array.from({ length: target }, (_, i) => (
+                                  <span
+                                    key={i}
+                                    className={`inline-block w-2 h-2 rounded-full ${
+                                      i < done
+                                        ? met ? 'bg-emerald-500' : 'bg-violet-500'
+                                        : 'bg-slate-200 dark:bg-slate-700'
+                                    }`}
+                                  />
+                                ))}
+                              </span>
+                              <span className={`text-xs font-medium tabular-nums ${
+                                met ? 'text-emerald-500' : 'text-violet-400 dark:text-violet-500'
+                              }`}>
+                                {done}/{target}{met ? ' ✓' : ''}
+                              </span>
+                              {task.rrule && (
+                                <span className="text-xs text-slate-300 dark:text-slate-600">· {rruleToLabel(task.rrule)}</span>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
 
                       {/* Streak */}
@@ -401,6 +544,28 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           initialDueDate={addTaskDueDate}
           onClose={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
           onCreated={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
+        />
+      )}
+
+      {/* Schedule my week preview */}
+      {schedulePreview && (
+        <SchedulePreviewModal
+          blocks={schedulePreview.blocks}
+          unschedulable={schedulePreview.unschedulable}
+          onClose={() => setSchedulePreview(null)}
+          onConfirmed={() => setSchedulePreview(null)}
+        />
+      )}
+
+      {/* Plan my day */}
+      {dayPlan && (
+        <DayPlanModal
+          proposedBlocks={dayPlan.blocks}
+          attackList={dayPlan.attackList}
+          unschedulable={dayPlan.unschedulable}
+          dateStr={planDayDate}
+          onClose={() => setDayPlan(null)}
+          onConfirmed={() => setDayPlan(null)}
         />
       )}
     </>

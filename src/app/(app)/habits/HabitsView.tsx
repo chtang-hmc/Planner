@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Task, Project, INBOX_PROJECT } from '@/types'
+import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
 import { completeTask } from '@/app/actions/tasks'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import AddTaskModal from '@/components/AddTaskModal'
+import TaskDetail from '@/components/TaskDetail'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -134,13 +135,17 @@ function HabitCard({
   dates,
   doneToday,
   onDone,
+  onOpen,
   pending,
+  weeklyDone,
 }: {
   habit: Task & { project: Project }
   dates: string[]
   doneToday: boolean
   onDone: () => void
+  onOpen: () => void
   pending: boolean
+  weeklyDone: number
 }) {
   const { current, longest, total } = computeStreak(dates)
   const freq = habit.rrule ? rruleToLabel(habit.rrule) : 'Anytime'
@@ -155,7 +160,15 @@ function HabitCard({
       {/* Header row */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-slate-900 dark:text-slate-100 leading-snug">{habit.title}</h3>
+          <button
+            onClick={onOpen}
+            className="text-left w-full group"
+            title="Edit habit"
+          >
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 leading-snug group-hover:text-accent-600 dark:group-hover:text-accent-400 transition-colors">
+              {habit.title}
+            </h3>
+          </button>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span
               className="text-xs font-medium px-1.5 py-0.5 rounded"
@@ -166,6 +179,19 @@ function HabitCard({
             <span className="text-xs text-slate-400">
               {habit.rrule ? `↻ ${freq}` : '● Anytime'}
             </span>
+            {habit.weekly_target && (
+              <span className={`text-xs font-medium tabular-nums ${
+                weeklyDone >= habit.weekly_target
+                  ? 'text-emerald-500'
+                  : 'text-violet-500 dark:text-violet-400'
+              }`}>
+                {weeklyDone}/{habit.weekly_target} this week
+                {weeklyDone >= habit.weekly_target ? ' ✓' : ''}
+              </span>
+            )}
+            {habit.estimated_minutes && (
+              <span className="text-xs text-slate-400 font-mono">{habit.estimated_minutes}m</span>
+            )}
           </div>
         </div>
 
@@ -214,18 +240,23 @@ function HabitCard({
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 interface Props {
-  habits:        (Task & { project: Project })[]
-  completionMap: Record<string, string[]>
-  doneToday:     string[]   // habit ids already done today
-  projects:      Project[]
+  habits:           (Task & { project: Project })[]
+  completionMap:    Record<string, string[]>
+  doneToday:        string[]   // habit ids already done today
+  projects:         Project[]
+  streaks:          Record<string, HabitStreak>
+  gcalWriteEnabled: boolean
 }
 
-export default function HabitsView({ habits, completionMap, doneToday: serverDoneToday, projects }: Props) {
+export default function HabitsView({
+  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled,
+}: Props) {
   // Track which habits got completed this session (optimistic)
   const [sessionDone, setSessionDone] = useState<Set<string>>(new Set(serverDoneToday))
   const [pending,     setPending]     = useState<Set<string>>(new Set())
   const [localDates,  setLocalDates]  = useState<Record<string, string[]>>({})
   const [showAdd,     setShowAdd]     = useState(false)
+  const [detailTask,  setDetailTask]  = useState<(Task & { project: Project }) | null>(null)
   const [, startTransition]          = useTransition()
 
   const todayStr = toDateStr(new Date())
@@ -325,7 +356,9 @@ export default function HabitsView({ habits, completionMap, doneToday: serverDon
                       dates={getDates(habit)}
                       doneToday={false}
                       onDone={() => handleDone(habit)}
+                      onOpen={() => setDetailTask(habit)}
                       pending={pending.has(habit.id)}
+                      weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
                     />
                   ))}
                 </div>
@@ -345,7 +378,9 @@ export default function HabitsView({ habits, completionMap, doneToday: serverDon
                         dates={getDates(habit)}
                         doneToday={true}
                         onDone={() => {}}
+                        onOpen={() => setDetailTask(habit)}
                         pending={false}
+                        weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
                       />
                     ))}
                   </div>
@@ -362,6 +397,16 @@ export default function HabitsView({ habits, completionMap, doneToday: serverDon
           defaultType="habit"
           onClose={() => setShowAdd(false)}
           onCreated={() => setShowAdd(false)}
+        />
+      )}
+
+      {detailTask && (
+        <TaskDetail
+          task={detailTask}
+          projects={projects}
+          streak={streaks[detailTask.id] ?? null}
+          gcalWriteEnabled={gcalWriteEnabled}
+          onClose={() => setDetailTask(null)}
         />
       )}
     </>

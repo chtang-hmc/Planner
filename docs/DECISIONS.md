@@ -252,12 +252,38 @@ Three functions in `src/lib/google-calendar.ts`:
 | `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low) |
 | `updateTaskBlock()` | `PATCH /calendars/primary/events/:id` | Updates start/end only |
 | `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
+| `listAutoScheduledEventIds()` | `GET /calendars/primary/events?privateExtendedProperty=plannerAuto=true` | Lists auto-scheduled blocks in a window, for cleanup |
+
+### Auto-scheduled blocks are tagged in GCal, not tracked in the DB
+
+A task row has **one** `gcal_event_id` column, but a task can occupy **several** blocks — a long task split into segments, or a habit scheduled 4× a week. The column can only hold the last one, so `confirmSchedule` used to delete one event per task and orphan the rest. With habits this went from a rare edge case to a guaranteed weekly leak (3 stranded gym blocks per re-run).
+
+`createTaskBlock(..., auto = true)` writes `extendedProperties.private.plannerAuto = 'true'` (plus `plannerTaskId`), making **Google Calendar itself the register** of what the scheduler created. Cleanup lists by tag instead of trusting the column.
+
+Chosen over a `task_schedule_blocks` table because:
+- No migration, and it retroactively sweeps blocks orphaned by earlier runs.
+- The events live in Google's system and the user can move or delete them there, so any DB copy is a cache that drifts. Tag-based cleanup is drift-tolerant; a mirror table is not.
+
+**`auto` defaults to `false` and must stay that way.** Manually placed blocks (`scheduleTask` in `actions/calendar.ts`) are user-owned; tagging them would make the auto-schedule sweep delete the user's own calendar entries.
+
+Ordering in `confirmSchedule` preserves the create-before-delete rule: snapshot the tagged ids **first** (so the set is by definition all-old), create every new event, then delete the snapshot. If creates were attempted and all failed, the delete is skipped so a GCal outage leaves the existing schedule intact — an *empty* proposal is treated as a deliberate "clear everything" and still sweeps. The sweep window starts at `now`, so past blocks survive as history.
 
 Server actions `scheduleTask(taskId, startISO, endISO)` and `unscheduleTask(taskId)` in `src/app/actions/calendar.ts` call these and write back `gcal_event_id`, `scheduled_start`, `scheduled_end` to the task row.
 
 If a task already has a `gcal_event_id`, `scheduleTask` patches the existing event rather than creating a duplicate.
 
 **No webhook sync yet.** If the user moves or deletes the GCal block from Google Calendar directly, the `scheduled_start/end` fields go stale. Planned: GCal push notifications to detect external changes.
+
+### Scheduler: spread groups
+
+`SchedulerTask.spreadGroup` marks candidates that must land on **distinct days**. Habit sessions share one (the habit's id), so "gym 4×/week" produces four blocks on four days instead of stacking into a single afternoon. Two effects inside `runScheduler`:
+
+- Days already used by the group are skipped when collecting slot candidates.
+- Slot choice sorts by **start time** rather than tightest-fit, so sessions walk forward through the week instead of clustering wherever the snuggest gaps happen to be.
+
+### Scheduler: unschedulable is per-candidate, not per-task
+
+The "did it fit" check is scoped to the blocks a single candidate added (`scheduled.length === blocksBefore`), not to whether any block exists with that task id. Habit sessions share an id, so the old task-id check swallowed every session after the first — a request for 4 gym sessions with room for only 2 reported **zero** failures. Multi-segment behaviour is unchanged: a task that places some segments but not all is still not "unschedulable".
 
 ### UI
 
@@ -326,7 +352,27 @@ Habits like "gym" or "reading" don't have a fixed day of week. Setting `rrule = 
 
 ### Done-today handling
 
-When a habit is completed for the day, it's moved to a "Done today" section (greyed, faded). The page query hides habits already due tomorrow (they've been re-spawned); `doneToday` IDs are passed as a prop so the client can optimistically move cards without waiting for a revalidation.
+When a habit is completed for the day, it's moved to a "Done today" section (greyed, faded). `doneToday` IDs are passed as a prop so the client can optimistically move cards without waiting for a revalidation.
+
+The page runs **two** queries: pending habits (`status in (inbox, active)`, due today or earlier) and habits completed today (`status = 'done'`, `completed_at >= start of today UTC`), merged by title with the pending row winning. The second query is load-bearing — completing a habit flips its row to `done` and spawns the next occurrence for tomorrow, so without it a completed habit disappears from the page entirely rather than showing as done. Deriving `doneToday` from the pending list alone (the original approach) always produced an empty set.
+
+### Day boundaries are UTC
+
+`due_date` on a spawned occurrence is written at **UTC midnight** (`setUTCHours(0,0,0,0)`), and the habits page compares against UTC day edges. Both sides must agree: an earlier version spawned at *local* midnight while filtering on *local* end-of-day, which are 1 ms apart — a spawned habit could never satisfy "due today or earlier" and the page rendered empty. This follows the same rule as all-day calendar events (always `T00:00:00Z`).
+
+### Weekly targets
+
+`tasks.weekly_target` (integer, nullable) holds "how many times per week", and `habit_streaks` carries `completions_this_week` + `week_start` (Monday, UTC) to track progress. `week_start` is compared on every completion; a mismatch resets the counter rather than relying on a scheduled job.
+
+Habits are excluded from the `/tasks` query (`neq('type','habit')`) — they live on `/habits` and would otherwise clutter the task list with untimed, non-urgent work.
+
+### Scheduling habits
+
+A habit with both a `weekly_target` and an `estimated_minutes` session length is expanded by `buildHabitCandidates()` into one scheduler candidate per session still owed this week (target minus `completions_this_week`). Notable choices:
+
+- **Candidates carry `due_date: null`.** The habit row's own `due_date` is just a "next occurrence" marker; passing it through would trip the scheduler's `dayMs > dueMs` guard and pin every session to a single day.
+- **`urgency_score` is overridden to `priority * 10`.** Habits are stored with score 0 since they aren't deadline work, which would sort them last and leave them only whatever space is left over. The override gives them the same baseline an undated task of that priority gets. Raising a habit's priority is the lever if it keeps losing to deadline work.
+- **Sessions share a `spreadGroup`** so they land on distinct days (see [Scheduler](#scheduler)).
 
 ---
 

@@ -15,9 +15,12 @@ export default async function TasksPage() {
     { data: integration },
     { data: streakRows },
   ] = await Promise.all([
+    // Habits live on /habits and are excluded here so they don't clutter the
+    // task list with untimed, non-urgent recurring work.
     db.from('tasks')
       .select('*, project:projects(id, name, color)')
       .in('status', ['inbox', 'active'])
+      .neq('type', 'habit')
       .order('urgency_score', { ascending: false }),
     db.from('projects')
       .select('*')

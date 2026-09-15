@@ -124,11 +124,28 @@ const PRIORITY_COLOR_ID: Record<number, string> = {
  * Create a "Focus: <title>" event in the user's primary calendar.
  * Returns the new GCal event id to store on the task.
  */
+/**
+ * Marker written into every auto-scheduled block's private extended properties.
+ *
+ * A task row has one `gcal_event_id` column but a task can occupy several
+ * blocks (a long task split into segments, a habit scheduled 4× a week), so the
+ * DB cannot record every event it created. Tagging the events makes Google
+ * Calendar itself the register of what we scheduled: cleanup lists by tag
+ * instead of trusting a column that only ever held the last id.
+ */
+export const AUTO_BLOCK_TAG = 'plannerAuto'
+
 export async function createTaskBlock(
   accessToken: string,
-  task: { title: string; description?: string | null; priority: number },
+  task: { title: string; description?: string | null; priority: number; id?: string },
   startISO: string,
   endISO: string,
+  /**
+   * Tag this block as auto-scheduled so a later run can find and clear it.
+   * Must stay false for manually placed blocks — those are user-owned and the
+   * auto-schedule sweep would delete them.
+   */
+  auto = false,
 ): Promise<string> {
   const body = {
     summary:     `🎯 ${task.title}`,
@@ -136,6 +153,16 @@ export async function createTaskBlock(
     colorId:     PRIORITY_COLOR_ID[task.priority] ?? '8',
     start: { dateTime: startISO },
     end:   { dateTime: endISO },
+    ...(auto
+      ? {
+          extendedProperties: {
+            private: {
+              [AUTO_BLOCK_TAG]: 'true',
+              ...(task.id ? { plannerTaskId: task.id } : {}),
+            },
+          },
+        }
+      : {}),
   }
 
   const res = await fetch(
@@ -176,6 +203,45 @@ export async function updateTaskBlock(
     },
   )
   if (!res.ok) throw new Error(`GCal updateEvent ${res.status}: ${await res.text()}`)
+}
+
+/**
+ * List the ids of auto-scheduled blocks in a time window.
+ *
+ * Used to clear the previous auto-schedule before writing a new one. Because it
+ * queries by tag rather than by stored id, it also sweeps up blocks orphaned by
+ * earlier runs that could not record every event they created.
+ */
+export async function listAutoScheduledEventIds(
+  accessToken: string,
+  timeMinISO:  string,
+  timeMaxISO:  string,
+): Promise<string[]> {
+  const ids: string[] = []
+  let pageToken: string | undefined
+
+  do {
+    const params = new URLSearchParams({
+      timeMin:                 timeMinISO,
+      timeMax:                 timeMaxISO,
+      singleEvents:            'true',
+      maxResults:              '250',
+      privateExtendedProperty: `${AUTO_BLOCK_TAG}=true`,
+    })
+    if (pageToken) params.set('pageToken', pageToken)
+
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    )
+    if (!res.ok) throw new Error(`GCal listEvents ${res.status}: ${await res.text()}`)
+
+    const data = await res.json()
+    for (const item of data.items ?? []) if (item.id) ids.push(item.id as string)
+    pageToken = data.nextPageToken
+  } while (pageToken)
+
+  return ids
 }
 
 /**
