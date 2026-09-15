@@ -4,6 +4,8 @@ import { useTheme } from 'next-themes'
 import { useEffect, useState, useTransition } from 'react'
 import { ACCENTS, AccentId, applyAccent, getStoredAccent } from '@/components/Providers'
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
+import SchedulingSettings from '@/components/SchedulingSettings'
+import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 
@@ -340,12 +342,19 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 interface SettingsViewProps {
-  gcalConnected: boolean
+  gcalConnected:    boolean
   gcalHasWriteScope: boolean
-  gcalConnectedAt: string | null
+  gcalConnectedAt:  string | null
+  workingHours:     WorkingHours[]
+  energySchedule:   EnergyScheduleEntry[]
+  maxSession:       number
+  bufferMinutes:    number
 }
 
-export default function SettingsView({ gcalConnected, gcalHasWriteScope, gcalConnectedAt }: SettingsViewProps) {
+export default function SettingsView({
+  gcalConnected, gcalHasWriteScope, gcalConnectedAt,
+  workingHours, energySchedule, maxSession, bufferMinutes,
+}: SettingsViewProps) {
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
       {/* Header */}
@@ -366,6 +375,13 @@ export default function SettingsView({ gcalConnected, gcalHasWriteScope, gcalCon
           connected={gcalConnected}
           hasWriteScope={gcalHasWriteScope}
           connectedAt={gcalConnectedAt}
+        />
+        <div className="border-t border-slate-200 dark:border-slate-800" />
+        <SchedulingSettings
+          workingHours={workingHours}
+          energySchedule={energySchedule}
+          maxSession={maxSession}
+          bufferMinutes={bufferMinutes}
         />
       </div>
     </div>

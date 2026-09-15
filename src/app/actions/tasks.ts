@@ -330,31 +330,74 @@ export async function createTask(data: {
 
 // ── Subtask actions ──────────────────────────────────────────────────────────
 
-export async function getSubtasks(parentId: string) {
+export type SubtaskRow = {
+  id:                string
+  title:             string
+  status:            string
+  estimated_minutes: number | null
+  energy_required:   string
+  gcal_event_id:     string | null
+  scheduled_start:   string | null
+  scheduled_end:     string | null
+  created_at:        string
+}
+
+export async function getSubtasks(parentId: string): Promise<SubtaskRow[]> {
   const db = createServiceClient()
   const { data, error } = await db
     .from('tasks')
-    .select('id, title, status, created_at')
+    .select('id, title, status, estimated_minutes, energy_required, gcal_event_id, scheduled_start, scheduled_end, created_at')
     .eq('parent_id', parentId)
     .order('created_at', { ascending: true })
   if (error) throw new Error(error.message)
-  return (data ?? []) as { id: string; title: string; status: string; created_at: string }[]
+  return (data ?? []) as SubtaskRow[]
 }
 
-export async function createSubtask(parentId: string, title: string) {
+async function recalcParentEstimate(parentId: string) {
+  const db = createServiceClient()
+  const { data: subs } = await db
+    .from('tasks')
+    .select('estimated_minutes')
+    .eq('parent_id', parentId)
+    .neq('status', 'done')
+  const total = (subs ?? []).reduce((s, t) => s + (t.estimated_minutes ?? 0), 0)
+  if (total > 0) {
+    await db.from('tasks').update({ estimated_minutes: total }).eq('id', parentId)
+  }
+}
+
+export async function createSubtask(
+  parentId: string,
+  title: string,
+  estimatedMinutes?: number | null,
+) {
   const db = createServiceClient()
   const { error } = await db.from('tasks').insert({
-    parent_id:      parentId,
+    parent_id:         parentId,
     title,
-    status:         'active',
-    type:           'task',
-    priority:       1,
-    energy_required:'low',
-    urgency_score:  0,
-    urgency_curve:  'linear',
-    created_at:     new Date().toISOString(),
+    status:            'active',
+    type:              'task',
+    priority:          1,
+    energy_required:   'low',
+    urgency_score:     0,
+    urgency_curve:     'linear',
+    estimated_minutes: estimatedMinutes ?? null,
+    created_at:        new Date().toISOString(),
   })
   if (error) throw new Error(error.message)
+  if (estimatedMinutes) await recalcParentEstimate(parentId)
+  revalidatePath('/tasks')
+}
+
+export async function updateSubtaskFields(
+  subtaskId: string,
+  parentId:  string,
+  patch: { estimated_minutes?: number | null; energy_required?: string },
+) {
+  const db = createServiceClient()
+  const { error } = await db.from('tasks').update(patch).eq('id', subtaskId)
+  if (error) throw new Error(error.message)
+  await recalcParentEstimate(parentId)
   revalidatePath('/tasks')
 }
 

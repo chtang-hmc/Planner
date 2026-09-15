@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -10,12 +10,18 @@ import { rruleToLabel } from '@/lib/rrule-utils'
 
 // ── Subtask list ──────────────────────────────────────────────────────────────
 
-type SubtaskRow = { id: string; title: string; status: string; created_at: string }
+const SUBTASK_ENERGY_OPTS = [
+  { val: 'low',    icon: '🌿' },
+  { val: 'medium', icon: '⚡' },
+  { val: 'high',   icon: '🔥' },
+] as const
 
 function SubtaskSection({ taskId }: { taskId: string }) {
   const [items,    setItems]    = useState<SubtaskRow[]>([])
   const [newTitle, setNewTitle] = useState('')
+  const [newMins,  setNewMins]  = useState('')
   const [loading,  setLoading]  = useState(true)
+  const [expanded, setExpanded] = useState<string | null>(null)
   const [, startTransition]     = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -27,12 +33,18 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     e.preventDefault()
     const t = newTitle.trim()
     if (!t) return
-    const optimistic: SubtaskRow = { id: crypto.randomUUID(), title: t, status: 'active', created_at: new Date().toISOString() }
+    const mins = newMins ? parseInt(newMins) : null
+    const optimistic: SubtaskRow = {
+      id: crypto.randomUUID(), title: t, status: 'active',
+      estimated_minutes: mins, energy_required: 'low',
+      gcal_event_id: null, scheduled_start: null, scheduled_end: null,
+      created_at: new Date().toISOString(),
+    }
     setItems(prev => [...prev, optimistic])
     setNewTitle('')
+    setNewMins('')
     startTransition(async () => {
-      await createSubtask(taskId, t)
-      // Refresh to get real id
+      await createSubtask(taskId, t, mins)
       const fresh = await getSubtasks(taskId)
       setItems(fresh)
     })
@@ -49,20 +61,31 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     startTransition(() => deleteSubtask(sub.id))
   }
 
+  function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string }) {
+    setItems(prev => prev.map(s => s.id === sub.id ? { ...s, ...patch } : s))
+    startTransition(() => updateSubtaskFields(sub.id, taskId, patch))
+  }
+
   const done  = items.filter(s => s.status === 'done').length
   const total = items.length
+  const totalMins = items.filter(s => s.status !== 'done').reduce((acc, s) => acc + (s.estimated_minutes ?? 0), 0)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-          Checklist
+          Subtasks
         </label>
-        {total > 0 && (
-          <span className="text-xs text-slate-400 tabular-nums">
-            {done}/{total}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {totalMins > 0 && (
+            <span className="text-xs text-slate-400 font-mono">
+              {totalMins < 60 ? `${totalMins}m` : `${Math.floor(totalMins/60)}h${totalMins%60 ? ` ${totalMins%60}m` : ''}`}
+            </span>
+          )}
+          {total > 0 && (
+            <span className="text-xs text-slate-400 tabular-nums">{done}/{total}</span>
+          )}
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -79,32 +102,91 @@ function SubtaskSection({ taskId }: { taskId: string }) {
       {loading ? (
         <p className="text-xs text-slate-400 py-2">Loading…</p>
       ) : (
-        <div className="flex flex-col gap-0.5 mb-2">
+        <div className="flex flex-col gap-1 mb-2">
           {items.map(sub => (
-            <div key={sub.id} className="flex items-start gap-2 group py-1">
-              <button
-                onClick={() => handleToggle(sub)}
-                className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                  sub.status === 'done'
-                    ? 'bg-accent-500 border-accent-500 text-white'
-                    : 'border-slate-300 dark:border-slate-600 hover:border-accent-400'
-                }`}
-              >
-                {sub.status === 'done' && <span className="text-[10px] leading-none">✓</span>}
-              </button>
-              <span className={`flex-1 text-sm leading-snug ${
-                sub.status === 'done'
-                  ? 'line-through text-slate-400 dark:text-slate-600'
-                  : 'text-slate-700 dark:text-slate-300'
-              }`}>
-                {sub.title}
-              </span>
-              <button
-                onClick={() => handleDelete(sub)}
-                className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 dark:text-slate-700 dark:hover:text-red-400 transition-all text-xs shrink-0 mt-0.5"
-              >
-                ✕
-              </button>
+            <div key={sub.id} className="group">
+              {/* Main row */}
+              <div className="flex items-start gap-2 py-1">
+                <button
+                  onClick={() => handleToggle(sub)}
+                  className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                    sub.status === 'done'
+                      ? 'bg-accent-500 border-accent-500 text-white'
+                      : 'border-slate-300 dark:border-slate-600 hover:border-accent-400'
+                  }`}
+                >
+                  {sub.status === 'done' && <span className="text-[10px] leading-none">✓</span>}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <span className={`text-sm leading-snug ${
+                    sub.status === 'done'
+                      ? 'line-through text-slate-400 dark:text-slate-600'
+                      : 'text-slate-700 dark:text-slate-300'
+                  }`}>
+                    {sub.title}
+                  </span>
+                  {/* Inline meta */}
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {sub.estimated_minutes && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {sub.estimated_minutes}m
+                      </span>
+                    )}
+                    {sub.scheduled_start && (
+                      <span className="text-[10px] text-sky-500">
+                        📅 {new Date(sub.scheduled_start).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setExpanded(v => v === sub.id ? null : sub.id)}
+                      className="text-[10px] text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
+                    >
+                      {expanded === sub.id ? '▲' : '▼'}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDelete(sub)}
+                  className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-400 dark:text-slate-700 dark:hover:text-red-400 transition-all text-xs shrink-0 mt-0.5"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Expanded: duration + energy editors */}
+              {expanded === sub.id && sub.status !== 'done' && (
+                <div className="ml-6 mb-1 flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">⏱</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={sub.estimated_minutes ?? ''}
+                      onChange={e => {
+                        const v = e.target.value ? parseInt(e.target.value) : null
+                        handleUpdateField(sub, { estimated_minutes: v })
+                      }}
+                      placeholder="min"
+                      className="w-16 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent-500 font-mono"
+                    />
+                  </div>
+                  <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                    {SUBTASK_ENERGY_OPTS.map(o => (
+                      <button
+                        key={o.val}
+                        onClick={() => handleUpdateField(sub, { energy_required: o.val })}
+                        className={`px-2 py-0.5 text-xs transition-colors ${
+                          sub.energy_required === o.val
+                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                            : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+                        }`}
+                      >
+                        {o.icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -117,8 +199,16 @@ function SubtaskSection({ taskId }: { taskId: string }) {
           type="text"
           value={newTitle}
           onChange={e => setNewTitle(e.target.value)}
-          placeholder="Add a step…"
+          placeholder="Add a subtask…"
           className="flex-1 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 placeholder:text-slate-300 dark:placeholder:text-slate-600"
+        />
+        <input
+          type="number"
+          min={1}
+          value={newMins}
+          onChange={e => setNewMins(e.target.value)}
+          placeholder="min"
+          className="w-16 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
         />
         <button
           type="submit"

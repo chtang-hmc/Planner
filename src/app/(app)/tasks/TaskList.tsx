@@ -1,14 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
+import { proposeSchedule, planDay } from '@/app/actions/scheduling'
+import type { SchedulerTask } from '@/lib/scheduler'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
+import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
+import DayPlanModal from '@/components/DayPlanModal'
 import UpcomingView from './UpcomingView'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
@@ -76,6 +80,51 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // Add task modal
   const [showAddTask, setShowAddTask]       = useState(false)
   const [addTaskDueDate, setAddTaskDueDate] = useState<string | undefined>(undefined)
+
+  // Scheduling modals
+  const [schedulePreview, setSchedulePreview] = useState<{
+    blocks: PreviewBlock[]; unschedulable: SchedulerTask[]
+  } | null>(null)
+  const [dayPlan, setDayPlan] = useState<{
+    blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']; unschedulable: SchedulerTask[]
+  } | null>(null)
+  const [scheduling, setScheduling] = useState(false)
+  const [, startTransition] = useTransition()
+
+  function handleScheduleWeek() {
+    if (!gcalWriteEnabled) return
+    setScheduling(true)
+    startTransition(async () => {
+      const res = await proposeSchedule(7)
+      setSchedulePreview({
+        blocks: res.scheduled.map(b => ({
+          taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+          startISO: b.startISO, endISO: b.endISO,
+          segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+        })),
+        unschedulable: res.unschedulable,
+      })
+      setScheduling(false)
+    })
+  }
+
+  function handlePlanDay() {
+    if (!gcalWriteEnabled) return
+    setScheduling(true)
+    startTransition(async () => {
+      const res = await planDay()
+      setDayPlan({
+        blocks: res.proposedBlocks.map(b => ({
+          taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
+          startISO: b.startISO, endISO: b.endISO,
+          segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
+        })),
+        attackList: res.attackList,
+        unschedulable: res.unschedulable,
+      })
+      setScheduling(false)
+    })
+  }
 
   // Search filter helper
   const q = query.trim().toLowerCase()
@@ -159,15 +208,35 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
               </button>
             </div>
 
-            <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-2 text-xs">
               {view === 'list' && (
-                <span className="text-slate-400 tabular-nums">
+                <span className="text-slate-400 tabular-nums hidden sm:inline">
                   {filtered.length} tasks · {formatMinutes(totalMinutes)}
                 </span>
               )}
+              {gcalWriteEnabled && (
+                <>
+                  <button
+                    onClick={handlePlanDay}
+                    disabled={scheduling}
+                    title="Plan my day — rank and schedule today's tasks"
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium"
+                  >
+                    {scheduling ? '…' : '📋 Plan day'}
+                  </button>
+                  <button
+                    onClick={handleScheduleWeek}
+                    disabled={scheduling}
+                    title="Schedule my week — auto-fill the week with your tasks"
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium"
+                  >
+                    {scheduling ? '…' : '🗓 Schedule week'}
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => openAddTask()}
-                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity text-xs"
+                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity"
               >
                 + Add task
               </button>
@@ -401,6 +470,27 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           initialDueDate={addTaskDueDate}
           onClose={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
           onCreated={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
+        />
+      )}
+
+      {/* Schedule my week preview */}
+      {schedulePreview && (
+        <SchedulePreviewModal
+          blocks={schedulePreview.blocks}
+          unschedulable={schedulePreview.unschedulable}
+          onClose={() => setSchedulePreview(null)}
+          onConfirmed={() => setSchedulePreview(null)}
+        />
+      )}
+
+      {/* Plan my day */}
+      {dayPlan && (
+        <DayPlanModal
+          proposedBlocks={dayPlan.blocks}
+          attackList={dayPlan.attackList}
+          unschedulable={dayPlan.unschedulable}
+          onClose={() => setDayPlan(null)}
+          onConfirmed={() => setDayPlan(null)}
         />
       )}
     </>

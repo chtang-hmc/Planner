@@ -9,6 +9,7 @@ import {
   updateTaskBlock,
   deleteTaskBlock,
 } from '@/lib/google-calendar'
+import { markScheduleManual } from '@/app/actions/scheduling'
 
 export async function triggerCalendarSync() {
   await syncCalendarEvents()
@@ -67,6 +68,8 @@ export async function scheduleTask(
         .update({ gcal_event_id: gcalEventId, scheduled_start: startISO, scheduled_end: endISO })
         .eq('id', taskId)
     }
+    // Mark as manually scheduled so the algorithm won't overwrite it on re-run
+    await markScheduleManual(taskId)
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'GCal error' }
   }
