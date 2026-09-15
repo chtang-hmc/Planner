@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
+import ScheduleWeekCalendar, { type CalendarBlock } from '@/components/ScheduleWeekCalendar'
 import type { SchedulerTask } from '@/lib/scheduler'
 
 export interface PreviewBlock {
@@ -55,24 +56,48 @@ export default function SchedulePreviewModal({ blocks, unschedulable, existing, 
 
   // Everything that isn't a new proposal is selected-out by default? No — the
   // whole proposal starts approved, and unticking rejects individual blocks.
+  // Key is stable across drags: the original start, not the current one.
   const blockKey = (b: PreviewBlock) => `${b.taskId}|${b.startISO}`
   const [rejected, setRejected] = useState<Set<string>>(new Set())
+  /** Times the user dragged a block to, overriding the proposal. */
+  const [moved, setMoved] = useState<Record<string, { startISO: string; endISO: string }>>({})
+  const [view, setView] = useState<'calendar' | 'list'>('calendar')
 
-  const approved = blocks.filter(b => !rejected.has(blockKey(b)))
+  const effective = (b: PreviewBlock): PreviewBlock => {
+    const m = moved[blockKey(b)]
+    return m ? { ...b, startISO: m.startISO, endISO: m.endISO } : b
+  }
 
-  function toggle(b: PreviewBlock) {
-    const k = blockKey(b)
+  const approved = blocks.filter(b => !rejected.has(blockKey(b))).map(effective)
+  const movedCount = Object.keys(moved).length
+
+  function toggleKey(k: string) {
     setRejected(prev => {
       const next = new Set(prev)
       if (next.has(k)) next.delete(k); else next.add(k)
       return next
     })
   }
+  const toggle = (b: PreviewBlock) => toggleKey(blockKey(b))
+
+  const calendarBlocks: CalendarBlock[] = blocks.map(b => {
+    const eff = effective(b)
+    return {
+      key: blockKey(b),
+      block: eff,
+      start: new Date(eff.startISO),
+      end: new Date(eff.endISO),
+      rejected: rejected.has(blockKey(b)),
+    }
+  })
 
   // Merge proposals with what's already on the week, then group by day, so the
   // whole horizon is reviewable rather than just the new blocks in isolation.
   const rows: Row[] = [
-    ...blocks.map(b => ({ kind: 'proposed' as const, key: blockKey(b), startISO: b.startISO, endISO: b.endISO, block: b })),
+    ...blocks.map(b => {
+      const eff = effective(b)
+      return { kind: 'proposed' as const, key: blockKey(b), startISO: eff.startISO, endISO: eff.endISO, block: eff }
+    }),
     ...existing.map(e => ({ kind: 'existing' as const, key: `e|${e.id}|${e.startISO}`, startISO: e.startISO, endISO: e.endISO, item: e })),
   ].sort((a, b) => a.startISO.localeCompare(b.startISO))
 
@@ -100,26 +125,46 @@ export default function SchedulePreviewModal({ blocks, unschedulable, existing, 
       <div className="absolute inset-0 bg-slate-950/40 dark:bg-slate-950/60 backdrop-blur-sm" />
 
       <div
-        className="relative w-full max-w-lg max-h-[80vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        className="relative w-full max-w-5xl max-h-[88vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
           <div>
             <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Schedule preview
+              Your week
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              {blocks.length} block{blocks.length !== 1 ? 's' : ''} across {byDay.size} day{byDay.size !== 1 ? 's' : ''}
+              {blocks.length} new block{blocks.length !== 1 ? 's' : ''}
+              {existing.length > 0 && ` · ${existing.length} already booked`}
               {unschedulable.length > 0 && ` · ${unschedulable.length} couldn't fit`}
+              {movedCount > 0 && ` · ${movedCount} moved`}
             </p>
           </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+              {(['calendar', 'list'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                    view === v
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                      : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
           <button
             onClick={onClose}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xl leading-none"
           >
             ×
           </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -133,6 +178,17 @@ export default function SchedulePreviewModal({ blocks, unschedulable, existing, 
             </div>
           ) : (
             <div className="flex flex-col gap-4">
+              {view === 'calendar' ? (
+                <ScheduleWeekCalendar
+                  proposals={calendarBlocks}
+                  existing={existing}
+                  onToggle={toggleKey}
+                  onMove={(key, start, end) =>
+                    setMoved(prev => ({ ...prev, [key]: { startISO: start.toISOString(), endISO: end.toISOString() } }))
+                  }
+                />
+              ) : (
+                <>
               {Array.from(byDay.entries()).map(([dayKey, dayRows]) => (
                 <div key={dayKey}>
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
@@ -201,6 +257,8 @@ export default function SchedulePreviewModal({ blocks, unschedulable, existing, 
                   </div>
                 </div>
               ))}
+                </>
+              )}
 
               {/* Unschedulable */}
               {unschedulable.length > 0 && (

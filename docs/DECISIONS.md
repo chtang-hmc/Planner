@@ -272,6 +272,22 @@ Partial approval changes what cleanup may touch. The sweep used to clear **every
 
 The trade-off: a block belonging to a task that is no longer proposed at all (completed, deleted) is no longer swept, because "not approved" and "not proposed" are indistinguishable here. Leaving it is the safer error — deleting calendar entries the user never agreed to remove is worse than one that lingers.
 
+### The week review is a calendar grid
+
+`ScheduleWeekCalendar` renders the horizon as day columns against an hour gutter, positioned absolutely by time — the shape people already read schedules in. The list view is kept behind a toggle for scanning.
+
+- **Visible range is derived**, not fixed at 24h: one hour either side of the earliest and latest item, with a 10-hour minimum so a light day doesn't collapse to a sliver.
+- **Lane widths are per overlapping cluster, not per day.** A day-wide lane count makes every block on the day narrow just because two of them collide at 1pm. Items are grouped into clusters separated by gaps where nothing is running, and each cluster sizes itself.
+- **Existing items are dashed and dimmed**, and not draggable — they're context, not proposals.
+
+### Dragging blocks
+
+Pointer events rather than the HTML5 drag-and-drop used in `UpcomingView`. DnD gives no usable coordinate during the drag, and a calendar needs continuous Y→time and X→day mapping to place the block precisely; `setPointerCapture` also keeps the drag alive when the cursor leaves the block.
+
+Dropping snaps to 15 minutes and clamps so a block can't be dragged out of the visible range. Moving across columns changes the day. Duration is preserved — the drag moves a block, it doesn't resize it.
+
+Moves are **local state** (`moved`, keyed by the block's *original* start so the key survives repeated drags) and are only persisted on Confirm, which sends the effective times. Nothing touches the calendar until the user approves.
+
 ### Auto-scheduled blocks are tagged in GCal, not tracked in the DB
 
 A task row has **one** `gcal_event_id` column, but a task can occupy **several** blocks — a long task split into segments, or a habit scheduled 4× a week. The column can only hold the last one, so `confirmSchedule` used to delete one event per task and orphan the rest. With habits this went from a rare edge case to a guaranteed weekly leak (3 stranded gym blocks per re-run).
