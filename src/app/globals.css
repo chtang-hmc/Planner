@@ -5,19 +5,57 @@
 ─────────────────────────────────────────────────────────────────────────── */
 @variant dark (&:where(.dark, .dark *));
 
+/* ── Themed neutrals ─────────────────────────────────────────────────────────
+   The app is written almost entirely in slate-* utilities (~1200 of them).
+   Rather than rewrite every class, the slate palette itself is redefined here
+   in terms of a hue that each color preset sets. Picking a color re-tints every
+   surface, border and muted label in the app without touching a component.
+
+   --tint-h  hue, set per preset below
+   --tint-s  base saturation; per-shade multipliers follow slate's own curve
+             (more saturated at the extremes, calmer through the midtones)
+
+   Lightness values are lifted from Tailwind's slate so contrast ratios that
+   already worked keep working — only the hue moves.
+─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --tint-h: 200;
+  --tint-s: 16;
+}
+
+:root {
+  --n-50:  hsl(var(--tint-h) calc(var(--tint-s) * 1.7%) 98.2%);
+  --n-100: hsl(var(--tint-h) calc(var(--tint-s) * 1.7%) 96.1%);
+  --n-200: hsl(var(--tint-h) calc(var(--tint-s) * 1.4%) 91.4%);
+  --n-300: hsl(var(--tint-h) calc(var(--tint-s) * 1.2%) 84.0%);
+  --n-400: hsl(var(--tint-h) calc(var(--tint-s) * 0.95%) 65.0%);
+  --n-500: hsl(var(--tint-h) calc(var(--tint-s) * 0.80%) 47.0%);
+  --n-600: hsl(var(--tint-h) calc(var(--tint-s) * 0.95%) 35.0%);
+  --n-700: hsl(var(--tint-h) calc(var(--tint-s) * 1.2%) 27.0%);
+  --n-800: hsl(var(--tint-h) calc(var(--tint-s) * 1.6%) 17.0%);
+  --n-900: hsl(var(--tint-h) calc(var(--tint-s) * 2.2%) 11.0%);
+  --n-950: hsl(var(--tint-h) calc(var(--tint-s) * 3.0%) 5.0%);
+}
+
 /* ── Base background / foreground ───────────────────────────────────────────── */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --background: var(--n-50);
+  --foreground: var(--n-900);
 }
 
 /* System dark (when next-themes is set to "system" and OS is dark) */
 @media (prefers-color-scheme: dark) {
-  :root:not(.light) { --background: #0b1522; --foreground: #dce8f5; }
+  :root:not(.light) {
+    --background: hsl(var(--tint-h) calc(var(--tint-s) * 2.6%) 6.8%);
+    --foreground: hsl(var(--tint-h) calc(var(--tint-s) * 1.6%) 91.0%);
+  }
 }
 
 /* Explicit dark class set by next-themes */
-:root.dark { --background: #0b1522; --foreground: #dce8f5; }
+:root.dark {
+  --background: hsl(var(--tint-h) calc(var(--tint-s) * 2.6%) 6.8%);
+  --foreground: hsl(var(--tint-h) calc(var(--tint-s) * 1.6%) 91.0%);
+}
 
 body { background: var(--background); color: var(--foreground); }
 
@@ -29,6 +67,8 @@ body { background: var(--background); color: var(--foreground); }
 
 :root,
 [data-accent="teal"] {
+  --tint-h: 185;
+  --tint-s: 15;
   --accent-50:  #f0fdfa;
   --accent-100: #ccfbf1;
   --accent-200: #99f6e4;
@@ -43,6 +83,8 @@ body { background: var(--background); color: var(--foreground); }
 }
 
 [data-accent="indigo"] {
+  --tint-h: 245;
+  --tint-s: 16;
   --accent-50:  #eef2ff;
   --accent-100: #e0e7ff;
   --accent-200: #c7d2fe;
@@ -57,6 +99,8 @@ body { background: var(--background); color: var(--foreground); }
 }
 
 [data-accent="violet"] {
+  --tint-h: 265;
+  --tint-s: 16;
   --accent-50:  #f5f3ff;
   --accent-100: #ede9fe;
   --accent-200: #ddd6fe;
@@ -71,6 +115,8 @@ body { background: var(--background); color: var(--foreground); }
 }
 
 [data-accent="rose"] {
+  --tint-h: 350;
+  --tint-s: 16;
   --accent-50:  #fff1f2;
   --accent-100: #ffe4e6;
   --accent-200: #fecdd3;
@@ -85,6 +131,8 @@ body { background: var(--background); color: var(--foreground); }
 }
 
 [data-accent="amber"] {
+  --tint-h: 35;
+  --tint-s: 17;
   --accent-50:  #fffbeb;
   --accent-100: #fef3c7;
   --accent-200: #fde68a;
@@ -96,6 +144,70 @@ body { background: var(--background); color: var(--foreground); }
   --accent-800: #92400e;
   --accent-900: #78350f;
   --accent-950: #451a03;
+}
+
+[data-accent="crimson"] {
+  --tint-h: 8;
+  --tint-s: 16;
+  --accent-50:  #fef2f2;
+  --accent-100: #fee2e2;
+  --accent-200: #fecaca;
+  --accent-300: #fca5a5;
+  --accent-400: #f87171;
+  --accent-500: #ef4444;
+  --accent-600: #dc2626;
+  --accent-700: #b91c1c;
+  --accent-800: #991b1b;
+  --accent-900: #7f1d1d;
+  --accent-950: #450a0a;
+}
+
+[data-accent="pink"] {
+  --tint-h: 325;
+  --tint-s: 16;
+  --accent-50:  #fdf2f8;
+  --accent-100: #fce7f3;
+  --accent-200: #fbcfe8;
+  --accent-300: #f9a8d4;
+  --accent-400: #f472b6;
+  --accent-500: #ec4899;
+  --accent-600: #db2777;
+  --accent-700: #be185d;
+  --accent-800: #9d174d;
+  --accent-900: #831843;
+  --accent-950: #500724;
+}
+
+[data-accent="emerald"] {
+  --tint-h: 155;
+  --tint-s: 14;
+  --accent-50:  #ecfdf5;
+  --accent-100: #d1fae5;
+  --accent-200: #a7f3d0;
+  --accent-300: #6ee7b7;
+  --accent-400: #34d399;
+  --accent-500: #10b981;
+  --accent-600: #059669;
+  --accent-700: #047857;
+  --accent-800: #065f46;
+  --accent-900: #064e3b;
+  --accent-950: #022c22;
+}
+
+[data-accent="sky"] {
+  --tint-h: 205;
+  --tint-s: 16;
+  --accent-50:  #f0f9ff;
+  --accent-100: #e0f2fe;
+  --accent-200: #bae6fd;
+  --accent-300: #7dd3fc;
+  --accent-400: #38bdf8;
+  --accent-500: #0ea5e9;
+  --accent-600: #0284c7;
+  --accent-700: #0369a1;
+  --accent-800: #075985;
+  --accent-900: #0c4a6e;
+  --accent-950: #082f49;
 }
 
 /* ── Expose accent shades as Tailwind design tokens ─────────────────────────
@@ -119,6 +231,23 @@ body { background: var(--background); color: var(--foreground); }
   --color-accent-800: var(--accent-800);
   --color-accent-900: var(--accent-900);
   --color-accent-950: var(--accent-950);
+
+  /* Redefining slate is what makes the theme reach the whole app: every
+     existing bg-slate-900 / border-slate-200 / text-slate-400 resolves through
+     these, so a preset change re-tints the UI with no component edits.
+     `white` is deliberately left untouched — text-white sits on accent buttons
+     and must stay pure. */
+  --color-slate-50:  var(--n-50);
+  --color-slate-100: var(--n-100);
+  --color-slate-200: var(--n-200);
+  --color-slate-300: var(--n-300);
+  --color-slate-400: var(--n-400);
+  --color-slate-500: var(--n-500);
+  --color-slate-600: var(--n-600);
+  --color-slate-700: var(--n-700);
+  --color-slate-800: var(--n-800);
+  --color-slate-900: var(--n-900);
+  --color-slate-950: var(--n-950);
 }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */

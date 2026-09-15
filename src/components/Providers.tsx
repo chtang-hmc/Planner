@@ -11,12 +11,18 @@ import { SearchProvider } from '@/contexts/SearchContext'
 const ACCENT_KEY = 'planner-accent'
 export const ACCENT_DEFAULT = 'teal'
 
+// Each entry also drives the neutral tint (see --tint-h in globals.css), so a
+// choice here re-colors the whole UI, not just accented controls.
 export const ACCENTS = [
-  { id: 'teal',   label: 'Teal',   color: '#14b8a6' },
-  { id: 'indigo', label: 'Indigo', color: '#6366f1' },
-  { id: 'violet', label: 'Violet', color: '#8b5cf6' },
-  { id: 'rose',   label: 'Rose',   color: '#f43f5e' },
-  { id: 'amber',  label: 'Amber',  color: '#f59e0b' },
+  { id: 'teal',    label: 'Teal',    color: '#14b8a6' },
+  { id: 'emerald', label: 'Emerald', color: '#10b981' },
+  { id: 'sky',     label: 'Sky',     color: '#0ea5e9' },
+  { id: 'indigo',  label: 'Indigo',  color: '#6366f1' },
+  { id: 'violet',  label: 'Violet',  color: '#8b5cf6' },
+  { id: 'pink',    label: 'Pink',    color: '#ec4899' },
+  { id: 'rose',    label: 'Rose',    color: '#f43f5e' },
+  { id: 'crimson', label: 'Red',     color: '#ef4444' },
+  { id: 'amber',   label: 'Amber',   color: '#f59e0b' },
 ] as const
 
 export type AccentId = (typeof ACCENTS)[number]['id']
