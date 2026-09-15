@@ -104,6 +104,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0004_scheduling.sql` — `user_working_hours`, `user_energy_schedule`, `user_scheduling_config`; `scheduled_by` on `tasks`
 - `0005_habit_weekly_target.sql` — `tasks.weekly_target`; `completions_this_week` + `week_start` on `habit_streaks`
 - `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
+- `0007_habit_exclusive_group.sql` — `tasks.exclusive_group`; habits sharing a group are never scheduled on the same day
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -398,7 +399,21 @@ A habit with both a `weekly_target` and an `estimated_minutes` session length is
 
 - **Candidates carry the end of the current week as `due_date`.** Not the habit row's own `due_date` — that's a "next occurrence" marker and would trip the scheduler's `dayMs > dueMs` guard, pinning every session to one day. The week end is needed because "Schedule week" runs a *rolling* 7 days from today, which straddles the week boundary whenever today isn't the first day; without the bound, sessions owed for this week could be placed into next week, which would then begin with its allowance already spent.
 - **`urgency_score` is overridden to `priority * 10`.** Habits are stored with score 0 since they aren't deadline work, which would sort them last and leave them only whatever space is left over. The override gives them the same baseline an undated task of that priority gets. Raising a habit's priority is the lever if it keeps losing to deadline work.
-- **Sessions share a `spreadGroup`, keyed by title** so they land on distinct days (see [Scheduler](#scheduler)). Keyed by title rather than row id: if a habit ever ends up with two pending rows they are still one habit and must not both land on the same day.
+- **Sessions share a `spreadGroup`**, keyed by `exclusive_group` when set and by title so they land on distinct days (see [Scheduler](#scheduler)). otherwise. Keyed by title rather than row id: if a habit ever ends up with two pending rows they are still one habit and must not both land on the same day.
+
+### Mutually exclusive habits
+
+`tasks.exclusive_group` (text, nullable — migration `0007`). Habits sharing a group are never scheduled on the same day: set Gym and Run both to `Exercise`.
+
+This needed **no new scheduler logic** — `spreadGroup` already means "these candidates must land on distinct days", so mutual exclusion is just two habits sharing the key. A pairwise `habit_conflicts` table was considered and rejected: it expresses arbitrary conflict graphs (A–B, B–C, A fine with C) but would require real graph colouring in the scheduler, for a case that named groups cover.
+
+The constraint is **scheduling-only**. If you actually did both in one day you can still log both — the app records what happened rather than refusing data it knows is real.
+
+The group is stored on *every* row of the habit chain and copied by both the completion spawn and the back-fill insert, so it survives the next completion.
+
+Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seven days, so seven are placed on distinct days and two are reported unschedulable rather than silently dropped.
+
+**Writes omit the column when unset.** The spawn and back-fill inserts spread `exclusive_group` in conditionally, so a database without 0007 still creates habits normally — sending the key unconditionally is precisely how `weekly_target` broke habit creation before 0005 was applied. Reads use `select('*')` and fall back to per-habit grouping; only assigning a group needs the column, and the setter returns a message naming the migration.
 
 ---
 

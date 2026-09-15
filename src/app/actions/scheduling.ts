@@ -127,7 +127,7 @@ async function buildHabitCandidates(
 ): Promise<SchedulerTask[]> {
   const { data: habits } = await db
     .from('tasks')
-    .select('id, title, priority, energy_required, estimated_minutes, adjusted_minutes, weekly_target')
+    .select('*')          // '*' so a pre-0007 database (no exclusive_group) still works
     .eq('type', 'habit')
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)
@@ -190,10 +190,14 @@ async function buildHabitCandidates(
         // pin every session to one day) — the end of the week the sessions are
         // owed for, which the scheduler already honours as a deadline.
         due_date:         weekEnd,
-        // Grouped by title, not row id: if a habit ever ends up with two
-        // pending rows they are still the same habit and must not both land
-        // on one day.
-        spreadGroup:      `habit:${h.title}`,
+        // Habits in a shared exclusive group (e.g. Gym + Run as 'Exercise')
+        // never land on the same day. Falling back to the title keys the group
+        // per habit, which still keeps that habit's own sessions apart — and by
+        // title rather than row id, so two pending rows of one habit can't
+        // share a day either.
+        spreadGroup:      h.exclusive_group
+          ? `group:${h.exclusive_group}`
+          : `habit:${h.title}`,
       })
     }
   }

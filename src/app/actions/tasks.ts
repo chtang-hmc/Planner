@@ -151,6 +151,10 @@ export async function completeTask(
         weekly_target:      taskRow.weekly_target ?? null,
         due_date:           nextDue,
         created_at:         now,
+        // Only when set: sending the key unconditionally would fail every
+        // insert on a pre-0007 database, which is how weekly_target once broke
+        // habit creation outright.
+        ...(taskRow.exclusive_group ? { exclusive_group: taskRow.exclusive_group } : {}),
       })
     }
 
@@ -210,6 +214,50 @@ export async function completeTask(
 // A habit is a chain of task rows sharing a title (each completion closes one
 // row and spawns the next), so both of these operate on the title rather than a
 // single row id — the same identity the streak calendar uses.
+
+/**
+ * Put a habit in an exclusive group (or clear it with null). Habits sharing a
+ * group are never scheduled on the same day — e.g. Gym and Run as 'Exercise'.
+ *
+ * Applied to every row of the chain so the setting survives the next
+ * completion, which spawns a fresh row.
+ */
+export async function setHabitExclusiveGroup(
+  title: string,
+  group: string | null,
+): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const value = group?.trim() || null
+
+  const { error } = await db
+    .from('tasks')
+    .update({ exclusive_group: value })
+    .eq('type', 'habit')
+    .eq('title', title)
+
+  if (error) {
+    console.error('setHabitExclusiveGroup:', error.message)
+    return { error: 'Could not save — run migration 0007_habit_exclusive_group.sql first.' }
+  }
+
+  revalidatePath('/habits')
+  return {}
+}
+
+/** Distinct exclusive groups already in use, for the picker. */
+export async function listHabitGroups(): Promise<string[]> {
+  const db = createServiceClient()
+  // select('*') so a pre-0007 database returns rows without the column
+  const { data } = await db
+    .from('tasks')
+    .select('*')
+    .eq('type', 'habit')
+    .in('status', ['inbox', 'active'])
+
+  const groups = new Set<string>()
+  for (const r of data ?? []) if (r.exclusive_group) groups.add(r.exclusive_group)
+  return [...groups].sort()
+}
 
 /**
  * Delete a habit and its entire history: every occurrence, its streak rows, and
@@ -329,6 +377,7 @@ export async function setHabitCompletion(
     due_date:          null,
     created_at:        `${dateStr}T12:00:00Z`,
     completed_at:      `${dateStr}T12:00:00Z`,
+    ...(template.exclusive_group ? { exclusive_group: template.exclusive_group } : {}),
   })
   if (error) return { error: error.message }
 

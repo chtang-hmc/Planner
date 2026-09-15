@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveGroup, listHabitGroups, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -437,6 +437,28 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const project = task.project ?? INBOX_PROJECT
   const isHabit = task.type === 'habit'
 
+  // Exclusive group — habits sharing one are never scheduled on the same day
+  const [group,      setGroup]      = useState<string>(task.exclusive_group ?? '')
+  const [knownGroups, setKnownGroups] = useState<string[]>([])
+  const [groupError, setGroupError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (isHabit) listHabitGroups().then(setKnownGroups).catch(() => {})
+  }, [isHabit])
+
+  function saveGroup(next: string) {
+    const previous = group
+    setGroup(next)
+    setGroupError(null)
+    startTransition(async () => {
+      const res = await setHabitExclusiveGroup(task.title, next || null)
+      if (res.error) {
+        setGroup(previous)          // don't let the UI claim a save that failed
+        setGroupError(res.error)
+      }
+    })
+  }
+
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,      setDeleting]      = useState(false)
   const [deleteError,   setDeleteError]   = useState<string | null>(null)
@@ -734,6 +756,53 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                     ) : (
                       <p className="text-xs text-violet-400 dark:text-violet-500">No weekly goal set.</p>
                     )}
+                    {/* Exclusive group */}
+                    <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
+                      <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-1">
+                        Not on the same day as
+                      </p>
+                      <p className="text-[11px] text-violet-400 dark:text-violet-500 mb-2">
+                        Habits sharing a group are never scheduled on one day.
+                      </p>
+                      <div className="flex gap-1.5 flex-wrap items-center">
+                        {knownGroups.filter(g => g !== group).map(g => (
+                          <button
+                            key={g}
+                            onClick={() => saveGroup(g)}
+                            className="px-2.5 py-1 rounded-lg text-xs border border-violet-200 dark:border-violet-800 text-violet-500 hover:border-violet-400 transition-colors"
+                          >
+                            {g}
+                          </button>
+                        ))}
+                        {group && (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-violet-600 text-white">
+                            {group}
+                            <button
+                              onClick={() => saveGroup('')}
+                              title="Remove from group"
+                              className="hover:opacity-70"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        )}
+                        <input
+                          type="text"
+                          defaultValue=""
+                          placeholder={group ? 'move to…' : 'e.g. Exercise'}
+                          onKeyDown={e => {
+                            if (e.key !== 'Enter') return
+                            const v = (e.target as HTMLInputElement).value.trim()
+                            if (!v) return
+                            saveGroup(v)
+                            ;(e.target as HTMLInputElement).value = ''
+                          }}
+                          className="w-28 px-2 py-1 rounded-lg text-xs border border-violet-200 dark:border-violet-800 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 placeholder:text-violet-300 dark:placeholder:text-violet-700"
+                        />
+                      </div>
+                      {groupError && <p className="text-xs text-amber-500 mt-1.5">{groupError}</p>}
+                    </div>
+
                     {/* Edit target */}
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-xs text-violet-400 dark:text-violet-500 shrink-0">Target</span>

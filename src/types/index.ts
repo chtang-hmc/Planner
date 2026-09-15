@@ -33,6 +33,7 @@ export interface Task {
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks
   weekly_target: number | null       // habits only: how many times per week to aim for
+  exclusive_group: string | null     // habits only: habits sharing a group are never scheduled on the same day
   gcal_event_id: string | null       // GCal event id for scheduled focus block
   scheduled_start: string | null     // ISO timestamp — start of focus block
   scheduled_end: string | null       // ISO timestamp — end of focus block
