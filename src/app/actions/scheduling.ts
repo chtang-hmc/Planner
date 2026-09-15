@@ -340,13 +340,15 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone, dayStr)
   if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
 
-  // Fetch tasks due on or before the chosen day
-  const todayISO = dayStr
+  // Fetch tasks due on or before the chosen day.
+  // due_dates are stored as YYYY-MM-DDT00:00:00Z (UTC midnight of the local date).
+  // Use `lte(dayStr + 'T00:00:00Z')` — tasks stored exactly at that midnight ARE included
+  // (e.g. "2026-09-15T00:00:00Z" <= "2026-09-15T00:00:00Z" → true).
   const { data: todayTasks } = await db
     .from('tasks')
     .select('id, title, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
     .in('status', ['inbox', 'active'])
-    .lte('due_date', todayISO + 'T23:59:59Z')
+    .lte('due_date', dayStr + 'T00:00:00Z')
     .order('urgency_score', { ascending: false })
 
   const schedulerTasks: SchedulerTask[] = (todayTasks ?? []).map(t => ({

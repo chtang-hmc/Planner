@@ -120,6 +120,27 @@ function localMidnight(dateStr: string, tz: string): number {
   return utcMidnight.getTime() + offsetMins * 60_000
 }
 
+/**
+ * Returns the UTC ms for the END of `dueISO`'s date in the given timezone.
+ *
+ * due_date is stored as YYYY-MM-DDT00:00:00Z (UTC midnight). The user's
+ * intended deadline is end-of-day in their local timezone, i.e. the local
+ * midnight of the following day.
+ *
+ * Example: due_date "2026-09-15T00:00:00Z" for a UTC-7 user → deadline is
+ * "2026-09-16T07:00:00Z" (midnight Sep 16 PDT), NOT "2026-09-15T00:00:00Z"
+ * (which is 5pm Sep 14 PDT — already in the past on the due day!).
+ */
+function endOfDayMs(dueISO: string, tz: string): number {
+  // Extract the UTC date string from the stored ISO (e.g. "2026-09-15")
+  const dateStr = dueISO.slice(0, 10)
+  // Midnight of the next local day = end of the due day
+  const d = new Date(dateStr)
+  d.setDate(d.getDate() + 1)
+  const nextDateStr = d.toISOString().slice(0, 10)
+  return localMidnight(nextDateStr, tz)
+}
+
 /** Returns local {dayOfWeek, hour} for a UTC timestamp in the given IANA timezone. */
 function localPartsAt(ms: number, tz: string): { dow: number; hour: number } {
   const d = new Date(ms)
@@ -218,7 +239,7 @@ export function runScheduler(
 
   for (const task of sorted) {
     const totalSegs    = Math.ceil(task.duration_minutes / config.maxSessionMinutes)
-    const dueMs        = task.due_date ? new Date(task.due_date).getTime() : Infinity
+    const dueMs        = task.due_date ? endOfDayMs(task.due_date, tz) : Infinity
     let remaining      = task.duration_minutes
     let allPlaced      = true
 
