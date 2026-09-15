@@ -139,7 +139,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)              // top-level tasks only here
-    .neq('scheduled_by', 'manual')      // don't touch manually-locked tasks
+    .or('scheduled_by.is.null,scheduled_by.eq.auto')  // exclude manual locks; neq would drop NULLs
     .order('urgency_score', { ascending: false })
 
   // Fetch subtasks for tasks that have them
@@ -150,7 +150,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
         .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
         .in('parent_id', parentIds)
         .in('status', ['inbox', 'active'])
-        .neq('scheduled_by', 'manual')
+        .or('scheduled_by.is.null,scheduled_by.eq.auto')
     : { data: [] }
 
   // Build candidate list: if a parent has subtasks, replace it with its subtasks

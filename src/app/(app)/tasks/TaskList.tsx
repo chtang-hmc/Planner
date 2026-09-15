@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
@@ -91,9 +91,15 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
 
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
-  const [planDayDate, setPlanDayDate] = useState(todayStr)
+  // tz and planDayDate must be client-side only — Intl on the server returns UTC,
+  // not the user's browser timezone. useEffect ensures these are set after hydration.
+  const [tz, setTz] = useState('UTC')
+  const [planDayDate, setPlanDayDate] = useState('')
+  useEffect(() => {
+    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    setTz(browserTz)
+    setPlanDayDate(new Intl.DateTimeFormat('en-CA', { timeZone: browserTz }).format(new Date()))
+  }, [])
 
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
