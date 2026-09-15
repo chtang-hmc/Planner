@@ -1025,18 +1025,27 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               </div>
             </div>
 
-            {/* Timeline progress (only when due date is set) */}
+            {/* How close the deadline is — not how old the task is */}
             {urgencyBreakdown.hasDueDate && (
               <div className="flex flex-col gap-1">
                 <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700">
                   <div
                     className="bg-slate-400 dark:bg-slate-500 transition-all duration-300"
-                    style={{ width: `${urgencyBreakdown.elapsed * 100}%` }}
+                    style={{ width: `${urgencyBreakdown.ramp * 100}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-400">
-                  {Math.round(urgencyBreakdown.elapsed * 100)}% through lifespan
-                  {urgencyBreakdown.elapsed >= 1 && <span className="text-red-500 ml-1 font-medium">· overdue</span>}
+                  {(() => {
+                    const d = urgencyBreakdown.daysLeft ?? 0
+                    if (d < 0) return `${Math.floor(-d)}d overdue`
+                    if (d < 1) return 'due today'
+                    if (d < 2) return 'due tomorrow'
+                    if (urgencyBreakdown.ramp === 0) return `due in ${Math.round(d)}d — no pressure yet`
+                    return `due in ${Math.round(d)}d`
+                  })()}
+                  {(urgencyBreakdown.daysLeft ?? 0) < 0 && (
+                    <span className="text-red-500 ml-1 font-medium">· overdue</span>
+                  )}
                 </p>
               </div>
             )}

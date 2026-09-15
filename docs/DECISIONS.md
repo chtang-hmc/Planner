@@ -108,6 +108,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0008_daily_breaks.sql` — `user_daily_breaks` (meal windows + cooldown), seeded with Lunch and Dinner; `tasks.avoid_after_breaks`
 - `0009_task_location_and_span.sql` — `tasks.span_minutes` + `tasks.location`; tethering work (laundry) and where a task happens
 - `0010_task_buffer_override.sql` — `tasks.buffer_minutes`; per-task transition padding (null = global default, 0 = none)
+- `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -156,30 +157,44 @@ Urgency is also recomputed immediately in `updateTask()` when a urgency-affectin
 ### Formula
 
 ```
-urgency_score = min(priority_pts + time_pressure, 100)
-
-priority_pts  = priority × 10          →  10 | 20 | 30 | 40
-time_pressure = 0–60, based on curve   →  see below
+urgency = priority points (10–40) + time pressure (0–60), capped at 100
 ```
 
-Tasks without a due date get `urgency_score = priority_pts` (no time pressure).
+Time pressure is a function of **time remaining**, ramping over a fixed 14-day lead-in:
 
-### Curves
-
-| Curve | Behavior | Use case |
-|---|---|---|
-| `linear` | pressure = `elapsed_ratio × 60` | Default; steady ramp |
-| `exponential` | sigmoid centred at 80% elapsed: `60 / (1 + e^{-10(r-0.8)})` | Calm until final stretch, then spikes hard |
-| `step` | 5 pts below 60%, 25 pts at 60–85%, 60 pts above 85% | Hard deadlines with a clear cliff |
-
-### Implementation
-
-`computeUrgency()` in `src/types/index.ts` is shared between the frontend (live preview in TaskDetail) and the server (immediate recompute in `updateTask`, initial score in `createTask`). The PL/pgSQL function in migration 0001 replicates the same logic for the nightly pg_cron job — keep them in sync if the formula changes.
-
-**Fields that trigger an immediate recompute in `updateTask()`:**
-```typescript
-const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
 ```
+ramp    = clamp(1 − daysLeft / 14, 0, 1)     0 = a fortnight out, 1 = due now
+onTime  = shape(ramp) × 50                    shape ∈ {linear, exponential, step}
+overdue = min(1, daysOverdue / 7) × 10        keeps climbing after the deadline
+```
+
+### Why not fraction-of-lifespan
+
+The original formula used `elapsed / (due_date − created_at)` — the task's own lifespan. That puts the **creation date in the denominator**, so two tasks with identical priority and identical deadlines scored differently purely because one was written down earlier. A task added today and due Friday is under exactly the same pressure as one added last Monday and due Friday; the deadline is real, the creation date is an accident of when it got typed in.
+
+It also failed in the direction that matters most: a task added the day before it's due had a tiny lifespan, so its elapsed ratio was near zero and it read as **not urgent** right when it was most urgent. Rescoring live data moved "Review OS Processes", due the next day, from 30 to 81.
+
+Scores are now comparable across the whole list, which is the point — they're used to sort a queue and to rank scheduler candidates.
+
+### Curve shapes
+
+Curves are normalised to start at 0 and reach exactly 1 at the deadline, so they are comparable to each other rather than each having its own range:
+
+| Curve | Behaviour |
+|---|---|
+| `linear` | Pressure rises steadily across the fortnight |
+| `exponential` | Sigmoid centred at 0.75 — flat for most of the window, then steep |
+| `step` | Three plateaus: 8% → 40% → 100% at the 60% and 85% marks |
+
+### Overdue
+
+The deadline is not the ceiling. On-time pressure tops out at 50 and overdue adds up to 10 more over the following week, so a task three days late outranks one due this afternoon instead of tying with it.
+
+### Keeping the two implementations in sync
+
+`computeUrgency()` in `src/types/index.ts` is the source of truth, and the PL/pgSQL `recompute_urgency_scores()` (rewritten in migration `0011`) must match it — the nightly `pg_cron` job overwrites every active task's score, so a stale function silently reverts the app's work every night. **This is the one migration whose absence is actively harmful rather than merely inert.** The two were verified equal to 1e-10 across 216 combinations of priority, curve and deadline.
+
+Habits keep `urgency_score = 0`: they aren't deadline work. The scheduler gives them a `priority × 10` baseline at scheduling time instead (see [Scheduling habits](#scheduling-habits)).
 
 ---
 
