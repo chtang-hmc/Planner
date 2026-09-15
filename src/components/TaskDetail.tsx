@@ -38,7 +38,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     const optimistic: SubtaskRow = {
       id: crypto.randomUUID(), title: t, status: 'active',
       estimated_minutes: mins, energy_required: 'low',
-      gcal_event_id: null, scheduled_start: null, scheduled_end: null,
+      gcal_event_id: null, gap_after_minutes: null, scheduled_start: null, scheduled_end: null,
       created_at: new Date().toISOString(),
     }
     setItems(prev => [...prev, optimistic])
@@ -62,7 +62,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     startTransition(() => deleteSubtask(sub.id))
   }
 
-  function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string }) {
+  function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string; gap_after_minutes?: number | null }) {
     setItems(prev => prev.map(s => s.id === sub.id ? { ...s, ...patch } : s))
     startTransition(async () => { await updateSubtaskFields(sub.id, taskId, patch) })
   }
@@ -170,6 +170,24 @@ function SubtaskSection({ taskId }: { taskId: string }) {
                       placeholder="min"
                       className="w-16 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent-500 font-mono"
                     />
+                  </div>
+                  {/* Fixed wait before the next step — machine time, proving,
+                      drying. Free time for you, but the next step can't move. */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">then wait</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={sub.gap_after_minutes ?? ''}
+                      onChange={e => {
+                        const v = e.target.value ? parseInt(e.target.value) : null
+                        handleUpdateField(sub, { gap_after_minutes: v })
+                      }}
+                      placeholder="0"
+                      className="w-16 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent-500 font-mono"
+                    />
+                    <span className="text-[10px] text-slate-400">min</span>
                   </div>
                   <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                     {SUBTASK_ENERGY_OPTS.map(o => (

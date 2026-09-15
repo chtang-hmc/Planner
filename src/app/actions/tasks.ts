@@ -661,6 +661,7 @@ export type SubtaskRow = {
   estimated_minutes: number | null
   energy_required:   string
   gcal_event_id:     string | null
+  gap_after_minutes: number | null
   scheduled_start:   string | null
   scheduled_end:     string | null
   created_at:        string
@@ -670,7 +671,7 @@ export async function getSubtasks(parentId: string): Promise<SubtaskRow[]> {
   const db = createServiceClient()
   const { data, error } = await db
     .from('tasks')
-    .select('id, title, status, estimated_minutes, energy_required, gcal_event_id, scheduled_start, scheduled_end, created_at')
+    .select('id, title, status, estimated_minutes, energy_required, gcal_event_id, gap_after_minutes, scheduled_start, scheduled_end, created_at')
     .eq('parent_id', parentId)
     .order('created_at', { ascending: true })
   if (error) throw new Error(error.message)
@@ -728,7 +729,7 @@ export async function createSubtask(
 export async function updateSubtaskFields(
   subtaskId: string,
   parentId:  string,
-  patch: { estimated_minutes?: number | null; energy_required?: string },
+  patch: { estimated_minutes?: number | null; energy_required?: string; gap_after_minutes?: number | null },
 ) {
   const db = createServiceClient()
   const { error } = await db.from('tasks').update(patch).eq('id', subtaskId)

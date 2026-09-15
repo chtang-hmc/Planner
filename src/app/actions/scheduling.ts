@@ -382,6 +382,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       // Subtasks of one parent chain together — no buffer between them, one
       // buffer around the run.
       chainGroup:       s.parent_id,
+      gapAfterMinutes:  s.gap_after_minutes ?? undefined,
       location:         s.location ?? 'anywhere',
       spanMinutes:      s.span_minutes ?? undefined,
       bufferMinutes:    s.buffer_minutes ?? undefined,

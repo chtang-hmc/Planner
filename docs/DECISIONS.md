@@ -110,6 +110,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0009_task_location_and_span.sql` — `tasks.span_minutes` + `tasks.location`; tethering work (laundry) and where a task happens
 - `0010_task_buffer_override.sql` — `tasks.buffer_minutes`; per-task transition padding (null = global default, 0 = none)
 - `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
+- `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -567,6 +568,18 @@ Subtasks of one parent share a `chainGroup` and are placed as a run: **no buffer
 Each sitting takes the slot that fits the **most** members, not the tightest-fitting one — the goal is to group the chain as tightly as the week allows rather than scatter it one subtask at a time. Members still get their own block each, so each keeps its own calendar event and row; they are merely adjacent.
 
 The run is constrained by its strictest member: widest buffer, earliest deadline, any location that isn't `anywhere`. A run is capped at `maxSessionMinutes`, so five 20-minute readings against a 90-minute cap become 4 + 1 rather than one 100-minute block — raising the max session length groups more per sitting.
+
+### Multi-stage work (fixed waits)
+
+`tasks.gap_after_minutes` (migration `0012`) — the wait between one subtask and the next. Washing sheets is 5 min loading, an hour of machine time, 5 min to the dryer, another hour, 15 min making the bed. The waits are unavoidable, fixed, and *yours to use*.
+
+A chain with any non-zero gap is placed as a **fixed-offset sequence** rather than packed. The offsets aren't negotiable — if loading is at 10:00 then the dryer is at 11:05, wherever that lands — so instead of choosing a slot per stage, the scheduler looks for a single start time that makes *every* stage land on free time, stepping forward in 15-minute increments until one does.
+
+The waits themselves are **not reserved**: each active stage is a block, the gaps between are left free, and other work can be scheduled into them. What the sequence does reserve is your *location* — the whole cycle, waits included, becomes a tether at the chain's location, so nothing marked `away` is scheduled inside it. That's what distinguishes a laundry cycle from three unrelated errands.
+
+A sequence is all-or-nothing: if no start time fits every stage, the whole cycle is reported unschedulable rather than half-placed. A half-done laundry cycle isn't a useful plan.
+
+How much of a wait is reusable depends on buffers — a 60-minute wait between two default-buffered stages leaves 30 usable minutes. Setting the filler task's buffer to None reclaims nearly all of it.
 
 ### Why not a separate table?
 

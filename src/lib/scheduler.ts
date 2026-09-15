@@ -139,6 +139,12 @@ export interface SchedulerTask {
    * either side of the run. The scheduler packs as many as fit per sitting.
    */
   chainGroup?:       string
+  /**
+   * Fixed wait between this chain member and the next — machine time, rising
+   * time, a coat of paint drying. The gap is not reserved (you're free during
+   * it), but the next stage must land exactly that far after this one ends.
+   */
+  gapAfterMinutes?:  number
 }
 
 /** Where a task happens. 'anywhere' is compatible with everything. */
@@ -430,6 +436,102 @@ export function runScheduler(
    * Each member still gets its own block, so it keeps its own calendar event
    * and its own row — they're merely adjacent.
    */
+  /**
+   * Is [start, end) usable for work with these constraints?
+   * Used when fitting a fixed-offset sequence, where a stage's time is dictated
+   * by the stage before it rather than chosen from a list of free slots.
+   */
+  function intervalFree(
+    start: number, end: number,
+    opts: { bufferMs: number; loc: TaskLocation; avoidAfterBreaks?: boolean },
+  ): boolean {
+    const { bufferMs, loc, avoidAfterBreaks } = opts
+    if (start < nowMs) return false
+
+    // Inside working hours for that day
+    const dayMs = days.find(d => start >= d && start < d + 86_400_000)
+    if (dayMs === undefined) return false
+    const { dow } = localPartsAt(dayMs + 60_000, tz)
+    const wh = workingHours.find(w => w.day_of_week === dow)
+    if (!wh || !wh.enabled) return false
+    const workStart = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
+    const workEnd   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
+    if (start < workStart || end > workEnd) return false
+
+    const hits = (iv: Interval, pad: number) => start < iv[1] + pad && end > iv[0] - pad
+    if (busyIntervals.some(iv => hits(iv, bufferMs))) return false
+    if (placedBlocks.some(iv  => hits(iv, bufferMs))) return false
+    if (breakIntervals.some(iv => hits(iv, bufferMs))) return false
+    if (avoidAfterBreaks && cooldownIntervals.some(iv => hits(iv, 0))) return false
+    if (tethers.some(t => locationsClash(t.loc, loc) && start < t.end && end > t.start)) return false
+    return true
+  }
+
+  /**
+   * Place a chain whose members are separated by fixed waits.
+   *
+   * Unlike a packed run, the offsets are not negotiable: if loading the washer
+   * is at 10:00 then moving to the dryer is at 11:05, wherever that lands. So
+   * rather than choosing a slot per stage, we look for a single start time that
+   * makes *every* stage land on free time, and step forward until one does.
+   *
+   * The waits themselves are left free — that's the point, you can do other
+   * things — while each active stage is reserved like any other block.
+   */
+  function placeFixedSequence(
+    members: SchedulerTask[],
+    opts: { bufferMs: number; loc: TaskLocation; avoidAfterBreaks: boolean; dueMs: number },
+  ): boolean {
+    const { bufferMs, loc, avoidAfterBreaks, dueMs } = opts
+
+    // Offset of each stage from the start of the sequence
+    const offsets: number[] = []
+    let cursor = 0
+    for (const m of members) {
+      offsets.push(cursor)
+      cursor += (m.duration_minutes + (m.gapAfterMinutes ?? 0)) * 60_000
+    }
+    const totalMs = cursor - (members[members.length - 1].gapAfterMinutes ?? 0) * 60_000
+
+    const STEP = 15 * 60_000
+    for (const { fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks, dueMs })) {
+      // Only the FIRST stage has to start inside this slot; later stages are
+      // checked wherever their offset puts them, which may be hours later.
+      for (let t = Math.max(fS, nowMs); t + members[0].duration_minutes * 60_000 <= fE; t += STEP) {
+        if (t > dueMs) break
+        const startAligned = Math.ceil(t / STEP) * STEP
+        const ok = members.every((m, i) => intervalFree(
+          startAligned + offsets[i],
+          startAligned + offsets[i] + m.duration_minutes * 60_000,
+          { bufferMs, loc, avoidAfterBreaks },
+        ))
+        if (!ok) continue
+
+        members.forEach((m, i) => {
+          const s = startAligned + offsets[i]
+          const e = s + m.duration_minutes * 60_000
+          const energy = slotEnergyLevel(s, energySchedule, tz)
+          scheduled.push({
+            taskId: m.id, taskTitle: m.title, taskPriority: m.priority,
+            start: new Date(s), end: new Date(e),
+            segmentIndex: i, totalSegments: members.length,
+            energyMatch: ENERGY_RANK[energy] >= ENERGY_RANK[m.energy_required],
+          })
+          placedBlocks.push([s, e])       // each stage is reserved; the waits are not
+          placedLoc.push({ start: s, end: e, loc })
+        })
+
+        // The sequence pins you for its whole length, waits included — that's
+        // what makes it a laundry cycle rather than three unrelated errands.
+        if (loc !== 'anywhere') {
+          tethers.push({ start: startAligned, end: startAligned + totalMs, loc })
+        }
+        return true
+      }
+    }
+    return false
+  }
+
   function placeChain(members: SchedulerTask[]) {
     // The run is constrained by the strictest member: the widest buffer, the
     // earliest deadline, and any location that isn't 'anywhere'.
@@ -438,6 +540,14 @@ export function runScheduler(
     const dueMs    = Math.min(...members.map(m => m.due_date ? endOfDayMs(m.due_date, tz) : Infinity))
     const avoidAfterBreaks = members.some(m => m.avoidAfterBreaks)
     const maxRunMs = config.maxSessionMinutes * 60_000
+
+    // Fixed waits between stages make this a sequence, not a packing problem.
+    if (members.some(m => (m.gapAfterMinutes ?? 0) > 0)) {
+      if (!placeFixedSequence(members, { bufferMs, loc, avoidAfterBreaks, dueMs })) {
+        unschedulable.push(...members)   // the whole cycle has to fit or none of it does
+      }
+      return
+    }
 
     let remaining = [...members]
 
