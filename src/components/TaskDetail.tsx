@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -435,6 +435,25 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   // the Props type. Resolved here rather than at each call site so any caller
   // can pass a raw row — habits in particular are always project-less.
   const project = task.project ?? INBOX_PROJECT
+  const isHabit = task.type === 'habit'
+
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting,      setDeleting]      = useState(false)
+  const [deleteError,   setDeleteError]   = useState<string | null>(null)
+
+  function handleDeleteHabit() {
+    setDeleting(true)
+    setDeleteError(null)
+    startTransition(async () => {
+      const res = await deleteHabit(task.title)
+      if (res.error) {
+        setDeleting(false)
+        setDeleteError(res.error)
+        return
+      }
+      onClose()
+    })
+  }
 
   // Live urgency breakdown — recomputes as user changes fields
   const urgencyInput = {
@@ -566,8 +585,10 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             </div>
           </div>
 
-          {/* Time estimate + due date */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Time estimate + due date. Habits are recurring commitments with no
+              deadline — their due_date is an internal next-occurrence marker,
+              so no date control is offered. */}
+          <div className={isHabit ? '' : 'grid grid-cols-2 gap-3'}>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
                 {task.type === 'habit' ? 'Session length (min)' : 'Estimate (min)'}
@@ -585,20 +606,22 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                 <p className="text-xs text-violet-500 mt-1">Adjusted: {task.adjusted_minutes}m</p>
               )}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Due date</label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                onBlur={onBlurDue}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
-              />
-            </div>
+            {!isHabit && (
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Due date</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={e => setDueDate(e.target.value)}
+                  onBlur={onBlurDue}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Urgency curve */}
-          <div>
+          {/* Urgency curve — deadline pressure, so not shown for habits */}
+          <div className={isHabit ? 'hidden' : ''}>
             <label className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wide">Urgency curve</label>
             <div className="flex flex-col gap-1.5">
               {CURVE_OPTS.map(o => (
@@ -767,8 +790,8 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             </div>
           )}
 
-          {/* Urgency breakdown — live preview */}
-          <div className="bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 flex flex-col gap-3">
+          {/* Urgency breakdown — live preview. Deadline math, so not for habits. */}
+          <div className={`bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 flex-col gap-3 ${isHabit ? 'hidden' : 'flex'}`}>
             {/* Score + label row */}
             <div className="flex items-baseline justify-between">
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Urgency score</p>
@@ -836,6 +859,43 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               <p className="text-xs text-slate-400">Set a due date to add time pressure</p>
             )}
           </div>
+
+          {isHabit && (
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+              {confirmDelete ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Delete <span className="font-medium">{task.title}</span> and its entire
+                    history? Every logged completion and its streak are removed. This can't be undone.
+                  </p>
+                  {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDeleteHabit}
+                      disabled={deleting}
+                      className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors"
+                    >
+                      {deleting ? 'Deleting…' : 'Delete habit'}
+                    </button>
+                    <button
+                      onClick={() => { setConfirmDelete(false); setDeleteError(null) }}
+                      disabled={deleting}
+                      className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 text-xs font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  Delete habit…
+                </button>
+              )}
+            </div>
+          )}
 
         </div>
       </div>

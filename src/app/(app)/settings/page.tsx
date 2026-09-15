@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import SettingsView from './SettingsView'
+import { isWeekStartDay, WEEK_START_DEFAULT } from '@/lib/week'
 
 export const metadata = { title: 'Settings — Planner' }
 
@@ -32,6 +33,7 @@ export default async function SettingsPage() {
       energySchedule={esRows ?? []}
       maxSession={configRow?.max_session_minutes ?? 90}
       bufferMinutes={configRow?.buffer_minutes ?? 15}
+      weekStartDay={isWeekStartDay(configRow?.week_start_day) ? configRow.week_start_day : WEEK_START_DEFAULT}
     />
   )
 }

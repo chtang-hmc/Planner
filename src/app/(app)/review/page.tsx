@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server'
+import { daysSinceWeekStart, fetchWeekStartDay } from '@/lib/week'
 import { Task, Project, INBOX_PROJECT } from '@/types'
 import ReviewView from './ReviewView'
 
@@ -7,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export interface ReviewData {
   // Step 1: This week
   weeklyCompleted: (Task & { project: Project })[]
-  weekStart: string   // ISO date of last Monday
+  weekStart: string   // ISO date of the current week's first day
 
   // Step 2: Overdue
   overdue: (Task & { project: Project })[]
@@ -25,11 +26,10 @@ export interface ReviewData {
   projects: Project[]
 }
 
-function lastMonday(): string {
+/** Start of the current week in local time, per the configured first day. */
+function weekStartLocal(weekStartDay: number): string {
   const d = new Date()
-  const day = d.getDay()           // 0=Sun, 1=Mon … 6=Sat
-  const diff = day === 0 ? 6 : day - 1
-  d.setDate(d.getDate() - diff)
+  d.setDate(d.getDate() - daysSinceWeekStart(d.getDay(), weekStartDay))
   d.setHours(0, 0, 0, 0)
   return d.toISOString()
 }
@@ -37,7 +37,8 @@ function lastMonday(): string {
 export default async function ReviewPage() {
   const db = createServiceClient()
   const now = new Date().toISOString()
-  const monday = lastMonday()
+  const weekStartDay = await fetchWeekStartDay(db)
+  const weekStart = weekStartLocal(weekStartDay)
   const in7days = new Date(Date.now() + 7 * 86400000).toISOString()
 
   const [
@@ -48,7 +49,7 @@ export default async function ReviewPage() {
     db.from('tasks')
       .select('*, project:projects(id, name, color, archived, created_at)')
       .eq('status', 'done')
-      .gte('completed_at', monday)
+      .gte('completed_at', weekStart)
       .order('completed_at', { ascending: false }),
     db.from('tasks')
       .select('*, project:projects(id, name, color, archived, created_at)')
@@ -74,7 +75,7 @@ export default async function ReviewPage() {
     weeklyCompleted: withFallback(
       (completedThisWeek ?? []) as (Task & { project: Project | null })[]
     ),
-    weekStart: monday,
+    weekStart: weekStart,
     overdue,
     inbox,
     upcoming,

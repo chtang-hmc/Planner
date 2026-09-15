@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useTransition } from 'react'
 import { Task, Project, CalendarEvent, INBOX_PROJECT } from '@/types'
+import { daysSinceWeekStart } from '@/lib/week'
 import { useSearch } from '@/contexts/SearchContext'
 import { updateTask } from '@/app/actions/tasks'
 
@@ -68,10 +69,11 @@ interface Props {
   onTaskClick:   (task: Task & { project: Project }) => void
   onTaskDone:    (task: Task & { project: Project }, e: React.MouseEvent) => void
   onAddTask:     (dueDate: string) => void
+  weekStartDay:  number
 }
 
 export default function UpcomingView({
-  tasks, events, projectFilter, doneIds, onTaskClick, onTaskDone, onAddTask,
+  tasks, events, projectFilter, doneIds, onTaskClick, onTaskDone, onAddTask, weekStartDay,
 }: Props) {
   const { query } = useSearch()
   const q = query.trim().toLowerCase()
@@ -101,11 +103,12 @@ export default function UpcomingView({
   const allDays = Array.from({ length: totalDays }, (_, i) => addDays(today, i))
 
   const anchorDate  = visibleDate >= todayStr ? startOfDay(new Date(visibleDate + 'T00:00:00')) : today
-  const stripStart  = addDays(anchorDate, -anchorDate.getDay())
+  const stripStart  = addDays(anchorDate, -daysSinceWeekStart(anchorDate.getDay(), weekStartDay))
   const stripDays   = Array.from({ length: 7 }, (_, i) => addDays(stripStart, i))
 
-  const currentWeekSun = addDays(today, -today.getDay())
-  const isCurrentWeek  = toDateStr(stripStart) === toDateStr(currentWeekSun)
+  // First day of the week containing today, in the user's configured week start
+  const currentWeekStart = addDays(today, -daysSinceWeekStart(today.getDay(), weekStartDay))
+  const isCurrentWeek    = toDateStr(stripStart) === toDateStr(currentWeekStart)
 
   // Apply optimistic rescheduled dates before filtering
   const effectiveTasks = tasks.map(t =>
@@ -189,15 +192,15 @@ export default function UpcomingView({
 
   function goToPrevWeek() {
     if (isCurrentWeek) return
-    const prevSun = addDays(stripStart, -7)
-    const target = prevSun < currentWeekSun ? currentWeekSun : prevSun
+    const prevWeek = addDays(stripStart, -7)
+    const target = prevWeek < currentWeekStart ? currentWeekStart : prevWeek
     scrollToDate(toDateStr(target))
   }
 
   function goToNextWeek() {
-    const nextSun = addDays(stripStart, 7)
-    const ds = toDateStr(nextSun)
-    const daysOut = Math.ceil((nextSun.getTime() - today.getTime()) / 86400000)
+    const nextWeek = addDays(stripStart, 7)
+    const ds = toDateStr(nextWeek)
+    const daysOut = Math.ceil((nextWeek.getTime() - today.getTime()) / 86400000)
     if (daysOut + 14 > totalDays) setTotalDays(daysOut + 28)
     setTimeout(() => scrollToDate(ds), 50)
   }

@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, HabitStreak } from '@/types'
+import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
 import HabitsView from './HabitsView'
 
 export const dynamic = 'force-dynamic'
@@ -95,6 +96,35 @@ export default async function HabitsPage() {
   const habits    = [...byTitle.values()].map(v => v.row).sort((a, b) => a.title.localeCompare(b.title))
   const doneToday = [...byTitle.values()].filter(v => v.done).map(v => v.row.id)
 
+  // Weekly goal progress, counted as distinct days since the user's configured
+  // first day of the week (Settings → Smart scheduling). completionMap
+  // already holds one entry per day, so two sessions on one day count once — a
+  // "4× a week" target means four days.
+  //
+  // habit_streaks.completions_this_week can't be used: it's keyed by task_id
+  // and every occurrence is a new row, so the counter for the row on screen is
+  // always stale. The streak handed to TaskDetail is patched with the real
+  // count below.
+  const weekStartDay = await fetchWeekStartDay(db)
+  const weekStartStr = weekStartOf(new Date(), weekStartDay)
+
+  const weeklyDays: Record<string, number> = {}
+  for (const [title, dates] of Object.entries(completionMap)) {
+    weeklyDays[title] = dates.filter(d => d >= weekStartStr).length
+  }
+
+  for (const h of habits) {
+    const existing = streaks[h.id]
+    streaks[h.id] = {
+      task_id:               h.id,
+      current_streak:        existing?.current_streak  ?? 0,
+      longest_streak:        existing?.longest_streak  ?? 0,
+      last_completed:        existing?.last_completed  ?? '',
+      week_start:            weekStartStr,
+      completions_this_week: weeklyDays[h.title] ?? 0,
+    }
+  }
+
   return (
     <HabitsView
       habits={habits}
@@ -103,6 +133,7 @@ export default async function HabitsPage() {
       projects={(projects ?? []) as Project[]}
       streaks={streaks}
       gcalWriteEnabled={gcalWriteEnabled}
+      weekStartDay={weekStartDay}
     />
   )
 }

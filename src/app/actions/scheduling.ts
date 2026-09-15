@@ -15,6 +15,7 @@ import {
   type ProposedBlock,
   type AttackItem,
 } from '@/lib/scheduler'
+import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
 
 // ── GCal freeBusy ─────────────────────────────────────────────────────────────
 
@@ -111,14 +112,6 @@ export interface SerializedAttackItem {
 
 // ── Habit sessions ────────────────────────────────────────────────────────────
 
-/** Monday of the current UTC week, as YYYY-MM-DD. Mirrors completeTask. */
-function currentWeekStart(): string {
-  const d   = new Date()
-  const dow = d.getUTCDay()                        // 0=Sun … 6=Sat
-  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1))
-  return d.toISOString().slice(0, 10)
-}
-
 /**
  * Expand each habit with a weekly target into one candidate per session still
  * owed this week (target minus sessions already completed). Sessions share a
@@ -143,22 +136,47 @@ async function buildHabitCandidates(
 
   if (!habits || habits.length === 0) return []
 
-  const { data: streakRows } = await db
-    .from('habit_streaks')
-    .select('task_id, completions_this_week, week_start')
-    .in('task_id', habits.map(h => h.id))
+  const weekStart = weekStartOf(new Date(), await fetchWeekStartDay(db))
 
-  const streaks  = new Map((streakRows ?? []).map(s => [s.task_id, s]))
-  const weekStart = currentWeekStart()
+  // Last day of the current week. Sessions are owed *this* week, so they must
+  // not spill past it — "Schedule week" runs a rolling 7 days from today, which
+  // straddles the week boundary whenever today isn't the first day.
+  const weekEndDate = new Date(`${weekStart}T00:00:00Z`)
+  weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6)
+  const weekEnd = weekEndDate.toISOString()
+
+  // Progress is counted from the completions themselves, as DISTINCT DAYS per
+  // habit title. Two sessions on one day count once — a weekly target means
+  // that many days, not that many completions.
+  //
+  // Not read from habit_streaks.completions_this_week: that table is keyed by
+  // task_id, but every occurrence is a new row with a new id, so the counter
+  // for the current pending row is always 0 and the target would never shrink.
+  // Title is the habit's real identity here, as it is for the streak calendar.
+  const { data: doneRows } = await db
+    .from('tasks')
+    .select('title, completed_at')
+    .eq('type', 'habit')
+    .eq('status', 'done')
+    .gte('completed_at', `${weekStart}T00:00:00Z`)
+    .not('completed_at', 'is', null)
+
+  const daysByTitle = new Map<string, Set<string>>()
+  for (const r of doneRows ?? []) {
+    if (!r.completed_at) continue
+    const set = daysByTitle.get(r.title) ?? new Set<string>()
+    set.add(r.completed_at.slice(0, 10))
+    daysByTitle.set(r.title, set)
+  }
+
   const out: SchedulerTask[] = []
 
   for (const h of habits) {
     const duration = h.adjusted_minutes ?? h.estimated_minutes
     if (!duration) continue          // no session length set — can't schedule it
 
-    const streak = streaks.get(h.id)
-    const done   = streak && streak.week_start === weekStart ? streak.completions_this_week : 0
-    const owed   = Math.max(0, (h.weekly_target ?? 0) - done)
+    const done = daysByTitle.get(h.title)?.size ?? 0
+    const owed = Math.max(0, (h.weekly_target ?? 0) - done)
 
     for (let i = 0; i < owed; i++) {
       out.push({
@@ -168,8 +186,14 @@ async function buildHabitCandidates(
         urgency_score:    h.priority * 10,
         energy_required:  h.energy_required,
         duration_minutes: duration,
-        due_date:         null,
-        spreadGroup:      h.id,
+        // Not the habit row's own due_date (a next-occurrence marker that would
+        // pin every session to one day) — the end of the week the sessions are
+        // owed for, which the scheduler already honours as a deadline.
+        due_date:         weekEnd,
+        // Grouped by title, not row id: if a habit ever ends up with two
+        // pending rows they are still the same habit and must not both land
+        // on one day.
+        spreadGroup:      `habit:${h.title}`,
       })
     }
   }
@@ -574,6 +598,40 @@ export async function saveSchedulingConfig(
     await db.from('user_scheduling_config').insert({ max_session_minutes, buffer_minutes })
   }
   revalidatePath('/settings')
+}
+
+/** Read the configured first day of the week (Monday until 0006 is applied). */
+export async function getWeekStartDay(): Promise<number> {
+  return fetchWeekStartDay(createServiceClient())
+}
+
+/**
+ * Save the preferred first day of the week. Habit weekly targets count from
+ * this day, so changing it re-derives "this week" everywhere at once.
+ */
+export async function saveWeekStartDay(day: number): Promise<{ error?: string }> {
+  if (!isWeekStartDay(day)) return { error: 'Unsupported day' }
+
+  const db = createServiceClient()
+  const { data } = await db.from('user_scheduling_config').select('id').limit(1).single()
+
+  const { error } = data
+    ? await db.from('user_scheduling_config').update({ week_start_day: day }).eq('id', data.id)
+    : await db.from('user_scheduling_config').insert({
+        max_session_minutes: 90, buffer_minutes: 15, week_start_day: day,
+      })
+
+  if (error) {
+    // The column is missing until migration 0006 runs. Reading falls back to
+    // Monday, so the app still works — only the preference can't be stored.
+    console.error('saveWeekStartDay:', error.message)
+    return { error: 'Could not save — run migration 0006_week_start_day.sql first.' }
+  }
+
+  revalidatePath('/settings')
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  return {}
 }
 
 // ── Subtask helpers ───────────────────────────────────────────────────────────

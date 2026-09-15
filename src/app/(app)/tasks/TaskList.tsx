@@ -72,9 +72,10 @@ interface Props {
   streaks: Record<string, HabitStreak>
   events: CalendarEvent[]
   gcalWriteEnabled: boolean
+  weekStartDay: number
 }
 
-export default function TaskList({ tasks, projects, streaks, events, gcalWriteEnabled }: Props) {
+export default function TaskList({ tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay }: Props) {
   const { query } = useSearch()
   const [view, setView] = useState<'list' | 'upcoming'>(() =>
     typeof window !== 'undefined' ? getStoredDefaultView() : 'list'
@@ -296,6 +297,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             onTaskClick={t => setDetailTask({ ...t, project: t.project ?? INBOX_PROJECT })}
             onTaskDone={(task, e) => handleDone(task, e)}
             onAddTask={dueDate => openAddTask(dueDate)}
+            weekStartDay={weekStartDay}
           />
         )}
 

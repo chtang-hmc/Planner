@@ -18,7 +18,9 @@
 10. [Inline Search](#inline-search)
 11. [Drag-to-Reschedule](#drag-to-reschedule)
 12. [Priority-Colored Circles](#priority-colored-circles)
-13. [Server / Client Component Split](#server--client-component-split)
+13. [Color Themes](#color-themes)
+14. [Week Start](#week-start)
+15. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -99,6 +101,9 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0001_initial_schema.sql` — full schema + `recompute_urgency_scores()` + `recompute_energy_patterns()` PL/pgSQL functions + RLS policies
 - `0002_nullable_project_id.sql` — made `tasks.project_id` nullable so tasks can live in an "Inbox" (no project assigned)
 - `0003_scheduling_columns.sql` — added `gcal_event_id`, `scheduled_start`, `scheduled_end` to `tasks`
+- `0004_scheduling.sql` — `user_working_hours`, `user_energy_schedule`, `user_scheduling_config`; `scheduled_by` on `tasks`
+- `0005_habit_weekly_target.sql` — `tasks.weekly_target`; `completions_this_week` + `week_start` on `habit_streaks`
+- `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -362,17 +367,38 @@ The page runs **two** queries: pending habits (`status in (inbox, active)`, due 
 
 ### Weekly targets
 
-`tasks.weekly_target` (integer, nullable) holds "how many times per week", and `habit_streaks` carries `completions_this_week` + `week_start` (Monday, UTC) to track progress. `week_start` is compared on every completion; a mismatch resets the counter rather than relying on a scheduled job.
+`tasks.weekly_target` (integer, nullable) holds "how many times per week".
+
+**Progress is derived, not stored.** `habit_streaks` has `completions_this_week` / `week_start` columns, but they are **not** the source of truth: that table is keyed by `task_id` while every occurrence is a *new row with a new id*, so the counter for the pending row on screen has never been incremented and always reads 0. Both the scheduler and the habits page instead count **distinct completion days this week, grouped by title** — title being the habit's real identity here, as it already is for the streak calendar. The habits page patches the real count into the `HabitStreak` object it hands to `TaskDetail`.
+
+Counting *days* rather than completions is deliberate: "gym 4× a week" means four days, so two sessions on one day count once.
 
 Habits are excluded from the `/tasks` query (`neq('type','habit')`) — they live on `/habits` and would otherwise clutter the task list with untimed, non-urgent work.
+
+### One pending occurrence per habit
+
+`completeTask` refuses to spawn a next occurrence when another pending row with the same title already exists. Without the guard, completing a habit twice in one day spawned two rows for tomorrow — the habit then showed and scheduled twice on the same day.
+
+Same-day completion is also a no-op for the streak. The consecutive-day check is `last_completed === yesterday`; on a second completion today `last_completed` is already *today*, which read as "not consecutive" and reset a long streak to 1.
+
+### Habits have no deadlines
+
+The detail panel hides the due-date picker, urgency curve, and urgency breakdown for habits — all deadline machinery, and habits are stored with `urgency_score` 0 regardless. `due_date` remains internally as the next-occurrence marker the habits page filters on, but it is no longer user-editable, so it can't be set by hand in a way that breaks the occurrence chain.
+
+### Deleting and back-filling
+
+Both act on the **title**, since a habit is a chain of rows rather than one row:
+
+- `deleteHabit(title)` removes every occurrence, its streak rows, and any Google Calendar blocks. Calendar events are deleted *first* — once the rows are gone their event ids are unrecoverable and the blocks would linger forever. This deletes history, which is what delete means here.
+- `setHabitCompletion(title, date, done)` logs or un-logs a past day from the heatmap. It inserts a *completed* occurrence rather than touching the pending row, so today's card stays actionable and the spawn chain is untouched. `completed_at` is noon UTC so slicing the date back out can't drift, the write is idempotent (one completion per day), and future dates are rejected.
 
 ### Scheduling habits
 
 A habit with both a `weekly_target` and an `estimated_minutes` session length is expanded by `buildHabitCandidates()` into one scheduler candidate per session still owed this week (target minus `completions_this_week`). Notable choices:
 
-- **Candidates carry `due_date: null`.** The habit row's own `due_date` is just a "next occurrence" marker; passing it through would trip the scheduler's `dayMs > dueMs` guard and pin every session to a single day.
+- **Candidates carry the end of the current week as `due_date`.** Not the habit row's own `due_date` — that's a "next occurrence" marker and would trip the scheduler's `dayMs > dueMs` guard, pinning every session to one day. The week end is needed because "Schedule week" runs a *rolling* 7 days from today, which straddles the week boundary whenever today isn't the first day; without the bound, sessions owed for this week could be placed into next week, which would then begin with its allowance already spent.
 - **`urgency_score` is overridden to `priority * 10`.** Habits are stored with score 0 since they aren't deadline work, which would sort them last and leave them only whatever space is left over. The override gives them the same baseline an undated task of that priority gets. Raising a habit's priority is the lever if it keeps losing to deadline work.
-- **Sessions share a `spreadGroup`** so they land on distinct days (see [Scheduler](#scheduler)).
+- **Sessions share a `spreadGroup`, keyed by title** so they land on distinct days (see [Scheduler](#scheduler)). Keyed by title rather than row id: if a habit ever ends up with two pending rows they are still one habit and must not both land on the same day.
 
 ---
 
@@ -434,6 +460,50 @@ The done/complete button circle in every task list view is colored by priority:
 | 1 — Low | Slate/white border (neutral) |
 
 `priorityCircleClass(priority)` is a local helper in each view file (`TaskList`, `UpcomingView`, `ProjectDetailView`). It's intentionally co-located rather than shared via a utility, because the exact class set is tightly coupled to each component's hover states.
+
+---
+
+## Color Themes
+
+Choosing a color in Settings re-tints the **entire** UI — background, borders, muted labels — not just accented controls.
+
+### Redefining `slate` instead of rewriting components
+
+The app is written in ~1200 `slate-*` utilities across 26 files. Rather than replace them with semantic tokens, the **`slate` palette itself** is redefined in `globals.css` and remapped in `@theme`, so every existing `bg-slate-900` / `border-slate-200` / `text-slate-400` resolves through the theme. Picking a color re-tints everything with **zero component changes**; the whole feature is one CSS file plus the accent registry.
+
+Each shade is `hsl()` built from a per-preset `--tint-h` (hue) and `--tint-s` (saturation), with **lightness values lifted verbatim from Tailwind's slate** — only the hue moves, so contrast ratios that already worked keep working. Per-shade saturation multipliers follow slate's own curve (stronger at the extremes, calmer through the midtones) so the result reads as a designed neutral rather than a colored wash.
+
+`white` is deliberately **not** redefined: `text-white` sits on accent buttons and must stay pure. In light mode this means cards stay white on a faintly tinted ground; dark mode tints fully.
+
+### One control, not two
+
+The tint is driven by the **existing** `data-accent` attribute rather than a second setting. An independent theme control would allow clashing combinations (teal accent on a rose-tinted UI) and forces the user to make two decisions where they wanted one.
+
+Verified in-browser, since the load-bearing assumption was whether Tailwind v4 honours overriding a built-in palette: it does — `bg-slate-200` resolves to `rgb(228,237,238)` under teal and `rgb(238,228,234)` under pink.
+
+---
+
+## Week Start
+
+`user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat) — migration `0006`. Settable in Settings → Smart scheduling.
+
+### Reads degrade, writes don't
+
+Every read goes through `fetchWeekStartDay()`, which uses `select('*')` and **falls back to Monday when the column is absent**, so the app works unchanged on a database where 0006 hasn't been applied. Only *saving* needs the column; the UI rolls the selection back and names the migration if the write fails. This is a deliberate response to the `weekly_target` rollout, where a missing column silently broke habit creation.
+
+### One helper, five call sites
+
+The week-start arithmetic was hand-rolled and hardcoded to Monday in `completeTask`, the scheduler, the habits page, the weekly review, and the Upcoming strip. It now lives in `src/lib/week.ts`:
+
+- `weekStartOf(date, startDay)` — UTC `YYYY-MM-DD` of the week start
+- `daysSinceWeekStart(dayOfWeek, startDay)` — the timezone-free half, for views working in local time
+- `weekDayOrder(startDay)` — day indices in display order, for seven-across grids
+
+Having one implementation matters beyond tidiness: if the boundary used when *recording* a completion ever drifted from the one used when *counting* it, weekly progress would be quietly wrong.
+
+Everything follows the setting: the Upcoming week strip (and its prev/next nav), the 16-week habit heatmap (columns and row labels), the weekly review period, the analytics energy heatmap, and the working-hours / energy grids in Settings.
+
+The **scheduling horizon stays rolling** 7 days from today. Aligning it to the week start would spend the already-elapsed days of the current week on the past, and the scheduler clamps slots to `now` — less planning, not more. Habit sessions are bounded to the current week via their `due_date` instead (see [Scheduling habits](#scheduling-habits)).
 
 ---
 

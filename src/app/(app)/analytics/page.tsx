@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Project, EstimationProfile, EnergyPattern } from '@/types'
 import AnalyticsView from './AnalyticsView'
+import { fetchWeekStartDay } from '@/lib/week'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +12,9 @@ export interface DailyEnergy {
 }
 
 export interface AnalyticsData {
+  /** Configured first day of the week, for the energy heatmap rows */
+  weekStartDay: number
+
   // Summary
   activeCount: number
   doneCount: number
@@ -116,6 +120,7 @@ export default async function AnalyticsPage() {
     .map(([date, { sum, count }]) => ({ date, avg: sum / count, count }))
 
   const data: AnalyticsData = {
+    weekStartDay: await fetchWeekStartDay(db),
     activeCount: active.length,
     doneCount: done.length,
     totalEstMinutes: totalEst,

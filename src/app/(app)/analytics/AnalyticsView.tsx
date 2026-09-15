@@ -1,6 +1,7 @@
 'use client'
 
 import { AnalyticsData, DailyEnergy } from './page'
+import { weekDayOrder } from '@/lib/week'
 import { Project, EstimationProfile, EnergyPattern } from '@/types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -335,7 +336,7 @@ function levelColor(level: number, dark = false): string {
   return ENERGY_COLORS[idx]
 }
 
-function EnergyHeatmap({ patterns }: { patterns: EnergyPattern[] }) {
+function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; weekStartDay: number }) {
   // Build a lookup: patternMap[day][hour] = pattern
   const map: Record<number, Record<number, EnergyPattern>> = {}
   for (const p of patterns) {
@@ -369,7 +370,9 @@ function EnergyHeatmap({ patterns }: { patterns: EnergyPattern[] }) {
               ))}
             </div>
             {/* Grid */}
-            {DAYS.map((day, dow) => (
+            {weekDayOrder(weekStartDay).map(dow => {
+              const day = DAYS[dow]
+              return (
               <div key={dow} className="flex items-center gap-px mb-px">
                 <span className="w-8 text-[10px] text-slate-400 shrink-0">{day}</span>
                 {HOURS.map(h => {
@@ -387,7 +390,8 @@ function EnergyHeatmap({ patterns }: { patterns: EnergyPattern[] }) {
                   )
                 })}
               </div>
-            ))}
+              )
+            })}
             {/* Legend */}
             <div className="flex items-center gap-2 mt-3 justify-end">
               {[1, 2, 3, 4, 5].map(v => (
@@ -455,7 +459,7 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
 
         {/* Energy */}
         <EnergyRecentChart days={recentEnergy} />
-        <EnergyHeatmap patterns={energyPatterns} />
+        <EnergyHeatmap patterns={energyPatterns} weekStartDay={data.weekStartDay} />
 
       </div>
     </div>

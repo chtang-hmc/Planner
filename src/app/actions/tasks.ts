@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
+import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
+import { getValidToken, deleteTaskBlock } from '@/lib/google-calendar'
 
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
@@ -108,7 +110,25 @@ export async function completeTask(
       nextDue = tomorrow.toISOString()
     }
 
-    if (nextDue) {
+    // A habit must never have two pending occurrences: completing it twice in
+    // one day would otherwise spawn a second row for tomorrow, and the habit
+    // would show (and schedule) twice on the same day. Occurrences are linked
+    // by title, the same identity the completion calendar uses.
+    let alreadyPending = false
+    if (nextDue && isHabit) {
+      const { data: pending } = await db
+        .from('tasks')
+        .select('id')
+        .eq('type', 'habit')
+        .eq('title', taskRow.title)
+        .in('status', ['inbox', 'active'])
+        .is('parent_id', null)
+        .neq('id', taskId)
+        .limit(1)
+      alreadyPending = (pending?.length ?? 0) > 0
+    }
+
+    if (nextDue && !alreadyPending) {
       const urgency_score = (isHabit && !taskRow.rrule) ? 0 : computeUrgency({
         priority:      taskRow.priority as Task['priority'],
         urgency_curve: (taskRow.urgency_curve ?? 'linear') as Task['urgency_curve'],
@@ -137,11 +157,8 @@ export async function completeTask(
     // Upsert habit streak
     const todayStr = today.toISOString().slice(0, 10)
 
-    // Monday of the current UTC week (used for weekly goal tracking)
-    const weekStartDate = new Date(today)
-    const dow = weekStartDate.getUTCDay() // 0=Sun … 6=Sat
-    weekStartDate.setUTCDate(weekStartDate.getUTCDate() - (dow === 0 ? 6 : dow - 1))
-    const weekStartStr = weekStartDate.toISOString().slice(0, 10)
+    // Start of the current week, per the user's configured first day
+    const weekStartStr = weekStartOf(today, await fetchWeekStartDay(db))
 
     const { data: streak } = await db
       .from('habit_streaks')
@@ -150,24 +167,29 @@ export async function completeTask(
       .maybeSingle()
 
     if (streak) {
-      // Consecutive-day streak
-      const yesterday = new Date(today)
-      yesterday.setDate(yesterday.getDate() - 1)
-      const yesterdayStr = yesterday.toISOString().slice(0, 10)
-      const consecutive = streak.last_completed === yesterdayStr
-      const newStreak = consecutive ? streak.current_streak + 1 : 1
+      // Already logged today: completing again is a no-op. Without this the
+      // streak check below sees last_completed === today (not yesterday),
+      // reads it as "not consecutive" and resets a long streak to 1.
+      if (streak.last_completed !== todayStr) {
+        // Consecutive-day streak
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+        const yesterdayStr = yesterday.toISOString().slice(0, 10)
+        const consecutive = streak.last_completed === yesterdayStr
+        const newStreak = consecutive ? streak.current_streak + 1 : 1
 
-      // Weekly count — reset if the stored week_start is from a different week
-      const sameWeek = streak.week_start === weekStartStr
-      const newWeeklyCount = sameWeek ? (streak.completions_this_week + 1) : 1
+        // Weekly count — reset if the stored week_start is from a different week
+        const sameWeek = streak.week_start === weekStartStr
+        const newWeeklyCount = sameWeek ? (streak.completions_this_week + 1) : 1
 
-      await db.from('habit_streaks').update({
-        current_streak:        newStreak,
-        longest_streak:        Math.max(newStreak, streak.longest_streak),
-        last_completed:        todayStr,
-        completions_this_week: newWeeklyCount,
-        week_start:            weekStartStr,
-      }).eq('task_id', taskId)
+        await db.from('habit_streaks').update({
+          current_streak:        newStreak,
+          longest_streak:        Math.max(newStreak, streak.longest_streak),
+          last_completed:        todayStr,
+          completions_this_week: newWeeklyCount,
+          week_start:            weekStartStr,
+        }).eq('task_id', taskId)
+      }
     } else {
       await db.from('habit_streaks').insert({
         task_id:               taskId,
@@ -182,6 +204,137 @@ export async function completeTask(
 
   revalidatePath('/tasks')
   revalidatePath('/habits')
+}
+
+// ── Habit maintenance ────────────────────────────────────────────────────────
+// A habit is a chain of task rows sharing a title (each completion closes one
+// row and spawns the next), so both of these operate on the title rather than a
+// single row id — the same identity the streak calendar uses.
+
+/**
+ * Delete a habit and its entire history: every occurrence, its streak rows, and
+ * any calendar blocks that were scheduled for it.
+ */
+export async function deleteHabit(title: string): Promise<{ error?: string }> {
+  const db = createServiceClient()
+
+  const { data: rows, error: fetchErr } = await db
+    .from('tasks')
+    .select('id, gcal_event_id')
+    .eq('type', 'habit')
+    .eq('title', title)
+
+  if (fetchErr) return { error: fetchErr.message }
+  if (!rows || rows.length === 0) return { error: 'Habit not found' }
+
+  const ids = rows.map(r => r.id)
+
+  // Remove calendar blocks first — once the rows are gone we can't find them,
+  // and they'd sit on the user's calendar forever.
+  const eventIds = rows.map(r => r.gcal_event_id).filter((v): v is string => !!v)
+  if (eventIds.length > 0) {
+    const token = await getValidToken()
+    if (token) {
+      await Promise.allSettled(
+        eventIds.map(id => deleteTaskBlock(token.access_token, id).catch(() => {}))
+      )
+    }
+  }
+
+  await db.from('habit_streaks').delete().in('task_id', ids)
+
+  const { error } = await db.from('tasks').delete().in('id', ids)
+  if (error) return { error: error.message }
+
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  revalidatePath('/analytics')
+  return {}
+}
+
+/**
+ * Record or un-record a habit on a past date — for when you did the thing but
+ * forgot to log it.
+ *
+ * Recording inserts a completed occurrence rather than touching the pending
+ * row, so today's card stays actionable and the spawn chain is untouched.
+ * completed_at is noon UTC so the date survives being sliced back out.
+ */
+export async function setHabitCompletion(
+  title: string,
+  dateStr: string,          // YYYY-MM-DD
+  done: boolean,
+): Promise<{ error?: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: 'Bad date' }
+
+  const today = new Date().toISOString().slice(0, 10)
+  if (dateStr > today) return { error: "Can't log a habit in the future" }
+
+  const db = createServiceClient()
+
+  const dayStart = `${dateStr}T00:00:00Z`
+  const dayEnd   = `${dateStr}T23:59:59.999Z`
+
+  if (!done) {
+    const { error } = await db
+      .from('tasks')
+      .delete()
+      .eq('type', 'habit')
+      .eq('title', title)
+      .eq('status', 'done')
+      .gte('completed_at', dayStart)
+      .lte('completed_at', dayEnd)
+    if (error) return { error: error.message }
+    revalidatePath('/habits')
+    return {}
+  }
+
+  // Already recorded that day — nothing to do (one completion per day).
+  const { data: existing } = await db
+    .from('tasks')
+    .select('id')
+    .eq('type', 'habit')
+    .eq('title', title)
+    .eq('status', 'done')
+    .gte('completed_at', dayStart)
+    .lte('completed_at', dayEnd)
+    .limit(1)
+  if (existing && existing.length > 0) return {}
+
+  // Copy the habit's settings from its most recent row
+  const { data: template } = await db
+    .from('tasks')
+    .select('*')
+    .eq('type', 'habit')
+    .eq('title', title)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!template) return { error: 'Habit not found' }
+
+  const { error } = await db.from('tasks').insert({
+    title,
+    description:       template.description,
+    project_id:        template.project_id,
+    type:              'habit',
+    status:            'done',
+    priority:          template.priority,
+    energy_required:   template.energy_required,
+    urgency_curve:     template.urgency_curve,
+    urgency_score:     0,
+    estimated_minutes: template.estimated_minutes,
+    rrule:             template.rrule,
+    weekly_target:     template.weekly_target ?? null,
+    due_date:          null,
+    created_at:        `${dateStr}T12:00:00Z`,
+    completed_at:      `${dateStr}T12:00:00Z`,
+  })
+  if (error) return { error: error.message }
+
+  revalidatePath('/habits')
+  revalidatePath('/analytics')
+  return {}
 }
 
 // ── Update task fields ───────────────────────────────────────────────────────

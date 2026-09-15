@@ -5,8 +5,10 @@ import {
   saveWorkingHours,
   saveEnergyLevel,
   saveSchedulingConfig,
+  saveWeekStartDay,
 } from '@/app/actions/scheduling'
 import { TIME_BLOCK_DEFS, type TimeBlockId, type WorkingHours, type EnergyScheduleEntry } from '@/lib/scheduler'
+import { WEEK_START_OPTIONS, weekDayOrder } from '@/lib/week'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const ENERGY_LEVELS = ['low', 'medium', 'high'] as const
@@ -34,7 +36,7 @@ function parseTime(s: string): [number, number] {
 
 // ── Working hours ─────────────────────────────────────────────────────────────
 
-function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
+function WorkingHoursSection({ initial, weekStartDay }: { initial: WorkingHours[]; weekStartDay: number }) {
   const initRows = (() => {
     const map = new Map(initial.map(r => [r.day_of_week, r]))
     return Array.from({ length: 7 }, (_, i) => map.get(i) ?? {
@@ -159,7 +161,9 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {rows.map(row => (
+          {weekDayOrder(weekStartDay).map(dow => {
+            const row = rows.find(r => r.day_of_week === dow)!
+            return (
             <div key={row.day_of_week} className="flex items-center gap-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
               <span className="text-xs font-medium text-slate-600 dark:text-slate-400 w-8 shrink-0">{DAYS[row.day_of_week]}</span>
               <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
@@ -192,7 +196,8 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
                 className="flex-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 disabled:opacity-40"
               />
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -201,7 +206,7 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
 
 // ── Energy grid ───────────────────────────────────────────────────────────────
 
-function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
+function EnergyGrid({ initial, weekStartDay }: { initial: EnergyScheduleEntry[]; weekStartDay: number }) {
   // energy[dow][timeBlockId] → level
   const [energy, setEnergy] = useState<Record<number, Record<TimeBlockId, EnergyLevel>>>(() => {
     const map: Record<number, Record<TimeBlockId, EnergyLevel>> = {}
@@ -242,8 +247,8 @@ function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
           <thead>
             <tr>
               <th className="text-left py-1 pr-3 text-slate-400 font-medium w-28">Time</th>
-              {DAYS.map(d => (
-                <th key={d} className="text-center py-1 px-1 text-slate-400 font-medium">{d}</th>
+              {weekDayOrder(weekStartDay).map(dow => (
+                <th key={dow} className="text-center py-1 px-1 text-slate-400 font-medium">{DAYS[dow]}</th>
               ))}
             </tr>
           </thead>
@@ -251,7 +256,7 @@ function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
             {TIME_BLOCK_DEFS.map(block => (
               <tr key={block.id}>
                 <td className="py-0.5 pr-3 text-slate-500 font-medium whitespace-nowrap">{block.label}</td>
-                {DAYS.map((_, dow) => {
+                {weekDayOrder(weekStartDay).map(dow => {
                   const level = energy[dow]?.[block.id] ?? 'medium'
                   return (
                     <td key={dow} className="py-0.5 px-0.5 text-center">
@@ -340,11 +345,69 @@ function SessionConfig({
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// ── Week start ────────────────────────────────────────────────────────────────
+
+function WeekStartConfig({ initial }: { initial: number }) {
+  const [day,   setDay]   = useState(initial)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [, startTransition] = useTransition()
+
+  function handleSelect(next: number) {
+    const previous = day
+    setDay(next)
+    setError(null)
+    startTransition(async () => {
+      const res = await saveWeekStartDay(next)
+      if (res.error) {
+        setDay(previous)          // roll back so the UI never claims a save that failed
+        setError(res.error)
+        return
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+          Week starts on
+        </h3>
+        {saved && <span className="text-xs text-accent-500 font-medium">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Habit weekly targets count from this day — “4× a week” resets here.
+      </p>
+
+      <div className="flex gap-2">
+        {WEEK_START_OPTIONS.map(opt => (
+          <button
+            key={opt.id}
+            onClick={() => handleSelect(opt.id)}
+            className={`px-4 py-2 rounded-xl border text-xs font-medium transition-colors ${
+              day === opt.id
+                ? 'border-accent-500 bg-accent-50 dark:bg-accent-950 text-accent-700 dark:text-accent-300'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="text-xs text-amber-500 mt-2">{error}</p>}
+    </div>
+  )
+}
+
 interface Props {
   workingHours:   WorkingHours[]
   energySchedule: EnergyScheduleEntry[]
   maxSession:     number
   bufferMinutes:  number
+  weekStartDay:   number
 }
 
 export default function SchedulingSettings({
@@ -352,6 +415,7 @@ export default function SchedulingSettings({
   energySchedule,
   maxSession,
   bufferMinutes,
+  weekStartDay,
 }: Props) {
   return (
     <section>
@@ -361,9 +425,10 @@ export default function SchedulingSettings({
       </p>
 
       <div className="flex flex-col gap-8">
-        <WorkingHoursSection initial={workingHours} />
-        <EnergyGrid initial={energySchedule} />
+        <WorkingHoursSection initial={workingHours} weekStartDay={weekStartDay} />
+        <EnergyGrid initial={energySchedule} weekStartDay={weekStartDay} />
         <SessionConfig initialMax={maxSession} initialBuffer={bufferMinutes} />
+        <WeekStartConfig initial={weekStartDay} />
       </div>
     </section>
   )
