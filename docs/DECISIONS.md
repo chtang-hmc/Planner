@@ -107,6 +107,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0007_habit_exclusive_group.sql` — `tasks.exclusive_group`; habits sharing a group are never scheduled on the same day
 - `0008_daily_breaks.sql` — `user_daily_breaks` (meal windows + cooldown), seeded with Lunch and Dinner; `tasks.avoid_after_breaks`
 - `0009_task_location_and_span.sql` — `tasks.span_minutes` + `tasks.location`; tethering work (laundry) and where a task happens
+- `0010_task_buffer_override.sql` — `tasks.buffer_minutes`; per-task transition padding (null = global default, 0 = none)
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -373,6 +374,20 @@ The day's blocks and the ranked list beside them are built from different querie
 It now takes tasks that are due today or earlier, undated, or scheduled today. Far-future work stays out unless it actually earned a block, so the list reflects the plan rather than a separate idea of the day.
 
 Habits are given the same `priority * 10` baseline the scheduler uses; their stored `urgency_score` of 0 would otherwise bury them at the bottom of a list they belong near the top of.
+
+### Habits without a weekly target
+
+`buildHabitCandidates` used to require `weekly_target`, which made untargeted habits **invisible to the scheduler** — never proposed, never reported, no indication why. "I keep doing this, no fixed count" is a normal way to hold a habit, not a reason to exclude it.
+
+An untargeted habit now yields **one session per run**, skipped if it was already done this week. Once a count exists the target governs as before. One a week is a deliberately modest floor: without a number there's nothing to infer a frequency from, and over-scheduling something the user never committed to a count for is the worse error.
+
+### Per-task transition buffer
+
+`tasks.buffer_minutes` (migration `0010`): null = the global default, 0 = none.
+
+The global 15-minute buffer suits work that needs settling-in time but makes small chores absurdly expensive — taking out the trash is 5 minutes of work that needed **35 minutes of clear space** to be scheduled, so it lost to anything else whenever the day was busy.
+
+The buffer applied is the **placing task's own**, not the maximum of it and its neighbour's. Taking the max would be defensible as "the neighbour still wants breathing room", but it defeats the purpose: the chore would still inherit 15 minutes from whatever sits next to it and still wouldn't fit. Blocks placed later apply their own buffer against it as usual.
 
 ### Scheduler: atomic work
 

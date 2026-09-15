@@ -460,13 +460,13 @@ export async function setHabitCompletion(
  */
 export async function setTaskPlacement(
   taskId: string,
-  patch: { location?: string; span_minutes?: number | null },
+  patch: { location?: string; span_minutes?: number | null; buffer_minutes?: number | null },
 ): Promise<{ error?: string }> {
   const db = createServiceClient()
   const { error } = await db.from('tasks').update(patch).eq('id', taskId)
   if (error) {
     console.error('setTaskPlacement:', error.message)
-    return { error: 'Could not save — run migration 0009_task_location_and_span.sql first.' }
+    return { error: 'Could not save — run migrations 0009 and 0010 first.' }
   }
   revalidatePath('/tasks')
   revalidatePath('/habits')

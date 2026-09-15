@@ -484,9 +484,10 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   // Where it happens + how long it ties you up
   const [location,  setLocation]  = useState<string>(task.location ?? 'anywhere')
   const [span,      setSpan]      = useState<string>(String(task.span_minutes ?? ''))
+  const [buffer,    setBuffer]    = useState<number | null>(task.buffer_minutes ?? null)
   const [placeErr,  setPlaceErr]  = useState<string | null>(null)
 
-  function savePlacement(patch: { location?: string; span_minutes?: number | null }) {
+  function savePlacement(patch: { location?: string; span_minutes?: number | null; buffer_minutes?: number | null }) {
     setPlaceErr(null)
     startTransition(async () => {
       const res = await setTaskPlacement(task.id, patch)
@@ -722,6 +723,35 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             <p className="text-[11px] text-slate-400 mt-1">
               For things like laundry: only the estimate is booked, but you stay put
               for the full time and nothing that needs you elsewhere is scheduled into it.
+            </p>
+
+            {/* Transition buffer */}
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-xs text-slate-400 shrink-0">Buffer</span>
+              <div className="flex gap-1">
+                {[
+                  { val: null, label: 'Default' },
+                  { val: 0,    label: 'None' },
+                  { val: 5,    label: '5m' },
+                  { val: 30,   label: '30m' },
+                ].map(o => (
+                  <button
+                    key={String(o.val)}
+                    onClick={() => { setBuffer(o.val); savePlacement({ buffer_minutes: o.val }) }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                      buffer === o.val
+                        ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Transition time kept clear around this task. Set None for quick chores —
+              otherwise a 5-minute job needs half an hour of free space to fit.
             </p>
             {placeErr && <p className="text-xs text-amber-500 mt-1">{placeErr}</p>}
           </div>

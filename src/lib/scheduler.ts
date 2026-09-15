@@ -113,6 +113,12 @@ export interface SchedulerTask {
    */
   avoidAfterBreaks?: boolean
   /**
+   * Transition padding around this task, overriding config.bufferMinutes.
+   * 0 lets a small chore slot into any gap — a 5-minute job shouldn't need 35
+   * minutes of clear space just to satisfy the global buffer.
+   */
+  bufferMinutes?:    number
+  /**
    * Where the task has to happen. Used with `spanMinutes` to keep incompatible
    * work apart: you can't be at the gym while the washing machine needs you
    * at home.
@@ -271,7 +277,6 @@ export function runScheduler(
   config:         SchedulerConfig,
 ): SchedulerResult {
   const maxMs    = config.maxSessionMinutes * 60_000
-  const bufferMs = config.bufferMinutes * 60_000
   const nowMs    = Date.now()
   const tz       = config.timezone
 
@@ -344,6 +349,10 @@ export function runScheduler(
   const placedLoc: { start: number; end: number; loc: TaskLocation }[] = []
 
   for (const task of sorted) {
+    // Per-task, not global: the buffer is transition time this task needs, so
+    // a zero-buffer chore can sit flush against its neighbours. Blocks placed
+    // later still apply their own buffer against it.
+    const bufferMs     = (task.bufferMinutes ?? config.bufferMinutes) * 60_000
     const loc          = task.location ?? 'anywhere'
     const spanMs       = (task.spanMinutes ?? 0) * 60_000
     const totalSegs    = task.atomic ? 1 : Math.ceil(task.duration_minutes / config.maxSessionMinutes)

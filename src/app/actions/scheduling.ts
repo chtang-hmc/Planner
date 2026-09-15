@@ -153,7 +153,6 @@ async function buildHabitCandidates(
       .eq('type', 'habit')
       .in('status', ['inbox', 'active'])
       .is('parent_id', null)
-      .not('weekly_target', 'is', null)
       .or('scheduled_by.is.null,scheduled_by.eq.auto'),
     fetchWeekStartDay(db),
   ])
@@ -200,8 +199,13 @@ async function buildHabitCandidates(
     const duration = h.adjusted_minutes ?? h.estimated_minutes
     if (!duration) continue          // no session length set — can't schedule it
 
+    // No weekly target means "I keep doing this, no fixed count" — still worth
+    // one slot a week rather than never being scheduled at all. Requiring a
+    // target meant these habits were silently invisible to the scheduler.
     const done = daysByTitle.get(h.title)?.size ?? 0
-    const owed = Math.max(0, (h.weekly_target ?? 0) - done)
+    const owed = h.weekly_target == null
+      ? (done > 0 ? 0 : 1)
+      : Math.max(0, h.weekly_target - done)
     const sessions: SchedulerTask[] = []
 
     for (let i = 0; i < owed; i++) {
@@ -227,6 +231,7 @@ async function buildHabitCandidates(
         avoidAfterBreaks: !!h.avoid_after_breaks,
         location:         h.location ?? 'anywhere',
         spanMinutes:      h.span_minutes ?? undefined,
+        bufferMinutes:    h.buffer_minutes ?? undefined,
         // A session is one unbroken block. Without this a 120-minute session
         // against a 90-minute cap is split into two, so "2× a week" quietly
         // becomes four scheduled blocks on four days.
@@ -353,6 +358,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       due_date:         t.due_date,
       location:         t.location ?? 'anywhere',
       spanMinutes:      t.span_minutes ?? undefined,
+      bufferMinutes:    t.buffer_minutes ?? undefined,
     })
   }
 
@@ -369,6 +375,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       due_date:         s.due_date,
       location:         s.location ?? 'anywhere',
       spanMinutes:      s.span_minutes ?? undefined,
+      bufferMinutes:    s.buffer_minutes ?? undefined,
     })
   }
 
