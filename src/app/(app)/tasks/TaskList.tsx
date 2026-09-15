@@ -66,8 +66,11 @@ function formatDue(iso: string | null): { label: string; urgent: boolean } {
   return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
 }
 
+/** Rows carry a `parent` embed so a subtask can show what it belongs to. */
+export type TaskRow = Task & { project: Project; parent?: { id: string; title: string } | null }
+
 interface Props {
-  tasks: (Task & { project: Project })[]
+  tasks: TaskRow[]
   projects: Project[]
   streaks: Record<string, HabitStreak>
   events: CalendarEvent[]
@@ -399,6 +402,17 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                           </span>
                         )
                       })()}
+                      {/* Subtasks appear in the list alongside everything else,
+                          so say what they belong to — "Dahl" on its own is a
+                          mystery once it's out of the parent's checklist. */}
+                      {task.parent && (
+                        <span
+                          className="text-xs text-slate-400 truncate max-w-[12rem]"
+                          title={`Subtask of ${task.parent.title}`}
+                        >
+                          ↳ {task.parent.title}
+                        </span>
+                      )}
                       <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
                       {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
                       {due.label && (

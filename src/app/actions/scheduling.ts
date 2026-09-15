@@ -363,19 +363,25 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     })
   }
 
-  const parentTitles = new Map((taskRows ?? []).map(t => [t.id, t.title as string]))
+  const parents = new Map((taskRows ?? []).map(t => [t.id, t]))
 
   for (const s of subtaskRows ?? []) {
     const duration = s.adjusted_minutes ?? s.estimated_minutes
     if (!duration) continue
+    const parent = parents.get(s.parent_id)
     candidates.push({
       id:               s.id,
-      title:            blockLabel(s.title, parentTitles.get(s.parent_id)),
+      title:            blockLabel(s.title, parent?.title),
       priority:         s.priority,
       urgency_score:    s.urgency_score,
       energy_required:  s.energy_required,
       duration_minutes: duration,
-      due_date:         s.due_date,
+      // Read from the parent every run rather than trusting the copy made at
+      // creation: a subtask can never be due later than the work it's part of.
+      due_date:         parent?.due_date ?? s.due_date,
+      // Subtasks of one parent chain together — no buffer between them, one
+      // buffer around the run.
+      chainGroup:       s.parent_id,
       location:         s.location ?? 'anywhere',
       spanMinutes:      s.span_minutes ?? undefined,
       bufferMinutes:    s.buffer_minutes ?? undefined,

@@ -133,6 +133,12 @@ export interface SchedulerTask {
    * the span — that's the point — as long as its location is compatible.
    */
   spanMinutes?:      number
+  /**
+   * Work that runs back-to-back. Subtasks of one parent share a chainGroup:
+   * reading Dahl then Rawls needs no transition between them, only a buffer
+   * either side of the run. The scheduler packs as many as fit per sitting.
+   */
+  chainGroup?:       string
 }
 
 /** Where a task happens. 'anywhere' is compatible with everything. */
@@ -361,7 +367,152 @@ export function runScheduler(
   // start when work that must happen elsewhere is already booked inside its span.
   const placedLoc: { start: number; end: number; loc: TaskLocation }[] = []
 
+  /**
+   * Free intervals across the horizon for work with these constraints.
+   * Shared by single tasks and subtask chains so both see the same day
+   * boundaries, buffers, breaks and tethers.
+   */
+  function freeSlots(opts: {
+    bufferMs: number
+    loc: TaskLocation
+    avoidAfterBreaks?: boolean
+    dueMs: number
+  }): { dayMs: number; fS: number; fE: number }[] {
+    const { bufferMs, loc, avoidAfterBreaks, dueMs } = opts
+    const allBusy: Interval[] = [
+      ...busyIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
+      ...placedBlocks.map(([s, e]):  Interval  => [s - bufferMs, e + bufferMs]),
+      ...breakIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
+      // Cooldowns are not buffered: the window is already an explicit
+      // "not for this long", and padding it would quietly extend the rule.
+      ...(avoidAfterBreaks ? cooldownIntervals : []),
+    ]
+
+    const out: { dayMs: number; fS: number; fE: number }[] = []
+    for (const dayMs of days) {
+      if (dayMs > dueMs) break
+
+      const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
+      const wh = workingHours.find(w => w.day_of_week === dow)
+      if (!wh || !wh.enabled) continue
+
+      // Working window = local midnight + hours offset (ms arithmetic, tz-safe)
+      const workStartMs = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
+      const workEndMs   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
+
+      const dayBusy = allBusy.filter(([s, e]) => s < workEndMs && e > workStartMs)
+
+      // Tethers that pin the user somewhere incompatible are carved out of the
+      // free time rather than rejected per-slot: a slot beginning inside a
+      // tether should slide to just after it, not disappear.
+      const blocking: Interval[] = tethers
+        .filter(t => locationsClash(t.loc, loc) && t.start < workEndMs && t.end > workStartMs)
+        .map(t => [t.start, t.end])
+
+      for (const [fS, fE] of subtractIntervals([[workStartMs, workEndMs]], [...dayBusy, ...blocking])) {
+        out.push({ dayMs, fS, fE })
+      }
+    }
+    return out
+  }
+
+  // Chains already dealt with, so the remaining members are skipped
+  const handledChains = new Set<string>()
+
+  /**
+   * Place a run of chained work — subtasks of one parent.
+   *
+   * They sit back-to-back with no buffer between them; the buffer wraps the run
+   * as a whole. Each sitting takes the slot that fits the MOST of them, so the
+   * chain is grouped as tightly as the week allows rather than scattered one
+   * subtask at a time into whatever gap happens to be tightest.
+   *
+   * Each member still gets its own block, so it keeps its own calendar event
+   * and its own row — they're merely adjacent.
+   */
+  function placeChain(members: SchedulerTask[]) {
+    // The run is constrained by the strictest member: the widest buffer, the
+    // earliest deadline, and any location that isn't 'anywhere'.
+    const bufferMs = Math.max(...members.map(m => (m.bufferMinutes ?? config.bufferMinutes))) * 60_000
+    const loc      = members.find(m => (m.location ?? 'anywhere') !== 'anywhere')?.location ?? 'anywhere'
+    const dueMs    = Math.min(...members.map(m => m.due_date ? endOfDayMs(m.due_date, tz) : Infinity))
+    const avoidAfterBreaks = members.some(m => m.avoidAfterBreaks)
+    const maxRunMs = config.maxSessionMinutes * 60_000
+
+    let remaining = [...members]
+
+    while (remaining.length > 0) {
+      let best: { start: number; count: number; energyMatch: boolean } | null = null
+
+      for (const { fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks, dueMs })) {
+        const start = Math.max(fS, nowMs)
+        if (start > dueMs) continue
+
+        // How many consecutive members fit here, capped by the sitting length?
+        const room = Math.min(fE - start, maxRunMs)
+        let used = 0, count = 0
+        for (const m of remaining) {
+          const need = m.duration_minutes * 60_000
+          if (used + need > room) break
+          used += need
+          count++
+        }
+        if (count === 0) continue
+
+        const energy      = slotEnergyLevel(start, energySchedule, tz)
+        const energyMatch = remaining.slice(0, count)
+          .every(m => ENERGY_RANK[energy] >= ENERGY_RANK[m.energy_required])
+
+        // Most packed wins; an energy-matched slot breaks a tie, then earliest.
+        if (!best
+            || count > best.count
+            || (count === best.count && energyMatch && !best.energyMatch)
+            || (count === best.count && energyMatch === best.energyMatch && start < best.start)) {
+          best = { start, count, energyMatch }
+        }
+      }
+
+      if (!best) {                       // nothing left can hold even one
+        unschedulable.push(...remaining)
+        return
+      }
+
+      const run = remaining.slice(0, best.count)
+      let cursor = best.start
+      run.forEach((m, i) => {
+        const end = cursor + m.duration_minutes * 60_000
+        scheduled.push({
+          taskId:        m.id,
+          taskTitle:     m.title,
+          taskPriority:  m.priority,
+          start:         new Date(cursor),
+          end:           new Date(end),
+          segmentIndex:  i,
+          totalSegments: run.length,
+          energyMatch:   best!.energyMatch,
+        })
+        cursor = end
+      })
+
+      // One interval for the whole run, so the buffer wraps it rather than
+      // appearing between its members.
+      placedBlocks.push([best.start, cursor])
+      placedLoc.push({ start: best.start, end: cursor, loc })
+
+      remaining = remaining.slice(best.count)
+    }
+  }
+
   for (const task of sorted) {
+    // A chain is placed in one go, from the position of its highest-ranked
+    // member, so it competes for time like any other piece of work.
+    if (task.chainGroup) {
+      if (handledChains.has(task.chainGroup)) continue
+      handledChains.add(task.chainGroup)
+      placeChain(sorted.filter(t => t.chainGroup === task.chainGroup))
+      continue
+    }
+
     // Per-task, not global: the buffer is transition time this task needs, so
     // a zero-buffer chore can sit flush against its neighbours. Blocks placed
     // later still apply their own buffer against it.
@@ -379,66 +530,31 @@ export function runScheduler(
       const segMs   = segMins * 60_000
       remaining    -= segMins
 
-      // All busy = GCal events + already-placed blocks, both buffered
-      const allBusy: Interval[] = [
-        ...busyIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
-        ...placedBlocks.map(([s, e]):  Interval  => [s - bufferMs, e + bufferMs]),
-        ...breakIntervals.map(([s, e]): Interval => [s - bufferMs, e + bufferMs]),
-        // Cooldowns are not buffered: the window is already an explicit
-        // "not for this long", and padding it would quietly extend the rule.
-        ...(task.avoidAfterBreaks ? cooldownIntervals : []),
-      ]
-
       interface Candidate { start: number; end: number; excess: number; energyMatch: boolean; dayMs: number }
       const candidates: Candidate[] = []
 
       // Days already taken by a sibling session of the same habit
       const usedDays = task.spreadGroup ? groupDays.get(task.spreadGroup) : undefined
 
-      for (const dayMs of days) {
-        if (dayMs > dueMs) break
+      for (const { dayMs, fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks: task.avoidAfterBreaks, dueMs })) {
         if (usedDays?.has(dayMs)) continue   // one session per day per habit
 
-        const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
-        const wh  = workingHours.find(w => w.day_of_week === dow)
-        if (!wh || !wh.enabled) continue
+        const slotStart = Math.max(fS, nowMs)
+        if (slotStart + segMs > fE) continue  // slot too small
+        if (slotStart > dueMs) continue        // past deadline
 
-        // Working window = local midnight + hours offset (ms arithmetic, tz-safe)
-        const workStartMs = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
-        const workEndMs   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
-
-        // Day-scoped allBusy
-        const dayBusy = allBusy.filter(([s, e]) => s < workEndMs && e > workStartMs)
-
-        // Tethers that pin the user somewhere incompatible are carved out of the
-        // free time rather than rejected per-slot: a slot beginning inside a
-        // tether should slide to just after it, not disappear. (Rejecting made
-        // a gym session unschedulable for the whole day because the only free
-        // interval happened to start mid-laundry.)
-        const blocking: Interval[] = tethers
-          .filter(t => locationsClash(t.loc, loc) && t.start < workEndMs && t.end > workStartMs)
-          .map(t => [t.start, t.end])
-
-        const free = subtractIntervals([[workStartMs, workEndMs]], [...dayBusy, ...blocking])
-
-        for (const [fS, fE] of free) {
-          const slotStart = Math.max(fS, nowMs)
-          if (slotStart + segMs > fE) continue  // slot too small
-          if (slotStart > dueMs) continue        // past deadline
-
-          // If THIS task would pin you, nothing already booked inside its span
-          // may need you somewhere else.
-          if (spanMs > 0 && seg === 0) {
-            const spanEnd = slotStart + spanMs
-            if (placedLoc.some(p => locationsClash(p.loc, loc) && slotStart < p.end && spanEnd > p.start)) continue
-          }
-
-          const energy      = slotEnergyLevel(slotStart, energySchedule, tz)
-          const energyMatch = ENERGY_RANK[energy] >= ENERGY_RANK[task.energy_required]
-          const excess      = (fE - fS) - segMs
-
-          candidates.push({ start: slotStart, end: slotStart + segMs, excess, energyMatch, dayMs })
+        // If THIS task would pin you, nothing already booked inside its span
+        // may need you somewhere else.
+        if (spanMs > 0 && seg === 0) {
+          const spanEnd = slotStart + spanMs
+          if (placedLoc.some(p => locationsClash(p.loc, loc) && slotStart < p.end && spanEnd > p.start)) continue
         }
+
+        const energy      = slotEnergyLevel(slotStart, energySchedule, tz)
+        const energyMatch = ENERGY_RANK[energy] >= ENERGY_RANK[task.energy_required]
+        const excess      = (fE - fS) - segMs
+
+        candidates.push({ start: slotStart, end: slotStart + segMs, excess, energyMatch, dayMs })
       }
 
       if (candidates.length === 0) {

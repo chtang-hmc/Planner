@@ -552,6 +552,22 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 `tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
 
+### Subtasks inherit from their parent
+
+A subtask is part of one piece of work, so it takes the parent's **project** and **deadline**. Set at creation, and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
+
+The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
+
+Subtasks appear in the main list like any other task, so each shows `↳ Parent title` — "Dahl" on its own is a mystery once it's out of the parent's checklist. The row carries a `parent:parent_id(id, title)` embed. Note the syntax: `tasks!parent_id` resolves to the *children* of a row (an array); `parent_id(...)` is the many-to-one direction.
+
+### Chained scheduling
+
+Subtasks of one parent share a `chainGroup` and are placed as a run: **no buffer between them, one buffer around the whole run**. Reading Dahl then Rawls needs no transition; the run as a whole does.
+
+Each sitting takes the slot that fits the **most** members, not the tightest-fitting one — the goal is to group the chain as tightly as the week allows rather than scatter it one subtask at a time. Members still get their own block each, so each keeps its own calendar event and row; they are merely adjacent.
+
+The run is constrained by its strictest member: widest buffer, earliest deadline, any location that isn't `anywhere`. A run is capped at `maxSessionMinutes`, so five 20-minute readings against a 90-minute cap become 4 + 1 rather than one 100-minute block — raising the max session length groups more per sitting.
+
 ### Why not a separate table?
 
 `parent_id` was already in the schema. Reusing the `tasks` table means subtasks automatically get all the same columns (status, title, timestamps) without a migration. The trade-off is that subtasks have irrelevant fields (urgency_score, energy_required, etc.) that are never used.

@@ -504,6 +504,17 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
 
   const { error } = await db.from('tasks').update(patch).eq('id', taskId)
   if (error) throw new Error(error.message)
+
+  // Subtasks follow their parent's project and deadline. Without this they keep
+  // the values copied at creation and quietly drift once the parent moves —
+  // showing under the wrong project, or outliving the deadline they belong to.
+  const cascade: Record<string, unknown> = {}
+  if ('project_id' in data) cascade.project_id = data.project_id
+  if ('due_date'   in data) cascade.due_date   = data.due_date
+  if (Object.keys(cascade).length > 0) {
+    await db.from('tasks').update(cascade).eq('parent_id', taskId)
+  }
+
   revalidatePath('/tasks')
   revalidatePath('/projects')
   revalidatePath('/habits')   // habits are edited from /habits via TaskDetail
@@ -685,6 +696,16 @@ export async function createSubtask(
   estimatedMinutes?: number | null,
 ) {
   const db = createServiceClient()
+
+  // Inherit the parent's project and deadline. A subtask is part of the same
+  // piece of work: it belongs in the same project, and it can't sensibly be due
+  // later than the thing it's a part of.
+  const { data: parent } = await db
+    .from('tasks')
+    .select('project_id, due_date')
+    .eq('id', parentId)
+    .maybeSingle()
+
   const { error } = await db.from('tasks').insert({
     parent_id:         parentId,
     title,
@@ -695,6 +716,8 @@ export async function createSubtask(
     urgency_score:     0,
     urgency_curve:     'linear',
     estimated_minutes: estimatedMinutes ?? null,
+    project_id:        parent?.project_id ?? null,
+    due_date:          parent?.due_date ?? null,
     created_at:        new Date().toISOString(),
   })
   if (error) throw new Error(error.message)

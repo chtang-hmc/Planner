@@ -19,7 +19,7 @@ export default async function TasksPage() {
     // Habits live on /habits and are excluded here so they don't clutter the
     // task list with untimed, non-urgent recurring work.
     db.from('tasks')
-      .select('*, project:projects(id, name, color)')
+      .select('*, project:projects(id, name, color), parent:parent_id(id, title)')
       .in('status', ['inbox', 'active'])
       .neq('type', 'habit')
       .order('urgency_score', { ascending: false }),
