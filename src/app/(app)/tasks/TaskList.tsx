@@ -100,7 +100,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
   // Scheduling modals
   const [schedulePreview, setSchedulePreview] = useState<{
-    blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
+    loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
   } | null>(null)
   const [dayPlan, setDayPlan] = useState<{
     blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']; unschedulable: SchedulerTask[]
@@ -121,6 +121,9 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
     setScheduling(true)
+    // Open the modal straight away in a loading state — the proposal takes a
+    // GCal round trip, and a dead button for that long reads as broken.
+    setSchedulePreview({ loading: true, blocks: [], unschedulable: [], existing: [] })
     startTransition(async () => {
       try {
         const res = await proposeSchedule(7, tz)
@@ -133,6 +136,10 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           unschedulable: res.unschedulable,
           existing: res.existing,
         })
+      } catch (err) {
+        // Don't strand the modal in its loading state if the proposal throws
+        console.error('proposeSchedule failed', err)
+        setSchedulePreview(null)
       } finally {
         setScheduling(false)
       }
@@ -554,6 +561,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
       {schedulePreview && (
         <SchedulePreviewModal
           blocks={schedulePreview.blocks}
+          loading={schedulePreview.loading}
           unschedulable={schedulePreview.unschedulable}
           existing={schedulePreview.existing}
           onClose={() => setSchedulePreview(null)}

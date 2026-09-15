@@ -146,18 +146,21 @@ export interface SerializedAttackItem {
 async function buildHabitCandidates(
   db: ReturnType<typeof createServiceClient>
 ): Promise<SchedulerTask[]> {
-  const { data: habits } = await db
-    .from('tasks')
-    .select('*')          // '*' so a pre-0007 database (no exclusive_group) still works
-    .eq('type', 'habit')
-    .in('status', ['inbox', 'active'])
-    .is('parent_id', null)
-    .not('weekly_target', 'is', null)
-    .or('scheduled_by.is.null,scheduled_by.eq.auto')
+  // Independent of each other — one round trip instead of two
+  const [{ data: habits }, weekStartDay] = await Promise.all([
+    db.from('tasks')
+      .select('*')        // '*' so a pre-0007 database (no exclusive_group) still works
+      .eq('type', 'habit')
+      .in('status', ['inbox', 'active'])
+      .is('parent_id', null)
+      .not('weekly_target', 'is', null)
+      .or('scheduled_by.is.null,scheduled_by.eq.auto'),
+    fetchWeekStartDay(db),
+  ])
 
   if (!habits || habits.length === 0) return []
 
-  const weekStart = weekStartOf(new Date(), await fetchWeekStartDay(db))
+  const weekStart = weekStartOf(new Date(), weekStartDay)
 
   // Last day of the current week. Sessions are owed *this* week, so they must
   // not spill past it — "Schedule week" runs a rolling 7 days from today, which
@@ -278,24 +281,47 @@ export interface ProposeResult {
 export async function proposeSchedule(horizonDays: number, timezone: string = 'UTC', startDateStr?: string): Promise<ProposeResult> {
   const db = createServiceClient()
 
-  // ── 1. Auth ────────────────────────────────────────────────────────────────
-  const token = await getValidToken()
-  if (!token) return { scheduled: [], unschedulable: [], existing: [], error: 'Google Calendar not connected' }
+  // The window is pure arithmetic, so it can be computed before any await and
+  // let the calendar queries start alongside everything else.
+  const dayStr  = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+  const timeMin = new Date(localMidnight(dayStr, timezone))
+  const timeMax = new Date(timeMin)
+  timeMax.setDate(timeMax.getDate() + horizonDays + 1)
 
-  // ── 2. User config ─────────────────────────────────────────────────────────
-  const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
-
-  // ── 3. Candidate tasks ─────────────────────────────────────────────────────
-  // Include: active tasks (not yet scheduled or auto-scheduled, not manually locked)
-  // If a task has subtasks, include the subtasks instead of the parent.
-  const { data: taskRows } = await db
-    .from('tasks')
+  // ── 1. Everything independent, at once ─────────────────────────────────────
+  // These were sequential awaits: ~2s of round trips for work that has no
+  // ordering between it. Only the subtask query (needs parent ids) and freeBusy
+  // (needs the token) have to follow.
+  const [
+    token,
+    { workingHours, energySchedule, schedulerConfig },
+    { data: taskRows },
+    habitCandidates,
+    { data: eventRows },
+    { data: bookedRows },
+  ] = await Promise.all([
+    getValidToken(),
+    fetchSchedulingInputs(),
+    db.from('tasks')
     .select('*')                        // '*' so pre-0009 rows (no location/span) still load
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)              // top-level tasks only here
     .neq('type', 'habit')               // habits are expanded per weekly target below
     .or('scheduled_by.is.null,scheduled_by.eq.auto')  // exclude manual locks; neq would drop NULLs
-    .order('urgency_score', { ascending: false })
+    .order('urgency_score', { ascending: false }),
+    buildHabitCandidates(db),
+    db.from('calendar_events')
+      .select('id, title, start_time, end_time')
+      .gte('start_time', timeMin.toISOString())
+      .lte('start_time', timeMax.toISOString()),
+    db.from('tasks')
+      .select('id, title, scheduled_start, scheduled_end')
+      .not('scheduled_start', 'is', null)
+      .gte('scheduled_start', timeMin.toISOString())
+      .lte('scheduled_start', timeMax.toISOString()),
+  ])
+
+  if (!token) return { scheduled: [], unschedulable: [], existing: [], error: 'Google Calendar not connected' }
 
   // Fetch subtasks for tasks that have them
   const parentIds = (taskRows ?? []).map(t => t.id)
@@ -346,23 +372,11 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     })
   }
 
-  // ── 3b. Habit sessions ─────────────────────────────────────────────────────
-  // A habit with a weekly target and a session length becomes N candidates —
-  // one per session still owed this week. They share a spreadGroup so the
-  // scheduler puts them on different days, and carry no due_date so they can
-  // land anywhere in the horizon (the habit row's own due_date is just the
-  // next occurrence marker and would otherwise pin every session to one day).
-  const habitCandidates = await buildHabitCandidates(db)
+  // Habit sessions — one candidate per session still owed this week (fetched
+  // above, alongside everything else).
   candidates.push(...habitCandidates)
 
   // ── 4. Busy intervals from GCal ────────────────────────────────────────────
-  const now      = new Date()
-  const dayStr   = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
-  // Use local midnight so UTC+ users don't miss morning busy events
-  const timeMin  = new Date(localMidnight(dayStr, timezone))
-  const timeMax  = new Date(timeMin)
-  timeMax.setDate(timeMax.getDate() + horizonDays + 1)
-
   const busyIntervals = await fetchFreeBusy(token.access_token, timeMin, timeMax)
 
   // ── 5. Run algorithm ───────────────────────────────────────────────────────
@@ -387,20 +401,8 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
   }))
 
   // ── 6. What's already on the week ──────────────────────────────────────────
-  // Returned so the review shows the whole horizon, not only the new blocks:
-  // you can't judge a proposal without seeing what it's fitting around.
-  const [{ data: eventRows }, { data: bookedRows }] = await Promise.all([
-    db.from('calendar_events')
-      .select('id, title, start_time, end_time')
-      .gte('start_time', timeMin.toISOString())
-      .lte('start_time', timeMax.toISOString()),
-    db.from('tasks')
-      .select('id, title, scheduled_start, scheduled_end')
-      .not('scheduled_start', 'is', null)
-      .gte('scheduled_start', timeMin.toISOString())
-      .lte('scheduled_start', timeMax.toISOString()),
-  ])
-
+  // Fetched up front; shaped here. Returned so the review shows the whole
+  // horizon, not only the new blocks.
   const existing: ExistingItem[] = [
     ...(eventRows ?? []).map(e => ({
       id: e.id, title: e.title,

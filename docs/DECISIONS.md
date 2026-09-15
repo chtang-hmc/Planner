@@ -272,6 +272,24 @@ Partial approval changes what cleanup may touch. The sweep used to clear **every
 
 The trade-off: a block belonging to a task that is no longer proposed at all (completed, deleted) is no longer swept, because "not approved" and "not proposed" are indistinguishable here. Leaving it is the safer error — deleting calendar entries the user never agreed to remove is worse than one that lingers.
 
+### proposeSchedule fans out
+
+The action was a chain of sequential awaits — config, tasks, subtasks, habits, freeBusy, then the existing-week queries — for work with almost no ordering between it. Measured against the live database, the same set of queries took **2043 ms one after another and 272 ms in parallel**.
+
+Everything independent now runs in one `Promise.all`: token, config, top-level tasks, habit candidates, and the two existing-week queries. Only two things genuinely have to follow — the subtask query (needs the parent ids) and freeBusy (needs the token). The time window is pure arithmetic, so it's computed before the first await and lets the calendar queries start with the rest. `buildHabitCandidates` fans out internally too.
+
+### Waiting for a proposal
+
+The preview modal opens **immediately** in a loading state rather than after the round trip: a button that sits dead for a couple of seconds reads as broken, and the work is one server call with no natural checkpoints.
+
+The progress bar is **indeterminate** — a sweep animation, not a percentage. There is no real progress to report from a single round trip, and a fake percentage that jumps to 90% and waits is worse than an honest "working". A skeleton week sits underneath so the shape of what's coming is visible.
+
+### "Didn't fit" is grouped, not itemised
+
+Habit sessions are expanded one candidate per session, so a 7×/week habit with six days left in the week produces leftovers *every* run. Listing each as its own failure row made a working schedule look broken.
+
+The list is collapsed per title and reports what was achieved: "Piano — 6 of 7 scheduled" reads as information, in neutral styling, while something that got nothing at all stays amber and says so. The distinction the user cares about is "did any of it happen", not "how many candidate objects failed".
+
 ### The week review is a calendar grid
 
 `ScheduleWeekCalendar` renders the horizon as day columns against an hour gutter, positioned absolutely by time — the shape people already read schedules in. The list view is kept behind a toggle for scanning.

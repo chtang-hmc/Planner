@@ -251,6 +251,12 @@ body { background: var(--background); color: var(--foreground); }
 }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes schedule-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.animate-schedule-sweep { animation: schedule-sweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
 @keyframes slide-in {
   from { transform: translateX(100%); opacity: 0; }
   to   { transform: translateX(0);    opacity: 1; }
