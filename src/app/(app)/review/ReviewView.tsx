@@ -140,7 +140,7 @@ function RecapStep({ completed, weekStart, onNext }: {
         <>
           <div className="grid grid-cols-2 gap-3 py-4 border-b border-slate-100 dark:border-slate-800">
             <div className="text-center">
-              <p className="text-3xl font-semibold text-teal-500">{completed.length}</p>
+              <p className="text-3xl font-semibold text-accent-500">{completed.length}</p>
               <p className="text-xs text-slate-400 mt-0.5">tasks completed</p>
             </div>
             <div className="text-center">
@@ -152,7 +152,7 @@ function RecapStep({ completed, weekStart, onNext }: {
           </div>
           {completed.map(t => (
             <div key={t.id} className="flex items-center gap-2 py-2.5 border-b border-slate-100 dark:border-slate-800 last:border-0">
-              <span className="text-teal-500 text-sm">✓</span>
+              <span className="text-accent-500 text-sm">✓</span>
               <span className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate">{t.title}</span>
               <span
                 className="text-xs font-medium px-1.5 py-0.5 rounded shrink-0"
@@ -183,7 +183,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
     sub: 'These missed their deadline. Mark done, push to someday, or cancel.',
     emptyMsg: 'No overdue tasks 🎉',
     actions: (id, triage) => [
-      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-teal-200 dark:border-teal-800 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950' },
+      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
       { label: 'Cancel', emoji: '✕', action: () => triage(id, 'cancel'),  color: 'border-red-100 dark:border-red-900 text-red-400 hover:bg-red-50 dark:hover:bg-red-950' },
     ],
@@ -193,7 +193,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
     sub: 'Route these to a project, or move to someday/cancel.',
     emptyMsg: 'Inbox is clear 📭',
     actions: (id, triage) => [
-      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-teal-200 dark:border-teal-800 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950' },
+      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
       { label: 'Cancel', emoji: '✕', action: () => triage(id, 'cancel'),  color: 'border-red-100 dark:border-red-900 text-red-400 hover:bg-red-50 dark:hover:bg-red-950' },
     ],
@@ -203,7 +203,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
     sub: 'Confirm these are on track or push them out.',
     emptyMsg: 'Nothing due this week 👌',
     actions: (id, triage) => [
-      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-teal-200 dark:border-teal-800 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950' },
+      { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
     ],
   },
@@ -285,7 +285,7 @@ function DoneStep({ data, onSave }: { data: ReviewData; onSave: (notes: string) 
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col gap-4">
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
-            <p className="text-2xl font-semibold text-teal-500">{data.weeklyCompleted.length}</p>
+            <p className="text-2xl font-semibold text-accent-500">{data.weeklyCompleted.length}</p>
             <p className="text-xs text-slate-400 mt-0.5">completed</p>
           </div>
           <div>
@@ -306,14 +306,14 @@ function DoneStep({ data, onSave }: { data: ReviewData; onSave: (notes: string) 
             onChange={e => setNotes(e.target.value)}
             rows={3}
             placeholder="What to focus on, blockers to clear, intentions…"
-            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-teal-500"
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 resize-none focus:outline-none focus:ring-2 focus:ring-accent-500"
           />
         </div>
       </div>
       <button
         onClick={handleSave}
         disabled={isPending}
-        className="w-full bg-teal-500 hover:bg-teal-600 text-white rounded-xl py-3 text-sm font-semibold transition-colors disabled:opacity-50"
+        className="w-full bg-accent-500 hover:bg-accent-600 text-white rounded-xl py-3 text-sm font-semibold transition-colors disabled:opacity-50"
       >
         {isPending ? 'Saving…' : '✓ Save weekly review'}
       </button>
@@ -343,13 +343,13 @@ function StepProgress({ steps, current }: { steps: typeof STEPS; current: number
       {steps.map((s, i) => (
         <div key={s.key} className="flex items-center gap-1 flex-1">
           <div className={`h-1 flex-1 rounded-full transition-colors ${
-            i < current  ? 'bg-teal-500' :
+            i < current  ? 'bg-accent-500' :
             i === current ? 'bg-slate-900 dark:bg-white' :
             'bg-slate-200 dark:bg-slate-700'
           }`} />
           {i < steps.length - 1 && (
             <div className={`w-1.5 h-1.5 rounded-full shrink-0 transition-colors ${
-              i < current ? 'bg-teal-500' : 'bg-slate-200 dark:bg-slate-700'
+              i < current ? 'bg-accent-500' : 'bg-slate-200 dark:bg-slate-700'
             }`} />
           )}
         </div>

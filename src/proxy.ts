@@ -27,7 +27,7 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isAuthRoute  = pathname === '/login' || pathname.startsWith('/auth')
+  const isAuthRoute  = pathname === '/login' || pathname.startsWith('/auth') || pathname === '/403'
   const isStaticFile = pathname.startsWith('/_next') || pathname.includes('.')
 
   if (isStaticFile) return supabaseResponse
@@ -42,7 +42,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Send already-logged-in users away from login
+  // Enforce single-owner access: if ALLOWED_EMAIL is set, reject anyone else
+  const allowedEmail = process.env.ALLOWED_EMAIL
+  if (user && allowedEmail && user.email !== allowedEmail && !isAuthRoute) {
+    return NextResponse.redirect(new URL('/403', request.url))
+  }
+
+  // Send already-logged-in, allowed users away from login
   if (user && pathname === '/login') {
     return NextResponse.redirect(new URL('/tasks', request.url))
   }

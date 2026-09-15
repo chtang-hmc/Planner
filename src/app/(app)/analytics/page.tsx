@@ -1,8 +1,14 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { Project, EstimationProfile } from '@/types'
+import { Project, EstimationProfile, EnergyPattern } from '@/types'
 import AnalyticsView from './AnalyticsView'
 
 export const dynamic = 'force-dynamic'
+
+export interface DailyEnergy {
+  date: string        // YYYY-MM-DD
+  avg: number         // 1–5
+  count: number
+}
 
 export interface AnalyticsData {
   // Summary
@@ -26,10 +32,16 @@ export interface AnalyticsData {
   // Estimation accuracy from focus sessions
   accurateSessions: number
   inaccurateSessions: number
+
+  // Energy
+  recentEnergy: DailyEnergy[]      // last 7 days, ascending
+  energyPatterns: EnergyPattern[]  // nightly rollup — empty until pg_cron has run
 }
 
 export default async function AnalyticsPage() {
   const db = createServiceClient()
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
   const [
     { data: activeTasks },
@@ -37,12 +49,16 @@ export default async function AnalyticsPage() {
     { data: projects },
     { data: biasProfiles },
     { data: focusSessions },
+    { data: energyLogs },
+    { data: energyPatterns },
   ] = await Promise.all([
     db.from('tasks').select('urgency_score, estimated_minutes, adjusted_minutes, project_id').in('status', ['inbox', 'active']),
     db.from('tasks').select('project_id').eq('status', 'done'),
     db.from('projects').select('*').eq('archived', false).order('name'),
     db.from('estimation_profiles').select('*'),
     db.from('focus_sessions').select('estimate_accurate').not('estimate_accurate', 'is', null),
+    db.from('energy_logs').select('logged_at, level').gte('logged_at', sevenDaysAgo).order('logged_at'),
+    db.from('energy_patterns').select('*'),
   ])
 
   const active = activeTasks ?? []
@@ -87,6 +103,18 @@ export default async function AnalyticsPage() {
   const accurateSessions   = sessions.filter(s => s.estimate_accurate === true).length
   const inaccurateSessions = sessions.filter(s => s.estimate_accurate === false).length
 
+  // Rolling 7-day energy — group by calendar date, compute daily avg
+  const dailyMap: Record<string, { sum: number; count: number }> = {}
+  for (const log of (energyLogs ?? [])) {
+    const date = log.logged_at.slice(0, 10)  // YYYY-MM-DD
+    if (!dailyMap[date]) dailyMap[date] = { sum: 0, count: 0 }
+    dailyMap[date].sum   += log.level
+    dailyMap[date].count += 1
+  }
+  const recentEnergy: DailyEnergy[] = Object.entries(dailyMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, { sum, count }]) => ({ date, avg: sum / count, count }))
+
   const data: AnalyticsData = {
     activeCount: active.length,
     doneCount: done.length,
@@ -96,6 +124,8 @@ export default async function AnalyticsPage() {
     projectStats,
     accurateSessions,
     inaccurateSessions,
+    recentEnergy,
+    energyPatterns: (energyPatterns ?? []) as EnergyPattern[],
   }
 
   return <AnalyticsView data={data} />

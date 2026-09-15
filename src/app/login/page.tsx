@@ -24,7 +24,7 @@ export default function LoginPage() {
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 w-full max-w-sm shadow-sm">
         {/* Header */}
         <div className="mb-8">
-          <div className="w-8 h-8 rounded-lg bg-teal-500 mb-4 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-accent-500 mb-4 flex items-center justify-center">
             <span className="text-white text-sm font-bold">P</span>
           </div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Planner</h1>

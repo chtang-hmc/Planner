@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
-const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
+// calendar.events = read + create/edit/delete events (superset of calendar.readonly for events)
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events'
 
 export async function GET() {
   const params = new URLSearchParams({

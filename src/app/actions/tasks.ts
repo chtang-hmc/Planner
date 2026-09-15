@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
+import { getNextOccurrence } from '@/lib/rrule-utils'
 
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
@@ -12,9 +13,18 @@ export async function completeTask(
   taskId: string,
   actualMinutes: number | null,
   estimateAccurate: boolean | null,
-  blockerNote: string | null
+  blockerNote: string | null,
+  /** When true, recurring tasks are NOT given a next occurrence (permanently done). */
+  permanent = false
 ) {
   const db = createServiceClient()
+
+  // Fetch the task so we know its rrule and template fields before marking done
+  const { data: taskRow } = await db
+    .from('tasks')
+    .select('*')
+    .eq('id', taskId)
+    .single()
 
   // Mark task done
   const { error: taskErr } = await db
@@ -48,30 +58,110 @@ export async function completeTask(
     }
   }
 
-  // Recalculate bias ratio for the task's project
-  const { data: task } = await db.from('tasks').select('project_id, estimated_minutes').eq('id', taskId).single()
-  if (task && actualMinutes != null && task.estimated_minutes) {
+  // Recalculate bias ratio for the task's project (reuse taskRow fetched above)
+  if (taskRow && actualMinutes != null && taskRow.estimated_minutes) {
     const { data: profile } = await db
       .from('estimation_profiles')
       .select('*')
-      .eq('project_id', task.project_id)
+      .eq('project_id', taskRow.project_id)
       .single()
 
     if (profile) {
       const newCount = profile.sample_count + 1
       // Running average of bias ratio
-      const newRatio = (profile.bias_ratio * profile.sample_count + actualMinutes / task.estimated_minutes) / newCount
-      await db.from('estimation_profiles').update({ sample_count: newCount, bias_ratio: newRatio, updated_at: new Date().toISOString() }).eq('project_id', task.project_id)
+      const newRatio = (profile.bias_ratio * profile.sample_count + actualMinutes / taskRow.estimated_minutes) / newCount
+      await db.from('estimation_profiles').update({ sample_count: newCount, bias_ratio: newRatio, updated_at: new Date().toISOString() }).eq('project_id', taskRow.project_id)
     } else {
       await db.from('estimation_profiles').insert({
-        project_id: task.project_id,
+        project_id: taskRow.project_id,
         sample_count: 1,
-        bias_ratio: actualMinutes / task.estimated_minutes,
+        bias_ratio: actualMinutes / taskRow.estimated_minutes,
+      })
+    }
+  }
+
+  // ── Recurring task / habit: spawn the next occurrence ───────────────────────
+  const isHabit     = taskRow?.type === 'habit'
+  const shouldSpawn = taskRow && !permanent && (taskRow.rrule || isHabit)
+
+  if (shouldSpawn) {
+    const today = new Date()
+    const now   = new Date().toISOString()
+
+    // For rrule habits/tasks: compute next date from rule.
+    // Anchor from the task's own due_date (not today) so completing a weekly
+    // task early doesn't re-spawn it for the same occurrence date.
+    // e.g. "Weekly Review" due Sep 20 completed Sep 14 → next is Sep 27, not Sep 20.
+    // For anytime habits (no rrule): spawn for tomorrow so the card reappears.
+    let nextDue: string | null = null
+    if (taskRow.rrule) {
+      const anchor = taskRow.due_date ? new Date(taskRow.due_date) : today
+      const nextDate = getNextOccurrence(taskRow.rrule, anchor)
+      if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
+    } else if (isHabit) {
+      const tomorrow = new Date(today)
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      tomorrow.setHours(0, 0, 0, 0)
+      nextDue = tomorrow.toISOString()
+    }
+
+    if (nextDue) {
+      const urgency_score = (isHabit && !taskRow.rrule) ? 0 : computeUrgency({
+        priority:      taskRow.priority as Task['priority'],
+        urgency_curve: (taskRow.urgency_curve ?? 'linear') as Task['urgency_curve'],
+        due_date:      nextDue,
+        created_at:    now,
+      })
+
+      await db.from('tasks').insert({
+        title:              taskRow.title,
+        description:        taskRow.description,
+        project_id:         taskRow.project_id,
+        type:               taskRow.type,
+        status:             'inbox',
+        priority:           taskRow.priority,
+        energy_required:    taskRow.energy_required,
+        urgency_curve:      taskRow.urgency_curve,
+        urgency_score,
+        estimated_minutes:  taskRow.estimated_minutes,
+        rrule:              taskRow.rrule,
+        due_date:           nextDue,
+        created_at:         now,
+      })
+    }
+
+    // Upsert habit streak
+    const todayStr = today.toISOString().slice(0, 10)
+    const { data: streak } = await db
+      .from('habit_streaks')
+      .select('*')
+      .eq('task_id', taskId)
+      .maybeSingle()
+
+    if (streak) {
+      // Check if last completion was yesterday (consecutive day = increment)
+      const yesterday = new Date(today)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = yesterday.toISOString().slice(0, 10)
+      const consecutive = streak.last_completed === yesterdayStr
+      const newStreak = consecutive ? streak.current_streak + 1 : 1
+      await db.from('habit_streaks').update({
+        current_streak: newStreak,
+        longest_streak: Math.max(newStreak, streak.longest_streak),
+        last_completed: todayStr,
+      }).eq('task_id', taskId)
+    } else {
+      await db.from('habit_streaks').insert({
+        task_id: taskId,
+        current_streak: 1,
+        longest_streak: 1,
+        last_completed: todayStr,
       })
     }
   }
 
   revalidatePath('/tasks')
+  revalidatePath('/habits')
 }
 
 // ── Update task fields ───────────────────────────────────────────────────────
@@ -197,10 +287,17 @@ export async function createTask(data: {
   estimated_minutes: number | null
   due_date: string | null
   urgency_curve: string
+  rrule?: string | null
+  /** Explicit type override — 'habit' skips urgency scoring */
+  taskType?: 'task' | 'recurring' | 'habit'
 }) {
   const db = createServiceClient()
   const now = new Date().toISOString()
-  const urgency_score = computeUrgency({
+
+  const resolvedType = data.taskType ?? (data.rrule ? 'recurring' : 'task')
+
+  // Habits don't have urgency — they're not time-pressured work items
+  const urgency_score = resolvedType === 'habit' ? 0 : computeUrgency({
     priority:      data.priority as Task['priority'],
     urgency_curve: (data.urgency_curve ?? 'linear') as Task['urgency_curve'],
     due_date:      data.due_date,
@@ -210,12 +307,18 @@ export async function createTask(data: {
   const { data: task, error } = await db
     .from('tasks')
     .insert({
-      ...data,
-      project_id: data.project_id || null,
-      type: 'task',
-      status: 'inbox',
+      title:              data.title,
+      project_id:         data.project_id || null,
+      priority:           data.priority,
+      energy_required:    data.energy_required,
+      estimated_minutes:  data.estimated_minutes,
+      due_date:           data.due_date,
+      urgency_curve:      data.urgency_curve,
+      rrule:              data.rrule || null,
+      type:               resolvedType,
+      status:             'inbox',
       urgency_score,
-      created_at: now,
+      created_at:         now,
     })
     .select()
     .single()
@@ -223,4 +326,52 @@ export async function createTask(data: {
   revalidatePath('/tasks')
   revalidatePath('/projects')
   return task
+}
+
+// ── Subtask actions ──────────────────────────────────────────────────────────
+
+export async function getSubtasks(parentId: string) {
+  const db = createServiceClient()
+  const { data, error } = await db
+    .from('tasks')
+    .select('id, title, status, created_at')
+    .eq('parent_id', parentId)
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as { id: string; title: string; status: string; created_at: string }[]
+}
+
+export async function createSubtask(parentId: string, title: string) {
+  const db = createServiceClient()
+  const { error } = await db.from('tasks').insert({
+    parent_id:      parentId,
+    title,
+    status:         'active',
+    type:           'task',
+    priority:       1,
+    energy_required:'low',
+    urgency_score:  0,
+    urgency_curve:  'linear',
+    created_at:     new Date().toISOString(),
+  })
+  if (error) throw new Error(error.message)
+  revalidatePath('/tasks')
+}
+
+export async function toggleSubtask(subtaskId: string, done: boolean) {
+  const db = createServiceClient()
+  const { error } = await db
+    .from('tasks')
+    .update({
+      status:       done ? 'done' : 'active',
+      completed_at: done ? new Date().toISOString() : null,
+    })
+    .eq('id', subtaskId)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteSubtask(subtaskId: string) {
+  const db = createServiceClient()
+  const { error } = await db.from('tasks').delete().eq('id', subtaskId)
+  if (error) throw new Error(error.message)
 }

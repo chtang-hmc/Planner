@@ -57,13 +57,13 @@ function ReflectionPanel({ onBack }: { onBack: () => void }) {
         value={blocker}
         onChange={e => setBlocker(e.target.value)}
         rows={2}
-        className="w-full text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 mb-3 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 resize-none focus:outline-none focus:ring-2 focus:ring-teal-500"
+        className="w-full text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 mb-3 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 resize-none focus:outline-none focus:ring-2 focus:ring-accent-500"
       />
 
       <button
         onClick={handleSave}
         disabled={saving}
-        className="w-full py-2 rounded-xl bg-teal-500 text-white text-sm font-medium hover:bg-teal-600 disabled:opacity-50 transition-colors"
+        className="w-full py-2 rounded-xl bg-accent-500 text-white text-sm font-medium hover:bg-accent-600 disabled:opacity-50 transition-colors"
       >
         {saving ? 'Saving…' : 'Save session'}
       </button>
@@ -153,7 +153,7 @@ export default function FloatingTimer() {
           {/* Done */}
           <button
             onClick={() => setFinishing(true)}
-            className="flex-1 py-1 rounded-lg bg-teal-500 text-white text-xs font-medium hover:bg-teal-600 transition-colors"
+            className="flex-1 py-1 rounded-lg bg-accent-500 text-white text-xs font-medium hover:bg-accent-600 transition-colors"
           >
             Done
           </button>

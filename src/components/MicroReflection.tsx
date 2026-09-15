@@ -22,6 +22,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
   const [actualMinutes, setActualMinutes] = useState<string>(estimate ? String(estimate) : '')
   const [accurate, setAccurate] = useState<boolean | null>(null)
   const [blocker, setBlocker] = useState('')
+  const [permanent, setPermanent] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   useEffect(() => {
@@ -36,7 +37,8 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
         task.id,
         actualMinutes ? parseInt(actualMinutes) : null,
         accurate,
-        blocker || null
+        blocker || null,
+        permanent
       )
       onDone()
     })
@@ -44,7 +46,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
 
   function handleSkip() {
     startTransition(async () => {
-      await completeTask(task.id, null, null, null)
+      await completeTask(task.id, null, null, null, permanent)
       onDone()
     })
   }
@@ -61,7 +63,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
       >
         {/* Header */}
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-teal-600 dark:text-teal-400 mb-1">Done ✓</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-accent-600 dark:text-accent-400 mb-1">Done ✓</p>
           <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug line-clamp-2">{task.title}</p>
         </div>
 
@@ -78,7 +80,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
               value={actualMinutes}
               onChange={e => setActualMinutes(e.target.value)}
               placeholder="minutes"
-              className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono"
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
             />
             <span className="text-xs text-slate-400 shrink-0">min</span>
           </div>
@@ -101,7 +103,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
                 className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
                   accurate === val
                     ? val
-                      ? 'bg-teal-50 dark:bg-teal-950 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-300'
+                      ? 'bg-accent-50 dark:bg-accent-950 border-accent-300 dark:border-accent-700 text-accent-700 dark:text-accent-300'
                       : 'bg-amber-50 dark:bg-amber-950 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300'
                     : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
                 }`}
@@ -123,9 +125,24 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
               onChange={e => setBlocker(e.target.value)}
               placeholder="e.g. waiting on teammate, scope grew..."
               rows={2}
-              className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+              className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 resize-none"
             />
           </div>
+        )}
+
+        {/* Permanent completion — only for recurring tasks */}
+        {task.type === 'recurring' && (
+          <label className="flex items-center gap-2.5 cursor-pointer select-none group">
+            <input
+              type="checkbox"
+              checked={permanent}
+              onChange={e => setPermanent(e.target.checked)}
+              className="w-3.5 h-3.5 rounded accent-violet-600 cursor-pointer"
+            />
+            <span className="text-xs text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition-colors">
+              Stop repeating — complete permanently
+            </span>
+          </label>
         )}
 
         {/* Actions */}
@@ -142,7 +159,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
             disabled={isPending}
             className="flex-1 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-lg py-2 text-sm font-medium hover:opacity-80 transition-opacity disabled:opacity-50"
           >
-            {isPending ? 'Saving…' : 'Log & close'}
+            {isPending ? 'Saving…' : permanent ? 'Complete permanently' : 'Log & close'}
           </button>
         </div>
       </div>

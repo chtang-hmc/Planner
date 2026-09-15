@@ -12,6 +12,9 @@ export async function signInWithGoogle() {
     provider: 'google',
     options: {
       redirectTo: `${siteUrl()}/auth/callback`,
+      // Request calendar scope alongside auth so the user only sees one consent screen.
+      // access_type: offline + prompt: consent ensures Google always returns a refresh token.
+      scopes: 'https://www.googleapis.com/auth/calendar.readonly',
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',

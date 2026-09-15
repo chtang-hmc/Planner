@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TaskStatus   = 'inbox' | 'active' | 'done' | 'cancelled'
-export type TaskType     = 'task' | 'someday' | 'recurring'
+export type TaskType     = 'task' | 'someday' | 'recurring' | 'habit'
 export type EnergyLevel  = 'low' | 'medium' | 'high'
 export type UrgencyCurve = 'linear' | 'exponential' | 'step'
 
@@ -32,6 +32,9 @@ export interface Task {
   urgency_score: number              // 0–100, recomputed nightly
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks
+  gcal_event_id: string | null       // GCal event id for scheduled focus block
+  scheduled_start: string | null     // ISO timestamp — start of focus block
+  scheduled_end: string | null       // ISO timestamp — end of focus block
   created_at: string
   completed_at: string | null
   // joined relations (optional, populated by specific queries)
@@ -125,6 +128,45 @@ export function computeUrgency(task: Pick<Task, 'priority' | 'urgency_curve' | '
   }
 
   return Math.min(priorityPts + pressure, 100)
+}
+
+export interface UrgencyBreakdown {
+  score: number
+  priorityPts: number   // 10–40
+  timePressure: number  // 0–60; 0 when no due date
+  elapsed: number       // 0–1 ratio through the task lifespan (null when no due date)
+  hasDueDate: boolean
+}
+
+/** Same math as computeUrgency, but returns each component for display. */
+export function computeUrgencyBreakdown(
+  task: Pick<Task, 'priority' | 'urgency_curve' | 'due_date' | 'created_at'>
+): UrgencyBreakdown {
+  const priorityPts = task.priority * 10
+
+  if (!task.due_date) {
+    return { score: Math.min(priorityPts, 100), priorityPts, timePressure: 0, elapsed: 0, hasDueDate: false }
+  }
+
+  const total    = new Date(task.due_date).getTime() - new Date(task.created_at).getTime()
+  const elapsedMs = Date.now() - new Date(task.created_at).getTime()
+  const r         = Math.min(elapsedMs / total, 1)
+
+  let pressure: number
+  switch (task.urgency_curve) {
+    case 'linear':
+      pressure = r * 60
+      break
+    case 'exponential':
+      pressure = 60 / (1 + Math.exp(-10 * (r - 0.8)))
+      break
+    case 'step':
+      pressure = r > 0.85 ? 60 : r > 0.6 ? 25 : 5
+      break
+  }
+
+  const score = Math.min(priorityPts + pressure, 100)
+  return { score, priorityPts, timePressure: pressure, elapsed: r, hasDueDate: true }
 }
 
 // ── Inbox / unassigned sentinel ─────────────────────────────────────────────
