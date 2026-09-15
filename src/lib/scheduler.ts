@@ -78,6 +78,16 @@ export interface SchedulerTask {
    * land on four different days instead of stacking into a single afternoon.
    */
   spreadGroup?:      string
+  /**
+   * Work that cannot be split across sittings — it occupies one unbroken block
+   * however long it is, instead of being chunked by maxSessionMinutes.
+   *
+   * Habit sessions are atomic: a 120-minute gym session is one 120-minute
+   * block, not 90 minutes on Monday and 30 on Tuesday. Without this a habit
+   * whose session exceeds maxSessionMinutes gets one block per segment, so a
+   * 2×/week target silently produces four scheduled blocks.
+   */
+  atomic?:           boolean
 }
 
 /** Busy interval as [startMs, endMs] */
@@ -232,11 +242,12 @@ export function runScheduler(
   const placedBlocks: Interval[] = []
 
   // Sort: urgency + multi-segment bonus
+  // Spans, not segments: an atomic task is one segment but still needs a large
+  // window, so it earns the same anti-fragmentation bonus as a split one.
+  const spans = (t: SchedulerTask) => Math.ceil(t.duration_minutes / config.maxSessionMinutes)
   const sorted = [...candidates].sort((a, b) => {
-    const aSegs  = Math.ceil(a.duration_minutes / config.maxSessionMinutes)
-    const bSegs  = Math.ceil(b.duration_minutes / config.maxSessionMinutes)
-    const aScore = a.urgency_score + (aSegs > 1 ? 8 : 0)
-    const bScore = b.urgency_score + (bSegs > 1 ? 8 : 0)
+    const aScore = a.urgency_score + (spans(a) > 1 ? 8 : 0)
+    const bScore = b.urgency_score + (spans(b) > 1 ? 8 : 0)
     return bScore - aScore
   })
 
@@ -247,14 +258,14 @@ export function runScheduler(
   const groupDays = new Map<string, Set<number>>()
 
   for (const task of sorted) {
-    const totalSegs    = Math.ceil(task.duration_minutes / config.maxSessionMinutes)
+    const totalSegs    = task.atomic ? 1 : Math.ceil(task.duration_minutes / config.maxSessionMinutes)
     const dueMs        = task.due_date ? endOfDayMs(task.due_date, tz) : Infinity
     const blocksBefore = scheduled.length
     let remaining      = task.duration_minutes
     let allPlaced      = true
 
     for (let seg = 0; seg < totalSegs; seg++) {
-      const segMins = Math.min(remaining, config.maxSessionMinutes)
+      const segMins = task.atomic ? remaining : Math.min(remaining, config.maxSessionMinutes)
       const segMs   = segMins * 60_000
       remaining    -= segMins
 

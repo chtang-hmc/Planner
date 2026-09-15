@@ -287,6 +287,12 @@ If a task already has a `gcal_event_id`, `scheduleTask` patches the existing eve
 - Days already used by the group are skipped when collecting slot candidates.
 - Slot choice sorts by **start time** rather than tightest-fit, so sessions walk forward through the week instead of clustering wherever the snuggest gaps happen to be.
 
+### Scheduler: atomic work
+
+`SchedulerTask.atomic` marks work that can't be split across sittings — it takes one unbroken block instead of being chunked by `maxSessionMinutes`. Habit sessions set it (see [Scheduling habits](#scheduling-habits)); ordinary tasks don't, and still segment as before.
+
+The large-task sort bonus is computed from how many max-sessions the duration *spans* rather than from its segment count, so an atomic task (always one segment) still earns the anti-fragmentation protection a long split task gets.
+
 ### Scheduler: unschedulable is per-candidate, not per-task
 
 The "did it fit" check is scoped to the blocks a single candidate added (`scheduled.length === blocksBefore`), not to whether any block exists with that task id. Habit sessions share an id, so the old task-id check swallowed every session after the first — a request for 4 gym sessions with room for only 2 reported **zero** failures. Multi-segment behaviour is unchanged: a task that places some segments but not all is still not "unschedulable".
@@ -399,6 +405,8 @@ A habit with both a `weekly_target` and an `estimated_minutes` session length is
 
 - **Candidates carry the end of the current week as `due_date`.** Not the habit row's own `due_date` — that's a "next occurrence" marker and would trip the scheduler's `dayMs > dueMs` guard, pinning every session to one day. The week end is needed because "Schedule week" runs a *rolling* 7 days from today, which straddles the week boundary whenever today isn't the first day; without the bound, sessions owed for this week could be placed into next week, which would then begin with its allowance already spent.
 - **`urgency_score` is overridden to `priority * 10`.** Habits are stored with score 0 since they aren't deadline work, which would sort them last and leave them only whatever space is left over. The override gives them the same baseline an undated task of that priority gets. Raising a habit's priority is the lever if it keeps losing to deadline work.
+- **Sessions are `atomic`.** A session occupies one unbroken block however long it is, instead of being chunked by `maxSessionMinutes`. You don't do 90 minutes of gym on Monday and the remaining 30 on Tuesday. This is load-bearing for the target: a 120-minute session against a 90-minute cap splits into two segments, and since segments can't share a day either, "2× a week" silently produced **four** scheduled blocks across four days. A session longer than the largest free window is reported unschedulable, which is the honest answer.
+- **Emitted round-robin** across habits, not habit-by-habit. `runScheduler`'s sort is stable, so habits on equal footing keep this order and grouped ones alternate (Gym, Run, Gym, Run) instead of running in blocks (Gym, Gym, Run, Run). A genuinely higher-priority habit still sorts ahead of the rotation.
 - **Sessions share a `spreadGroup`**, keyed by `exclusive_group` when set and by title so they land on distinct days (see [Scheduler](#scheduler)). otherwise. Keyed by title rather than row id: if a habit ever ends up with two pending rows they are still one habit and must not both land on the same day.
 
 ### Mutually exclusive habits

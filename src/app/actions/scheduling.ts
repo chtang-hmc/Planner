@@ -169,7 +169,8 @@ async function buildHabitCandidates(
     daysByTitle.set(r.title, set)
   }
 
-  const out: SchedulerTask[] = []
+  // One list per habit, interleaved below
+  const perHabit: SchedulerTask[][] = []
 
   for (const h of habits) {
     const duration = h.adjusted_minutes ?? h.estimated_minutes
@@ -177,9 +178,10 @@ async function buildHabitCandidates(
 
     const done = daysByTitle.get(h.title)?.size ?? 0
     const owed = Math.max(0, (h.weekly_target ?? 0) - done)
+    const sessions: SchedulerTask[] = []
 
     for (let i = 0; i < owed; i++) {
-      out.push({
+      sessions.push({
         id:               h.id,
         title:            h.title,
         priority:         h.priority,
@@ -198,7 +200,25 @@ async function buildHabitCandidates(
         spreadGroup:      h.exclusive_group
           ? `group:${h.exclusive_group}`
           : `habit:${h.title}`,
+        // A session is one unbroken block. Without this a 120-minute session
+        // against a 90-minute cap is split into two, so "2× a week" quietly
+        // becomes four scheduled blocks on four days.
+        atomic:           true,
       })
+    }
+
+    perHabit.push(sessions)
+  }
+
+  // Round-robin rather than habit-by-habit. runScheduler's sort is stable, so
+  // habits on equal footing keep this order and grouped ones alternate
+  // (Gym, Run, Gym, Run) instead of running in blocks (Gym, Gym, Run, Run).
+  // A genuinely higher-priority habit still sorts ahead of the rotation.
+  const out: SchedulerTask[] = []
+  const longest = Math.max(0, ...perHabit.map(l => l.length))
+  for (let i = 0; i < longest; i++) {
+    for (const sessions of perHabit) {
+      if (sessions[i]) out.push(sessions[i])
     }
   }
 
