@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
-import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEventIds } from '@/lib/google-calendar'
+import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
 import {
   runScheduler,
   buildAttackList,
@@ -251,9 +251,21 @@ async function buildHabitCandidates(
 
 // ── proposeSchedule ───────────────────────────────────────────────────────────
 
+/** Something already on the week — context for reviewing a proposal. */
+export interface ExistingItem {
+  id:        string
+  title:     string
+  startISO:  string
+  endISO:    string
+  /** 'event' = calendar commitment; 'scheduled' = a task block already booked. */
+  kind:      'event' | 'scheduled'
+}
+
 export interface ProposeResult {
   scheduled:     SerializedBlock[]
   unschedulable: SchedulerTask[]
+  /** Everything already occupying the horizon, so the whole week is reviewable. */
+  existing:      ExistingItem[]
   error?:        string
 }
 
@@ -268,7 +280,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
 
   // ── 1. Auth ────────────────────────────────────────────────────────────────
   const token = await getValidToken()
-  if (!token) return { scheduled: [], unschedulable: [], error: 'Google Calendar not connected' }
+  if (!token) return { scheduled: [], unschedulable: [], existing: [], error: 'Google Calendar not connected' }
 
   // ── 2. User config ─────────────────────────────────────────────────────────
   const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
@@ -374,7 +386,33 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     energyMatch:   b.energyMatch,
   }))
 
-  return { scheduled: serialized, unschedulable }
+  // ── 6. What's already on the week ──────────────────────────────────────────
+  // Returned so the review shows the whole horizon, not only the new blocks:
+  // you can't judge a proposal without seeing what it's fitting around.
+  const [{ data: eventRows }, { data: bookedRows }] = await Promise.all([
+    db.from('calendar_events')
+      .select('id, title, start_time, end_time')
+      .gte('start_time', timeMin.toISOString())
+      .lte('start_time', timeMax.toISOString()),
+    db.from('tasks')
+      .select('id, title, scheduled_start, scheduled_end')
+      .not('scheduled_start', 'is', null)
+      .gte('scheduled_start', timeMin.toISOString())
+      .lte('scheduled_start', timeMax.toISOString()),
+  ])
+
+  const existing: ExistingItem[] = [
+    ...(eventRows ?? []).map(e => ({
+      id: e.id, title: e.title,
+      startISO: e.start_time, endISO: e.end_time, kind: 'event' as const,
+    })),
+    ...(bookedRows ?? []).map(t => ({
+      id: t.id, title: t.title,
+      startISO: t.scheduled_start!, endISO: t.scheduled_end!, kind: 'scheduled' as const,
+    })),
+  ].sort((a, b) => a.startISO.localeCompare(b.startISO))
+
+  return { scheduled: serialized, unschedulable, existing }
 }
 
 // ── confirmSchedule ───────────────────────────────────────────────────────────
@@ -419,9 +457,9 @@ export async function confirmSchedule(
   )
   const sweepEnd = new Date(new Date(lastEnd).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString()
 
-  let staleEventIds: string[] = []
+  let staleEvents: { id: string; taskId: string | null }[] = []
   try {
-    staleEventIds = await listAutoScheduledEventIds(token.access_token, nowISO, sweepEnd)
+    staleEvents = await listAutoScheduledEvents(token.access_token, nowISO, sweepEnd)
   } catch (err) {
     // A failed sweep must not block scheduling — worst case some old blocks
     // linger, which is what the previous behaviour did anyway.
@@ -480,25 +518,44 @@ export async function confirmSchedule(
     }).eq('id', taskId)
   }
 
-  // ── 4. Delete the previous auto-schedule ──────────────────────────────────
-  // Only once the new events exist. Skipped when creates were attempted and all
-  // of them failed, so a total GCal outage leaves the old schedule intact — but
-  // an empty proposal is a deliberate "clear everything" and still sweeps.
-  if (staleEventIds.length > 0 && (confirmed > 0 || blocks.length === 0)) {
+  // ── 4. Replace the previous blocks for the tasks we just rescheduled ──────
+  // Scoped to the approved tasks, not the whole horizon: the user can approve
+  // part of a proposal, and blocks for work they didn't approve must survive
+  // untouched rather than being swept because they weren't in this batch.
+  // Events carry plannerTaskId, so a task's older blocks are identifiable even
+  // though the row only remembers one id.
+  //
+  // An empty `blocks` is still a deliberate "clear the auto-schedule".
+  const approvedTaskIds = new Set(blocks.map(b => b.taskId))
+  const justCreated     = new Set([...rowWrites.values()].map(w => w.eventId))
+
+  const toDelete = blocks.length === 0
+    ? staleEvents
+    : staleEvents.filter(e =>
+        e.taskId && approvedTaskIds.has(e.taskId) && !justCreated.has(e.id))
+
+  if (toDelete.length > 0 && (confirmed > 0 || blocks.length === 0)) {
     await Promise.allSettled(
-      staleEventIds.map(id => deleteTaskBlock(token.access_token, id).catch(() => {}))
+      toDelete.map(e => deleteTaskBlock(token.access_token, e.id).catch(() => {}))
     )
   }
 
-  // Clear DB fields for tasks that were auto-scheduled before but aren't now
-  const stillScheduled = [...rowWrites.keys()]
-  const clearQuery = db
-    .from('tasks')
-    .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
-    .eq('scheduled_by', 'auto')
-  await (stillScheduled.length > 0
-    ? clearQuery.not('id', 'in', `(${stillScheduled.join(',')})`)
-    : clearQuery)
+  // Clear DB fields only for tasks whose blocks we actually removed
+  const clearedIds = blocks.length === 0
+    ? null                                   // clearing everything
+    : [...new Set(toDelete.map(e => e.taskId!))].filter(id => !rowWrites.has(id))
+
+  if (clearedIds === null) {
+    await db
+      .from('tasks')
+      .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
+      .eq('scheduled_by', 'auto')
+  } else if (clearedIds.length > 0) {
+    await db
+      .from('tasks')
+      .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
+      .in('id', clearedIds)
+  }
 
   revalidatePath('/tasks')
   revalidatePath('/projects')

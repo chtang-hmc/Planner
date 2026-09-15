@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { confirmSchedule } from '@/app/actions/scheduling'
+import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
 
 export interface PreviewBlock {
@@ -18,9 +18,16 @@ export interface PreviewBlock {
 interface Props {
   blocks:        PreviewBlock[]
   unschedulable: SchedulerTask[]
+  /** Already on the calendar — shown for context, never modified here. */
+  existing:      ExistingItem[]
   onClose:       () => void
   onConfirmed:   () => void
 }
+
+/** One row in the merged week view: a proposal, or something already booked. */
+type Row =
+  | { kind: 'proposed'; key: string; startISO: string; endISO: string; block: PreviewBlock }
+  | { kind: 'existing'; key: string; startISO: string; endISO: string; item: ExistingItem }
 
 const PRIORITY_COLORS: Record<number, string> = {
   4: 'bg-red-500',
@@ -41,33 +48,50 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-export default function SchedulePreviewModal({ blocks, unschedulable, onClose, onConfirmed }: Props) {
+export default function SchedulePreviewModal({ blocks, unschedulable, existing, onClose, onConfirmed }: Props) {
   const [, startTransition] = useTransition()
   const [confirming, setConfirming] = useState(false)
   const [result, setResult]         = useState<{ confirmed: number; failed: number } | null>(null)
 
-  // Group blocks by day. Built from a chronologically sorted copy so the day
-  // sections come out in date order — a Map preserves insertion order, and the
-  // scheduler places spread-group sessions out of sequence while hunting for
-  // the widest gap.
-  const byDay = new Map<string, PreviewBlock[]>()
-  for (const b of [...blocks].sort((a, b) => a.startISO.localeCompare(b.startISO))) {
-    const key = new Date(b.startISO).toDateString()
+  // Everything that isn't a new proposal is selected-out by default? No — the
+  // whole proposal starts approved, and unticking rejects individual blocks.
+  const blockKey = (b: PreviewBlock) => `${b.taskId}|${b.startISO}`
+  const [rejected, setRejected] = useState<Set<string>>(new Set())
+
+  const approved = blocks.filter(b => !rejected.has(blockKey(b)))
+
+  function toggle(b: PreviewBlock) {
+    const k = blockKey(b)
+    setRejected(prev => {
+      const next = new Set(prev)
+      if (next.has(k)) next.delete(k); else next.add(k)
+      return next
+    })
+  }
+
+  // Merge proposals with what's already on the week, then group by day, so the
+  // whole horizon is reviewable rather than just the new blocks in isolation.
+  const rows: Row[] = [
+    ...blocks.map(b => ({ kind: 'proposed' as const, key: blockKey(b), startISO: b.startISO, endISO: b.endISO, block: b })),
+    ...existing.map(e => ({ kind: 'existing' as const, key: `e|${e.id}|${e.startISO}`, startISO: e.startISO, endISO: e.endISO, item: e })),
+  ].sort((a, b) => a.startISO.localeCompare(b.startISO))
+
+  const byDay = new Map<string, Row[]>()
+  for (const r of rows) {
+    const key = new Date(r.startISO).toDateString()
     if (!byDay.has(key)) byDay.set(key, [])
-    byDay.get(key)!.push(b)
+    byDay.get(key)!.push(r)
   }
 
   function handleConfirm() {
     setConfirming(true)
     startTransition(async () => {
       const res = await confirmSchedule(
-        blocks.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
+        approved.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
       )
       setResult(res)
       setConfirming(false)
-      if (res.confirmed > 0) {
-        setTimeout(onConfirmed, 1200)
-      }
+      if (res.confirmed > 0) onConfirmed()
     })
   }
 
@@ -100,52 +124,80 @@ export default function SchedulePreviewModal({ blocks, unschedulable, onClose, o
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {blocks.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="py-10 text-center">
-              <p className="text-slate-400 text-sm">No tasks could be scheduled.</p>
+              <p className="text-slate-400 text-sm">Nothing scheduled, and nothing on the calendar this week.</p>
               <p className="text-slate-300 dark:text-slate-600 text-xs mt-1">
                 Check that tasks have time estimates and working hours are configured.
               </p>
             </div>
           ) : (
             <div className="flex flex-col gap-4">
-              {Array.from(byDay.entries()).map(([dayKey, dayBlocks]) => (
+              {Array.from(byDay.entries()).map(([dayKey, dayRows]) => (
                 <div key={dayKey}>
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
-                    {formatDate(dayBlocks[0].startISO)}
+                    {formatDate(dayRows[0].startISO)}
                   </p>
                   <div className="flex flex-col gap-1.5">
-                    {dayBlocks.map((b, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
-                      >
-                        {/* Priority dot */}
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_COLORS[b.taskPriority] ?? 'bg-slate-400'}`} />
+                    {dayRows.map(r => {
+                      if (r.kind === 'existing') {
+                        return (
+                          <div
+                            key={r.key}
+                            className="flex items-center gap-3 px-3 py-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 opacity-70"
+                          >
+                            <span className="w-4 shrink-0 text-center text-[10px] text-slate-400">
+                              {r.item.kind === 'event' ? '📅' : '🎯'}
+                            </span>
+                            <span className="text-xs font-mono text-slate-400 shrink-0 w-24">
+                              {formatTime(r.startISO)} – {formatTime(r.endISO)}
+                            </span>
+                            <span className="flex-1 text-sm text-slate-500 dark:text-slate-400 truncate">
+                              {r.item.title}
+                            </span>
+                            <span className="text-[10px] text-slate-400 shrink-0">
+                              {r.item.kind === 'event' ? 'on calendar' : 'already booked'}
+                            </span>
+                          </div>
+                        )
+                      }
 
-                        {/* Time */}
-                        <span className="text-xs font-mono text-slate-500 dark:text-slate-400 shrink-0 w-24">
-                          {formatTime(b.startISO)} – {formatTime(b.endISO)}
-                        </span>
-
-                        {/* Title */}
-                        <span className="flex-1 text-sm text-slate-800 dark:text-slate-200 truncate">
-                          {b.taskTitle}
-                        </span>
-
-                        {/* Segment indicator */}
-                        {b.totalSegments > 1 && (
-                          <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                            {b.segmentIndex + 1}/{b.totalSegments}
+                      const b = r.block
+                      const isRejected = rejected.has(r.key)
+                      return (
+                        <label
+                          key={r.key}
+                          className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
+                            isRejected
+                              ? 'bg-transparent border-slate-200 dark:border-slate-800 opacity-45'
+                              : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!isRejected}
+                            onChange={() => toggle(b)}
+                            className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-accent-500 shrink-0"
+                          />
+                          <div className={`w-2 h-2 rounded-full shrink-0 ${PRIORITY_COLORS[b.taskPriority] ?? 'bg-slate-400'}`} />
+                          <span className={`text-xs font-mono shrink-0 w-24 ${isRejected ? 'line-through text-slate-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                            {formatTime(b.startISO)} – {formatTime(b.endISO)}
                           </span>
-                        )}
-
-                        {/* Energy match */}
-                        {!b.energyMatch && (
-                          <span title="Energy mismatch — scheduled anyway" className="text-[10px] text-amber-400 shrink-0">⚡?</span>
-                        )}
-                      </div>
-                    ))}
+                          <span className={`flex-1 text-sm truncate ${isRejected ? 'line-through text-slate-400' : 'text-slate-800 dark:text-slate-200'}`}>
+                            {b.taskTitle}
+                          </span>
+                          {b.totalSegments > 1 && (
+                            <span className="text-[10px] text-slate-400 shrink-0 font-mono">
+                              {b.segmentIndex + 1}/{b.totalSegments}
+                            </span>
+                          )}
+                          {!b.energyMatch && (
+                            <span title="Energy mismatch — scheduled anyway" className="text-[10px] text-amber-400 shrink-0">⚡?</span>
+                          )}
+                          <span className="text-[10px] text-accent-500 shrink-0 font-medium">new</span>
+                        </label>
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -191,10 +243,14 @@ export default function SchedulePreviewModal({ blocks, unschedulable, onClose, o
               </button>
               <button
                 onClick={handleConfirm}
-                disabled={confirming || blocks.length === 0}
+                disabled={confirming || approved.length === 0}
                 className="flex-1 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity"
               >
-                {confirming ? 'Scheduling…' : `Confirm ${blocks.length} block${blocks.length !== 1 ? 's' : ''}`}
+                {confirming
+                  ? 'Scheduling…'
+                  : approved.length === blocks.length
+                    ? `Confirm ${approved.length} block${approved.length !== 1 ? 's' : ''}`
+                    : `Confirm ${approved.length} of ${blocks.length}`}
               </button>
             </>
           )}

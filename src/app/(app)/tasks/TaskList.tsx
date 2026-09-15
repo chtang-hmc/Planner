@@ -5,7 +5,7 @@ import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT }
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
-import { proposeSchedule, planDay } from '@/app/actions/scheduling'
+import { proposeSchedule, planDay, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import MicroReflection from '@/components/MicroReflection'
@@ -100,7 +100,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
   // Scheduling modals
   const [schedulePreview, setSchedulePreview] = useState<{
-    blocks: PreviewBlock[]; unschedulable: SchedulerTask[]
+    blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
   } | null>(null)
   const [dayPlan, setDayPlan] = useState<{
     blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']; unschedulable: SchedulerTask[]
@@ -131,6 +131,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
           })),
           unschedulable: res.unschedulable,
+          existing: res.existing,
         })
       } finally {
         setScheduling(false)
@@ -554,6 +555,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
         <SchedulePreviewModal
           blocks={schedulePreview.blocks}
           unschedulable={schedulePreview.unschedulable}
+          existing={schedulePreview.existing}
           onClose={() => setSchedulePreview(null)}
           onConfirmed={() => setSchedulePreview(null)}
         />

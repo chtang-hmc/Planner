@@ -262,6 +262,16 @@ Three functions in `src/lib/google-calendar.ts`:
 | `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
 | `listAutoScheduledEventIds()` | `GET /calendars/primary/events?privateExtendedProperty=plannerAuto=true` | Lists auto-scheduled blocks in a window, for cleanup |
 
+### Reviewing a week: whole horizon, partial approval
+
+`proposeSchedule` returns an `existing` list — calendar events and already-booked task blocks across the horizon — alongside the new proposals. The review merges both into one chronological week: you can't judge a proposal without seeing what it's fitting around, and the old modal showed only the new blocks in isolation.
+
+Existing rows are read-only context (dashed, dimmed). Proposals carry a checkbox and start approved; unticking rejects that block. Confirm sends only the approved ones.
+
+Partial approval changes what cleanup may touch. The sweep used to clear **every** auto block in the window and rewrite the lot, which is wrong once approval is partial — rejecting one block would delete the schedule for everything else. Cleanup is now scoped to the **approved tasks**: their older blocks are removed and replaced, and everything else is left alone. The `plannerTaskId` written into each event makes a task's blocks identifiable even though the row only remembers one id.
+
+The trade-off: a block belonging to a task that is no longer proposed at all (completed, deleted) is no longer swept, because "not approved" and "not proposed" are indistinguishable here. Leaving it is the safer error — deleting calendar entries the user never agreed to remove is worse than one that lingers.
+
 ### Auto-scheduled blocks are tagged in GCal, not tracked in the DB
 
 A task row has **one** `gcal_event_id` column, but a task can occupy **several** blocks — a long task split into segments, or a habit scheduled 4× a week. The column can only hold the last one, so `confirmSchedule` used to delete one event per task and orphan the rest. With habits this went from a rare edge case to a guaranteed weekly leak (3 stranded gym blocks per re-run).
