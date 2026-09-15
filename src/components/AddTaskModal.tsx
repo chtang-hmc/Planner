@@ -248,6 +248,33 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                 className="w-full border border-violet-200 dark:border-violet-800 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
+                Priority
+              </label>
+              <div className="flex gap-1">
+                {([1, 2, 3, 4] as const).map(p => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPriority(p)}
+                    title={PRIORITY_LABELS[p]}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                      priority === p
+                        ? 'bg-violet-600 border-violet-600 text-white'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Habits have no deadline, so priority is what decides which one gets
+                the good slot when the week is tight.
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">

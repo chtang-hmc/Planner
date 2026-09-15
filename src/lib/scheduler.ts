@@ -472,8 +472,13 @@ export function runScheduler(
         }
       }
 
-      if (!best) {                       // nothing left can hold even one
-        unschedulable.push(...remaining)
+      if (!best) {
+        // Chaining is a preference, not a requirement. A run needs contiguous
+        // space, which is strictly harder to find than five separate gaps — so
+        // rather than report the whole chain as unschedulable, fall back to
+        // placing what's left independently. Better grouped-if-possible than
+        // all-or-nothing.
+        for (const m of remaining) placeSingle({ ...m, chainGroup: undefined })
         return
       }
 
@@ -503,16 +508,8 @@ export function runScheduler(
     }
   }
 
-  for (const task of sorted) {
-    // A chain is placed in one go, from the position of its highest-ranked
-    // member, so it competes for time like any other piece of work.
-    if (task.chainGroup) {
-      if (handledChains.has(task.chainGroup)) continue
-      handledChains.add(task.chainGroup)
-      placeChain(sorted.filter(t => t.chainGroup === task.chainGroup))
-      continue
-    }
-
+  /** Place one task on its own — the ordinary path, and the chain's fallback. */
+  function placeSingle(task: SchedulerTask) {
     // Per-task, not global: the buffer is transition time this task needs, so
     // a zero-buffer chore can sit flush against its neighbours. Blocks placed
     // later still apply their own buffer against it.
@@ -547,7 +544,7 @@ export function runScheduler(
         // may need you somewhere else.
         if (spanMs > 0 && seg === 0) {
           const spanEnd = slotStart + spanMs
-          if (placedLoc.some(p => locationsClash(p.loc, loc) && slotStart < p.end && spanEnd > p.start)) continue
+          if (placedLoc.some(p => locationsClash(p.loc, loc) && slotStart < p.end && spanEnd > p.start)) return
         }
 
         const energy      = slotEnergyLevel(slotStart, energySchedule, tz)
@@ -616,6 +613,18 @@ export function runScheduler(
     if (!allPlaced && scheduled.length === blocksBefore) {
       unschedulable.push(task)
     }
+  }
+
+  for (const task of sorted) {
+    // A chain is placed in one go, from the position of its highest-ranked
+    // member, so it competes for time like any other piece of work.
+    if (task.chainGroup) {
+      if (handledChains.has(task.chainGroup)) continue
+      handledChains.add(task.chainGroup)
+      placeChain(sorted.filter(t => t.chainGroup === task.chainGroup))
+      continue
+    }
+    placeSingle(task)
   }
 
   // Chronological, not placement order. Blocks are appended as the greedy loop
