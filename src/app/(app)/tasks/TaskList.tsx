@@ -1,10 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { Task, Project, EnergyLevel, INBOX_PROJECT } from '@/types'
+import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
+import { useSearch } from '@/contexts/SearchContext'
+import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
+import { completeTask } from '@/app/actions/tasks'
+import { rruleToLabel } from '@/lib/rrule-utils'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
+import UpcomingView from './UpcomingView'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 const CURVE_ICON = { linear: '╱', exponential: '⌒', step: '⌐' }
@@ -13,6 +18,16 @@ function urgencyColor(score: number) {
   if (score >= 70) return 'text-red-500 dark:text-red-400'
   if (score >= 40) return 'text-amber-500 dark:text-amber-400'
   return 'text-slate-300 dark:text-slate-600'
+}
+
+/** Priority circle: colored border + subtle fill, white for low */
+function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
+  switch (priority) {
+    case 4: return 'border-red-400    bg-red-50    dark:bg-red-950/40    hover:bg-red-100    dark:hover:bg-red-900/50'
+    case 3: return 'border-orange-400 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/50'
+    case 2: return 'border-blue-400   bg-blue-50   dark:bg-blue-950/40   hover:bg-blue-100   dark:hover:bg-blue-900/50'
+    case 1: return 'border-slate-200  bg-white     dark:bg-slate-900     dark:border-slate-700 hover:border-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950'
+  }
 }
 
 function formatMinutes(m: number | null): string {
@@ -34,28 +49,53 @@ function formatDue(iso: string | null): { label: string; urgent: boolean } {
 interface Props {
   tasks: (Task & { project: Project })[]
   projects: Project[]
+  streaks: Record<string, HabitStreak>
+  events: CalendarEvent[]
+  gcalWriteEnabled: boolean
 }
 
-export default function TaskList({ tasks, projects }: Props) {
+export default function TaskList({ tasks, projects, streaks, events, gcalWriteEnabled }: Props) {
+  const { query } = useSearch()
+  const [view, setView] = useState<'list' | 'upcoming'>(() =>
+    typeof window !== 'undefined' ? getStoredDefaultView() : 'list'
+  )
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
 
-  // Completing a task
+  // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
   const [doneIds, setDoneIds]               = useState<Set<string>>(new Set())
+
+  // Completing a habit (instant — no reflection)
+  const [pendingHabitIds, setPendingHabitIds] = useState<Set<string>>(new Set())
 
   // Task detail
   const [detailTask, setDetailTask] = useState<(Task & { project: Project }) | null>(null)
 
   // Add task modal
-  const [showAddTask, setShowAddTask] = useState(false)
+  const [showAddTask, setShowAddTask]       = useState(false)
+  const [addTaskDueDate, setAddTaskDueDate] = useState<string | undefined>(undefined)
 
+  // Search filter helper
+  const q = query.trim().toLowerCase()
+  function matchesSearch(t: Task) {
+    if (!q) return true
+    return (
+      t.title.toLowerCase().includes(q) ||
+      (t.description ?? '').toLowerCase().includes(q)
+    )
+  }
+
+  // Split habits from regular tasks
+  const habits  = tasks.filter(t => t.type === 'habit' && !doneIds.has(t.id) && matchesSearch(t))
   const filtered = tasks.filter(t => {
+    if (t.type === 'habit') return false          // habits have their own section
     if (doneIds.has(t.id)) return false
     if (!showSomeday && t.type === 'someday') return false
     if (energyFilter !== 'all' && t.energy_required !== energyFilter) return false
     if (projectFilter !== 'all' && t.project_id !== projectFilter) return false
+    if (!matchesSearch(t)) return false
     return true
   })
 
@@ -71,19 +111,62 @@ export default function TaskList({ tasks, projects }: Props) {
     setCompletingTask(null)
   }
 
+  async function handleHabitDone(task: Task & { project: Project }, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (pendingHabitIds.has(task.id)) return
+    setPendingHabitIds(prev => new Set([...prev, task.id]))
+    try {
+      await completeTask(task.id, null, null, null)
+      setDoneIds(prev => new Set([...prev, task.id]))
+    } finally {
+      setPendingHabitIds(prev => { const n = new Set(prev); n.delete(task.id); return n })
+    }
+  }
+
+  // Open add task modal, pre-filling due date when coming from UpcomingView
+  function openAddTask(dueDate?: string) {
+    setAddTaskDueDate(dueDate)
+    setShowAddTask(true)
+  }
+
   return (
     <>
       <div className="min-h-full bg-slate-50 dark:bg-slate-950">
         {/* Top bar */}
         <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
           <div className="px-6 py-3 flex items-center justify-between gap-3">
-            <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">All Tasks</h1>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="text-slate-400 tabular-nums">
-                {filtered.length} tasks · {formatMinutes(totalMinutes)}
-              </span>
+            {/* View toggle */}
+            <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
               <button
-                onClick={() => setShowAddTask(true)}
+                onClick={() => setView('list')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  view === 'list'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                ☰ List
+              </button>
+              <button
+                onClick={() => setView('upcoming')}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  view === 'upcoming'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                📅 Upcoming
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs">
+              {view === 'list' && (
+                <span className="text-slate-400 tabular-nums">
+                  {filtered.length} tasks · {formatMinutes(totalMinutes)}
+                </span>
+              )}
+              <button
+                onClick={() => openAddTask()}
                 className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity text-xs"
               >
                 + Add task
@@ -92,6 +175,20 @@ export default function TaskList({ tasks, projects }: Props) {
           </div>
         </header>
 
+        {/* ── Upcoming view ── */}
+        {view === 'upcoming' && (
+          <UpcomingView
+            tasks={tasks}
+            events={events}
+            projectFilter={projectFilter}
+            doneIds={doneIds}
+            onTaskClick={t => setDetailTask({ ...t, project: t.project ?? INBOX_PROJECT })}
+            onTaskDone={(task, e) => handleDone(task, e)}
+            onAddTask={dueDate => openAddTask(dueDate)}
+          />
+        )}
+
+        {view === 'list' && (
         <div className="px-6 py-4">
           {/* Filters */}
           <div className="flex items-center gap-2 mb-5 flex-wrap">
@@ -144,10 +241,10 @@ export default function TaskList({ tasks, projects }: Props) {
                   onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                   className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
                 >
-                  {/* Done button */}
+                  {/* Done button — colored by priority */}
                   <button
                     onClick={e => handleDone(task, e)}
-                    className="w-4 h-4 rounded-full border-2 border-slate-200 dark:border-slate-700 shrink-0 hover:border-teal-500 dark:hover:border-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950 transition-all mt-0.5"
+                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
                     title="Mark done"
                   />
 
@@ -158,9 +255,16 @@ export default function TaskList({ tasks, projects }: Props) {
                       {task.type === 'someday' && (
                         <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded font-medium">someday</span>
                       )}
-                      {task.type === 'recurring' && (
-                        <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium">↻</span>
-                      )}
+                      {task.type === 'recurring' && (() => {
+                        const streak = streaks[task.id]
+                        return (
+                          <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
+                            ↻{streak && streak.current_streak > 0 && (
+                              <span className="ml-0.5">{streak.current_streak >= 7 ? '🔥' : '·'}{streak.current_streak}</span>
+                            )}
+                          </span>
+                        )
+                      })()}
                     </div>
                     <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
                       {(() => {
@@ -203,7 +307,71 @@ export default function TaskList({ tasks, projects }: Props) {
               </div>
             )}
           </div>
+
+          {/* ── Habits section ── */}
+          {habits.length > 0 && (
+            <div className="mt-6">
+              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">
+                Habits
+              </h2>
+              <div className="flex flex-col gap-1.5">
+                {habits.map(task => {
+                  const streak = streaks[task.id]
+                  const isPending = pendingHabitIds.has(task.id)
+                  return (
+                    <div
+                      key={task.id}
+                      onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+                      className="group bg-white dark:bg-slate-900 border border-violet-100 dark:border-violet-900/50 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-violet-200 dark:hover:border-violet-800 hover:shadow-sm transition-all cursor-pointer"
+                    >
+                      {/* One-tap done button */}
+                      <button
+                        onClick={e => handleHabitDone(task, e)}
+                        disabled={isPending}
+                        className={`w-5 h-5 rounded-full border-2 shrink-0 transition-all mt-0.5 flex items-center justify-center ${
+                          isPending
+                            ? 'border-violet-300 dark:border-violet-700 bg-violet-100 dark:bg-violet-900'
+                            : 'border-violet-300 dark:border-violet-700 hover:bg-violet-500 hover:border-violet-500'
+                        }`}
+                        title="Log habit"
+                      >
+                        {isPending && <span className="text-violet-500 text-xs">…</span>}
+                      </button>
+
+                      {/* Name + frequency */}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.title}</span>
+                        {task.rrule && (
+                          <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
+                        )}
+                      </div>
+
+                      {/* Streak */}
+                      <div className="shrink-0 text-right">
+                        {streak && streak.current_streak > 0 ? (
+                          <>
+                            <div className="flex items-baseline gap-0.5 justify-end">
+                              <span className="text-lg font-bold font-mono tabular-nums text-violet-600 dark:text-violet-400 leading-none">
+                                {streak.current_streak}
+                              </span>
+                              {streak.current_streak >= 7 && <span className="text-sm">🔥</span>}
+                            </div>
+                            <p className="text-xs text-violet-400 dark:text-violet-500">
+                              {streak.current_streak === 1 ? 'day' : 'days'}
+                            </p>
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
+        )}
       </div>
 
       {/* Micro-reflection modal */}
@@ -220,6 +388,8 @@ export default function TaskList({ tasks, projects }: Props) {
         <TaskDetail
           task={detailTask}
           projects={projects}
+          streak={streaks[detailTask.id] ?? null}
+          gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => setDetailTask(null)}
         />
       )}
@@ -228,8 +398,9 @@ export default function TaskList({ tasks, projects }: Props) {
       {showAddTask && (
         <AddTaskModal
           projects={projects}
-          onClose={() => setShowAddTask(false)}
-          onCreated={() => setShowAddTask(false)}
+          initialDueDate={addTaskDueDate}
+          onClose={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
+          onCreated={() => { setShowAddTask(false); setAddTaskDueDate(undefined) }}
         />
       )}
     </>

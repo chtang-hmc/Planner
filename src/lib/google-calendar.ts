@@ -111,6 +111,92 @@ export async function syncCalendarEvents(): Promise<number> {
   return rows.length
 }
 
+// ── Write: task time blocks ───────────────────────────────────────────────────
+
+const PRIORITY_COLOR_ID: Record<number, string> = {
+  4: '11', // red   — Tomato
+  3: '5',  // orange — Banana (closest)
+  2: '1',  // blue  — Lavender
+  1: '8',  // grey  — Graphite
+}
+
+/**
+ * Create a "Focus: <title>" event in the user's primary calendar.
+ * Returns the new GCal event id to store on the task.
+ */
+export async function createTaskBlock(
+  accessToken: string,
+  task: { title: string; description?: string | null; priority: number },
+  startISO: string,
+  endISO: string,
+): Promise<string> {
+  const body = {
+    summary:     `🎯 ${task.title}`,
+    description: task.description ?? undefined,
+    colorId:     PRIORITY_COLOR_ID[task.priority] ?? '8',
+    start: { dateTime: startISO },
+    end:   { dateTime: endISO },
+  }
+
+  const res = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+    {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  )
+
+  if (!res.ok) throw new Error(`GCal createEvent ${res.status}: ${await res.text()}`)
+  const data = await res.json()
+  return data.id as string
+}
+
+/**
+ * Update the start/end time of an existing task block.
+ */
+export async function updateTaskBlock(
+  accessToken: string,
+  gcalEventId: string,
+  startISO: string,
+  endISO: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${gcalEventId}`,
+    {
+      method:  'PATCH',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ start: { dateTime: startISO }, end: { dateTime: endISO } }),
+    },
+  )
+  if (!res.ok) throw new Error(`GCal updateEvent ${res.status}: ${await res.text()}`)
+}
+
+/**
+ * Delete a task block from GCal. Silently ignores 404 (already deleted).
+ */
+export async function deleteTaskBlock(
+  accessToken: string,
+  gcalEventId: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${gcalEventId}`,
+    {
+      method:  'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  )
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    throw new Error(`GCal deleteEvent ${res.status}: ${await res.text()}`)
+  }
+}
+
 /** Fetch events from the user's primary calendar in a ±7 / +30 day window. */
 export async function fetchCalendarEvents(accessToken: string): Promise<GCalEvent[]> {
   const timeMin = new Date()

@@ -58,7 +58,7 @@ function ConnectPrompt() {
       </p>
       <a
         href="/api/auth/google"
-        className="inline-block px-4 py-2 rounded-xl bg-teal-500 text-white text-xs font-semibold hover:bg-teal-600 transition-colors"
+        className="inline-block px-4 py-2 rounded-xl bg-accent-500 text-white text-xs font-semibold hover:bg-accent-600 transition-colors"
       >
         Connect Calendar
       </a>
@@ -107,7 +107,7 @@ export default function CalendarPanel({ events, connected }: Props) {
               onClick={handleSync}
               disabled={isPending}
               title="Sync now"
-              className="p-1 rounded text-slate-400 hover:text-teal-500 disabled:opacity-40 transition-colors text-xs"
+              className="p-1 rounded text-slate-400 hover:text-accent-500 disabled:opacity-40 transition-colors text-xs"
             >
               {isPending ? '…' : '↺'}
             </button>

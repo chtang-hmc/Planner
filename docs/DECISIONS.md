@@ -11,9 +11,14 @@
 3. [Auth](#auth)
 4. [Urgency Scoring](#urgency-scoring)
 5. [Focus Timer](#focus-timer)
-6. [Google Calendar Sync](#google-calendar-sync)
-7. [Server / Client Component Split](#server--client-component-split)
-8. [Planned Features (schema-ready, UI pending)](#planned-features)
+6. [Google Calendar Sync & Write Access](#google-calendar-sync--write-access)
+7. [Recurring Tasks & Habits](#recurring-tasks--habits)
+8. [Habits Page](#habits-page)
+9. [Subtasks / Checklists](#subtasks--checklists)
+10. [Inline Search](#inline-search)
+11. [Drag-to-Reschedule](#drag-to-reschedule)
+12. [Priority-Colored Circles](#priority-colored-circles)
+13. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -28,9 +33,9 @@
 | Database | Supabase (PostgreSQL) | latest | Hosted Postgres, built-in Auth, RLS, `pg_cron` extension |
 | DB client | `@supabase/supabase-js` + `@supabase/ssr` | 2.116 / 0.12 | `@supabase/ssr` provides session-aware clients for RSC + Route Handlers |
 | Auth | Supabase Auth — Google OAuth | — | No magic links; Google OAuth is the only provider (see [Auth](#auth)) |
-| Google APIs | `googleapis` | 180.x | Calendar token exchange; `google-calendar.ts` wraps the raw REST calls |
+| Google APIs | Raw `fetch` against Google REST API | — | No `googleapis` SDK — avoids a large dependency; token exchange + Calendar API calls are straightforward with raw fetch |
 | AI | `@anthropic-ai/sdk` | 0.125 | Claude API for natural-language task parsing (quick-add) |
-| Recurrence | `rrule` | 2.8.1 | iCal RRULE parsing; schema column exists, UI not yet built |
+| Recurrence | `rrule` | 2.8.1 | iCal RRULE parsing and next-occurrence computation |
 | Scheduled jobs | `pg_cron` (Supabase extension) | — | Nightly urgency recompute + energy pattern rollup |
 
 ### Next.js 16 specifics
@@ -55,13 +60,19 @@ Server Actions use `createServiceClient()` because they run in trusted server co
 
 ### Row Level Security
 
-RLS is enabled on every table. The current policy is trivially permissive for authenticated users (`using (true)`) because this is a single-user app. If multi-user support is added, policies need `user_id` columns and per-row checks.
+RLS is enabled on every table. The current policy is trivially permissive for authenticated users (`using (true)`) because this is a single-user app — data isolation is enforced at the **application layer** instead:
+
+- `ALLOWED_EMAIL` env var in `.env.local` (and production env) contains the owner's email.
+- `src/proxy.ts` checks `user.email !== process.env.ALLOWED_EMAIL` on every request and redirects to `/403` if someone else logs in.
+- The `/403` page signs the intruder out and shows an access-denied message.
+
+If multi-user support is ever needed, the right path is: add `user_id uuid references auth.users(id)` to every table, change RLS policies to `using (auth.uid() = user_id)`, and update all service-role queries to insert the user id. The `ALLOWED_EMAIL` gate can then be removed.
 
 ### Schema overview
 
 ```
 projects          — colour-coded workspaces
-tasks             — core entity; urgency_score, rrule, parent_id, etc.
+tasks             — core entity; urgency_score, rrule, parent_id, gcal_event_id, scheduled_start/end
 focus_sessions    — per-timer-run log; estimate_accurate + blocker_note from reflection
 estimation_profiles — per-project bias_ratio (actual ÷ estimated, running average)
 energy_logs       — manual 1–5 energy check-ins
@@ -72,10 +83,22 @@ weekly_reviews    — one row per Monday; completed/postponed counts + notes
 user_integrations — server-side OAuth tokens (Google Calendar); never sent to client
 ```
 
+#### Scheduling columns on `tasks`
+
+```sql
+ALTER TABLE tasks
+  ADD COLUMN gcal_event_id   TEXT,         -- Google Calendar event id for the focus block
+  ADD COLUMN scheduled_start TIMESTAMPTZ,  -- start of the blocked focus window
+  ADD COLUMN scheduled_end   TIMESTAMPTZ;  -- end of the blocked focus window
+```
+
+These are null until the user explicitly blocks time from TaskDetail. `gcal_event_id` is the stable GCal event id; if the user moves or deletes the block from Google Calendar directly, the DB fields become stale (no webhook sync yet — planned).
+
 ### Migrations
 
 - `0001_initial_schema.sql` — full schema + `recompute_urgency_scores()` + `recompute_energy_patterns()` PL/pgSQL functions + RLS policies
 - `0002_nullable_project_id.sql` — made `tasks.project_id` nullable so tasks can live in an "Inbox" (no project assigned)
+- `0003_scheduling_columns.sql` — added `gcal_event_id`, `scheduled_start`, `scheduled_end` to `tasks`
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -96,9 +119,8 @@ Urgency is also recomputed immediately in `updateTask()` when a urgency-affectin
 **Provider: Google OAuth only** (no magic links, no email/password).
 
 - **Why Google-only?** The app already needs a Google OAuth client for Calendar sync. Re-using the same provider avoids a second consent screen. Magic links require an email provider; not worth the complexity for a single-user tool.
-- **Not free?** Google OAuth is free. The Google Cloud Console OAuth client costs nothing as long as it stays in "Testing" mode (or gets verified).
 - Supabase Auth handles the token lifecycle. The OAuth callback at `/auth/callback` exchanges the code for a session using `createClient()` (the session-aware helper — never the service-role client here, since the purpose is to set the user cookie).
-- The Google OAuth credentials for **Calendar** are separate env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) from the Supabase dashboard credentials. They're stored in `.env.local` only.
+- The Google OAuth credentials for **Calendar** are separate env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) from the Supabase dashboard credentials. They can be the same Google Cloud project.
 
 ### Login flow
 
@@ -191,17 +213,19 @@ AppLayout (Server Component)
 
 `TimerShell` is the bridge pattern for mounting a client context inside a Server Component layout.
 
-### Known caveat
-
-`FloatingTimer` stays mounted across route navigations (because it's in the root layout). Local state (`finishing`) is therefore long-lived. A `useEffect` resets it to `false` whenever `phase` returns to `idle` — without this, the next session would immediately render the reflection panel.
-
 ---
 
-## Google Calendar Sync
+## Google Calendar Sync & Write Access
 
 ### OAuth separation
 
 The Google OAuth client used for **Supabase Auth** (login) is configured in the Supabase dashboard. The Google OAuth client used for **Calendar API** is in `.env.local` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`). They can be the same Google Cloud project, but they're configured in two places.
+
+### Scope
+
+`https://www.googleapis.com/auth/calendar.events` — grants read + create/edit/delete for calendar events. This is a superset of `calendar.readonly` for event access, so it covers both syncing and writing focus blocks.
+
+Previously the scope was `calendar.readonly`. If a user connected under the old scope, the Settings page detects it from the stored `scopes` array and shows an **Upgrade access** button that re-triggers the OAuth flow.
 
 ### Token storage
 
@@ -211,17 +235,159 @@ Tokens are stored in `user_integrations` (server-side only). The service-role cl
 
 `getValidToken()` in `src/lib/google-calendar.ts` checks if the access token expires within 60 seconds and refreshes proactively. Refresh uses the `refresh_token` from `user_integrations` against `https://oauth2.googleapis.com/token`.
 
-### Sync function placement
+### Sync (read)
 
 `syncCalendarEvents()` lives in `src/lib/google-calendar.ts` (not in the API route). This means both the Route Handler (`POST /api/calendar/sync`) and the Server Action (`triggerCalendarSync`) can call it directly, avoiding HTTP self-calls that fail in serverless environments when `NEXT_PUBLIC_SITE_URL` is unset.
 
-### All-day events
+All-day event dates from the Google Calendar API are `YYYY-MM-DD` strings (no time). We append `T00:00:00Z` (UTC midnight) — **not** `T00:00:00` (local midnight). The distinction matters on any server not in UTC.
 
-All-day event dates from the Google Calendar API are `YYYY-MM-DD` strings (no time). We append `T00:00:00Z` (UTC midnight) when converting to `timestamptz` — **not** `T00:00:00` (local midnight). The distinction matters on any server not in UTC.
+The query fetches events where `end_time >= now()`, which correctly includes in-progress events.
 
-### Calendar display cutoff
+### Write: task focus blocks
 
-The query fetches events where `end_time >= now()`, which correctly includes in-progress events (e.g. a meeting that started 30 minutes ago). The CalendarPanel client-side filter uses the same `end_time >= now()` logic.
+Three functions in `src/lib/google-calendar.ts`:
+
+| Function | GCal API call | Notes |
+|---|---|---|
+| `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low) |
+| `updateTaskBlock()` | `PATCH /calendars/primary/events/:id` | Updates start/end only |
+| `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
+
+Server actions `scheduleTask(taskId, startISO, endISO)` and `unscheduleTask(taskId)` in `src/app/actions/calendar.ts` call these and write back `gcal_event_id`, `scheduled_start`, `scheduled_end` to the task row.
+
+If a task already has a `gcal_event_id`, `scheduleTask` patches the existing event rather than creating a duplicate.
+
+**No webhook sync yet.** If the user moves or deletes the GCal block from Google Calendar directly, the `scheduled_start/end` fields go stale. Planned: GCal push notifications to detect external changes.
+
+### UI
+
+- **Settings → Google Calendar section**: shows connection state (not connected / read-only / full access), Sync now, and Disconnect buttons.
+- **TaskDetail → Schedule section**: when GCal write is enabled, shows start/end datetime pickers. Start auto-advances end by the task's `estimated_minutes` (defaults to 60 min). Submitting calls `scheduleTask`; existing blocks show a summary + "Remove block" button.
+
+---
+
+## Recurring Tasks & Habits
+
+### Data model
+
+- `tasks.rrule` — iCal RRULE string (e.g. `FREQ=WEEKLY;BYDAY=MO`), `null` for non-recurring tasks.
+- `tasks.type` — `'recurring'` when rrule is non-null; `'habit'` for habit-type tasks; `'task'` or `'someday'` otherwise.
+- `habit_streaks` — one row per recurring task id; tracks `current_streak`, `longest_streak`, `last_completed` (YYYY-MM-DD).
+
+### Completion flow
+
+When `completeTask()` is called on a task with an `rrule` or `type === 'habit'`:
+
+1. The task is marked `status: 'done'` as usual.
+2. The **next occurrence is anchored from `task.due_date`**, not from today. This prevents early completions from re-spawning the same occurrence date. E.g. completing "Weekly Review" (due Sep 20) on Sep 14 → next spawns Sep 27, not Sep 20.
+3. `getNextOccurrence(rrule, anchor)` computes the date strictly after the anchor using the `rrule` library.
+4. For **anytime habits** (`rrule` is null, `type === 'habit'`): next occurrence spawns for tomorrow so the card reappears daily.
+5. A new task row is inserted with the same title/project/priority/energy/estimate/rrule, `status: 'inbox'`, and `due_date` set to the next occurrence.
+6. `habit_streaks` is upserted: consecutive completion (last_completed === yesterday) increments the streak; otherwise resets to 1.
+
+### Why anchor from `due_date`, not `today`?
+
+The previous implementation passed `today` to `getNextOccurrence()`, which caused a bug: completing a recurring task before its due date would spawn the next occurrence at the same due date (e.g. completing a weekly task on Wednesday with a Sunday due date would schedule the next occurrence for the coming Sunday — which is still in the future, so the completed task effectively re-appeared immediately). Anchoring from `due_date` means "next after this occurrence" regardless of when you complete it.
+
+### Why "spawn a new row" instead of updating in-place?
+
+Keeping completed instances as `status: 'done'` rows lets analytics queries (focus session history, estimation accuracy, streak counting) see the full history. A recurring task that updates its own `due_date` in-place loses the historical record.
+
+### UI
+
+- `src/lib/rrule-utils.ts` — `PRESETS` array, `rruleToPreset()`, `rruleToLabel()`, `getNextOccurrence()`.
+- `src/components/RecurrencePicker.tsx` — grid of preset buttons (No repeat / Daily / Weekdays / Mon–Sun / Monthly).
+- Task list shows a `↻` violet badge on tasks whose `type === 'recurring'`.
+
+---
+
+## Habits Page
+
+### Route
+
+`/habits` — dedicated page separate from `/tasks`.
+
+### Data model
+
+Habits are `tasks` rows with `type = 'habit'`. There is no separate habits table. Each day's completion is tracked as a completed task row; the next occurrence is spawned on completion (see [Recurring Tasks & Habits](#recurring-tasks--habits)).
+
+### Completion calendar grouping
+
+Each habit occurrence is a separate task row with a new ID. Linking completions to a logical habit requires grouping by `title` (not by ID). The 16-week heatmap queries `completed_at` + `title` and builds a `Record<string, string[]>` (title → sorted dates). This is a trade-off: renaming a habit breaks its history. Acceptable for a personal tool.
+
+### "Anytime" habits
+
+Habits like "gym" or "reading" don't have a fixed day of week. Setting `rrule = null` on a habit makes it an "anytime" habit:
+
+- The add-habit flow no longer auto-sets `FREQ=DAILY` when switching to Habit mode — the user explicitly sets a schedule or leaves it blank.
+- Anytime habits show `● Anytime` frequency label.
+- On completion, the next occurrence spawns for tomorrow (so the card reappears every day without needing an rrule).
+- The habits query filters to `due_date <= today` (or null), so tomorrow's spawned occurrence is hidden until then.
+
+### Done-today handling
+
+When a habit is completed for the day, it's moved to a "Done today" section (greyed, faded). The page query hides habits already due tomorrow (they've been re-spawned); `doneToday` IDs are passed as a prop so the client can optimistically move cards without waiting for a revalidation.
+
+---
+
+## Subtasks / Checklists
+
+### Data model
+
+`tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
+
+### Why not a separate table?
+
+`parent_id` was already in the schema. Reusing the `tasks` table means subtasks automatically get all the same columns (status, title, timestamps) without a migration. The trade-off is that subtasks have irrelevant fields (urgency_score, energy_required, etc.) that are never used.
+
+### Server actions
+
+`getSubtasks(taskId)`, `createSubtask(taskId, title)`, `toggleSubtask(id, done)`, `deleteSubtask(id)` — all in `src/app/actions/tasks.ts`. The SubtaskSection component in TaskDetail handles optimistic updates locally and refreshes from the server after each write.
+
+---
+
+## Inline Search
+
+### Approach
+
+When the search bar was initially built, it used a dropdown/modal overlay showing matched results. This was rejected in favour of **live-filtering the existing list in place** — no overlay, no separate results view.
+
+### Implementation
+
+`SearchContext` (`src/contexts/SearchContext.tsx`) holds a single `query` string. The `TopSearchBar` component writes to it; `TaskList` and `UpcomingView` read from it and filter `activeTasks` before rendering. Context is provided at the app layout level via `SearchProvider` in `src/components/Providers.tsx`.
+
+The search matches against `task.title` and `task.description` (case-insensitive substring). Pressing Escape clears the query and blurs the input; `⌘K` focuses it from anywhere.
+
+---
+
+## Drag-to-Reschedule
+
+### Approach
+
+HTML5 Drag and Drop API — no external library. Tasks in `UpcomingView` have a `draggable` attribute and a `⠿` grip handle that appears on hover (left of the done button). Day sections are drop zones.
+
+### Optimistic update
+
+On drop, `rescheduled` state (`Record<string, string>`) is updated immediately, overriding the task's `due_date` in the rendered list before the server action resolves. `updateTask(taskId, { due_date: newDateISO })` persists the change.
+
+### Recurring tasks
+
+Each occurrence is its own DB row. Dragging moves only that occurrence's `due_date`; the next spawned occurrence is unaffected. This is the correct behaviour: rescheduling "this week's review" doesn't shift future weeks.
+
+---
+
+## Priority-Colored Circles
+
+The done/complete button circle in every task list view is colored by priority:
+
+| Priority | Color |
+|---|---|
+| 4 — Critical | Red border + red tint background |
+| 3 — High | Orange border + orange tint |
+| 2 — Medium | Blue border + blue tint |
+| 1 — Low | Slate/white border (neutral) |
+
+`priorityCircleClass(priority)` is a local helper in each view file (`TaskList`, `UpcomingView`, `ProjectDetailView`). It's intentionally co-located rather than shared via a utility, because the exact class set is tightly coupled to each component's hover states.
 
 ---
 
@@ -246,28 +412,3 @@ import { updateTask } from '@/app/actions/tasks'
 ### Quick-add parsing (Claude API)
 
 Natural-language task input is parsed server-side via `@anthropic-ai/sdk`. The result (`ParsedQuickAdd`) includes `title`, `due_date`, `estimated_minutes`, `energy_required`, `project_hint`, and `is_calendar_event`. The Claude call happens in a Server Action so the API key never reaches the client.
-
----
-
-## Planned Features
-
-These are schema-ready but have no UI yet. Implement them without a migration.
-
-### Energy logging
-
-- Table: `energy_logs` (level 1–5, optional task_id)
-- Nightly rollup: `recompute_energy_patterns()` (pg_cron, already scheduled)
-- UI needed: quick-log button (sidebar or floating chip); analytics heatmap
-
-### Recurring tasks
-
-- Column: `tasks.rrule` (iCal RRULE string, e.g. `FREQ=WEEKLY;BYDAY=MO`)
-- Library: `rrule` (already installed)
-- Logic needed: on task completion, compute next occurrence date and insert a new task row with the same template fields
-- Table: `habit_streaks` (current/longest streak per recurring task_id)
-
-### Subtasks
-
-- Column: `tasks.parent_id` (self-referential FK, cascade delete)
-- UI needed: subtask list in TaskDetail; "add subtask" input; collapse/expand
-- Query: `tasks.select('*, subtasks:tasks!parent_id(*)')` for nested fetch

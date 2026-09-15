@@ -1,7 +1,7 @@
 'use client'
 
-import { AnalyticsData } from './page'
-import { Project, EstimationProfile } from '@/types'
+import { AnalyticsData, DailyEnergy } from './page'
+import { Project, EstimationProfile, EnergyPattern } from '@/types'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ function ProjectWorkload({ stats }: {
                   <div className="flex items-center gap-3 text-xs text-slate-400 tabular-nums">
                     <span>{activeCount} active</span>
                     <span className="font-mono">{formatMinutes(estimatedMinutes)}</span>
-                    <span className="text-teal-500 dark:text-teal-400">{donePct}% done</span>
+                    <span className="text-accent-500 dark:text-accent-400">{donePct}% done</span>
                   </div>
                 </div>
                 <div className="h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
@@ -238,7 +238,7 @@ function AccuracyDonut({ accurate, inaccurate }: { accurate: number; inaccurate:
           </svg>
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-teal-500 shrink-0" />
+              <span className="w-2.5 h-2.5 rounded-full bg-accent-500 shrink-0" />
               <span className="text-slate-600 dark:text-slate-400">{accurate} accurate</span>
             </div>
             <div className="flex items-center gap-2">
@@ -255,12 +255,162 @@ function AccuracyDonut({ accurate, inaccurate }: { accurate: number; inaccurate:
   )
 }
 
+// ── Energy level colours (1–5) ────────────────────────────────────────────────
+
+const ENERGY_COLORS = [
+  '',           // unused index 0
+  '#94a3b8',   // 1 — exhausted, slate
+  '#fb923c',   // 2 — low, orange
+  '#fbbf24',   // 3 — okay, amber
+  '#34d399',   // 4 — good, emerald
+  '#14b8a6',   // 5 — energized, teal
+]
+
+const ENERGY_LABELS = ['', '😴 Exhausted', '😔 Low', '😐 Okay', '😊 Good', '⚡ Energized']
+
+// ── Rolling 7-day bar chart ───────────────────────────────────────────────────
+
+function EnergyRecentChart({ days }: { days: DailyEnergy[] }) {
+  // Fill in missing days so we always show 7 bars
+  const filled: (DailyEnergy | null)[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i))
+    const key = d.toISOString().slice(0, 10)
+    return days.find(e => e.date === key) ?? null
+  })
+
+  function dayLabel(offset: number) {
+    if (offset === 6) return 'Today'
+    if (offset === 5) return 'Yday'
+    const d = new Date(); d.setDate(d.getDate() - (6 - offset))
+    return d.toLocaleDateString('en-US', { weekday: 'short' })
+  }
+
+  const hasAny = filled.some(Boolean)
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Energy — last 7 days</h3>
+      <p className="text-xs text-slate-400 mb-4">Average self-reported level per day (1–5)</p>
+      {!hasAny ? (
+        <p className="text-sm text-slate-400 italic text-center py-6">
+          Log your energy from the sidebar to see trends here
+        </p>
+      ) : (
+        <div className="flex items-end gap-2 h-28">
+          {filled.map((entry, i) => {
+            const avg = entry?.avg ?? 0
+            const pct = avg / 5
+            const color = avg > 0 ? ENERGY_COLORS[Math.round(avg)] : undefined
+            return (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1.5" title={entry ? `${ENERGY_LABELS[Math.round(avg)]} · ${entry.count} log${entry.count !== 1 ? 's' : ''}` : 'No logs'}>
+                <span className="text-[10px] font-semibold tabular-nums text-slate-400">
+                  {entry ? avg.toFixed(1) : ''}
+                </span>
+                <div
+                  className="w-full rounded-t-md transition-all"
+                  style={{
+                    height: `${Math.max(pct * 80, entry ? 4 : 0)}px`,
+                    background: color ?? 'transparent',
+                    border: !entry ? '1px dashed #cbd5e1' : undefined,
+                  }}
+                />
+                <span className="text-[10px] text-slate-400">{dayLabel(i)}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Time-of-day heatmap ───────────────────────────────────────────────────────
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const HOURS = Array.from({ length: 18 }, (_, i) => i + 6)   // 6 AM → 11 PM
+
+function levelColor(level: number, dark = false): string {
+  if (level <= 0) return dark ? '#1e293b' : '#f1f5f9'    // empty cell
+  const idx = Math.round(Math.min(Math.max(level, 1), 5))
+  return ENERGY_COLORS[idx]
+}
+
+function EnergyHeatmap({ patterns }: { patterns: EnergyPattern[] }) {
+  // Build a lookup: patternMap[day][hour] = pattern
+  const map: Record<number, Record<number, EnergyPattern>> = {}
+  for (const p of patterns) {
+    if (!map[p.day_of_week]) map[p.day_of_week] = {}
+    map[p.day_of_week][p.hour_of_day] = p
+  }
+
+  const hasData = patterns.length > 0
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Energy by time of day</h3>
+      <p className="text-xs text-slate-400 mb-4">
+        {hasData
+          ? 'Average energy level by hour and day (based on 90-day rolling window)'
+          : 'Computed nightly — check back tomorrow after logging today'}
+      </p>
+      {!hasData ? (
+        <p className="text-sm text-slate-400 italic text-center py-6">
+          No patterns yet — keep logging to build your heatmap
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <div className="min-w-[480px]">
+            {/* Hour labels */}
+            <div className="flex gap-px ml-8 mb-1">
+              {HOURS.map(h => (
+                <div key={h} className="flex-1 text-center text-[9px] text-slate-400 tabular-nums">
+                  {h % 3 === 0 ? `${h > 12 ? h - 12 : h}${h >= 12 ? 'p' : 'a'}` : ''}
+                </div>
+              ))}
+            </div>
+            {/* Grid */}
+            {DAYS.map((day, dow) => (
+              <div key={dow} className="flex items-center gap-px mb-px">
+                <span className="w-8 text-[10px] text-slate-400 shrink-0">{day}</span>
+                {HOURS.map(h => {
+                  const p = map[dow]?.[h]
+                  const level = p?.avg_level ?? 0
+                  return (
+                    <div
+                      key={h}
+                      className="flex-1 h-5 rounded-sm transition-colors"
+                      style={{ background: levelColor(level) }}
+                      title={p
+                        ? `${day} ${h}:00 — ${ENERGY_LABELS[Math.round(level)]} (avg ${level.toFixed(1)}, ${p.sample_count} samples)`
+                        : `${day} ${h}:00 — no data`}
+                    />
+                  )
+                })}
+              </div>
+            ))}
+            {/* Legend */}
+            <div className="flex items-center gap-2 mt-3 justify-end">
+              {[1, 2, 3, 4, 5].map(v => (
+                <div key={v} className="flex items-center gap-1">
+                  <div className="w-3 h-3 rounded-sm" style={{ background: ENERGY_COLORS[v] }} />
+                  <span className="text-[9px] text-slate-400">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export default function AnalyticsView({ data }: { data: AnalyticsData }) {
   const {
     activeCount, doneCount, totalEstMinutes, avgUrgency,
     urgencyBuckets, projectStats, accurateSessions, inaccurateSessions,
+    recentEnergy, energyPatterns,
   } = data
 
   const urgencyColor =
@@ -281,7 +431,7 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Active tasks" value={activeCount} />
-          <StatCard label="Done" value={doneCount} sub="all time" accent="text-teal-500 dark:text-teal-400" />
+          <StatCard label="Done" value={doneCount} sub="all time" accent="text-accent-500 dark:text-accent-400" />
           <StatCard label="Est. remaining" value={formatMinutes(totalEstMinutes)} />
           <StatCard
             label="Avg urgency"
@@ -302,6 +452,10 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
           <AccuracyDonut accurate={accurateSessions} inaccurate={inaccurateSessions} />
           <BiasChart stats={projectStats} />
         </div>
+
+        {/* Energy */}
+        <EnergyRecentChart days={recentEnergy} />
+        <EnergyHeatmap patterns={energyPatterns} />
 
       </div>
     </div>
