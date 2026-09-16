@@ -748,6 +748,16 @@ The rows were redesigned first; the chrome around them followed, in the same lan
 
 `TaskChrome.tsx` exists so these can be rendered against fixtures at `/auth/design` — the app can't be opened in a browser without a session, and a redesign you can't look at is one you're guessing at.
 
+### Upcoming uses the same rows
+
+Upcoming had its own `TaskRow`, so switching between List and Upcoming changed what a task looked like. It now renders the selected layout too.
+
+**`Row` without `Shell`.** A day section is already a bordered card; nesting a layout's own container inside it would double the border, and Ledger would grow a column header per day. The day supplies the dividers instead.
+
+**Horizontal padding moved from the row to the shell.** Airy bled its hover highlight outside its own box with `-mx-3`, which works in a container-less list and gets clipped by a day card's `overflow-hidden`. The row now carries its padding and the shell cancels it, so a standalone list still sits flush with the page and a row dropped into any container behaves.
+
+**Dragging wraps the row rather than living inside it.** It is specific to this view, and putting it in `TaskRowProps` would mean building a drag handle four times for one caller. The row-level drag handle is gone; the whole row is the grip.
+
 ### What all four dropped
 
 - **The urgency score and curve glyph** (`67`, `╱ ⌒ ⌐`). An internal model leaking into the UI — nobody acts on "67". It stays on the task detail panel.

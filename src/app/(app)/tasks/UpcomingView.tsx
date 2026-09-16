@@ -1,21 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef, useTransition } from 'react'
-import { Task, Project, CalendarEvent, INBOX_PROJECT } from '@/types'
+import { useState, useEffect, useRef, useTransition, useSyncExternalStore } from 'react'
+import { Task, Project, CalendarEvent } from '@/types'
 import { daysSinceWeekStart } from '@/lib/week'
 import { useSearch } from '@/contexts/SearchContext'
 import { updateTask } from '@/app/actions/tasks'
-
-// ── Priority circle ───────────────────────────────────────────────────────────
-
-function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
-  switch (priority) {
-    case 4: return 'border-red-400    bg-red-50    dark:bg-red-950/40    hover:bg-red-100    dark:hover:bg-red-900/50'
-    case 3: return 'border-orange-400 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/50'
-    case 2: return 'border-blue-400   bg-blue-50   dark:bg-blue-950/40   hover:bg-blue-100   dark:hover:bg-blue-900/50'
-    case 1: return 'border-slate-200  bg-white     dark:bg-slate-900     dark:border-slate-700 hover:border-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950'
-  }
-}
+import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
+import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -128,6 +119,15 @@ export default function UpcomingView({
   const [, startTransition] = useTransition()
 
   const contentRef = useRef<HTMLDivElement>(null)
+
+  // Same layout the list view draws, read the same way — the server renders the
+  // default and the client swaps in the stored value without a mismatch.
+  const layoutId = useSyncExternalStore(
+    () => () => {},
+    () => getStoredTaskLayout(),
+    () => DEFAULT_TASK_LAYOUT,
+  )
+  const Layout = TASK_LAYOUT_IMPLS[layoutId]
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -299,33 +299,41 @@ export default function UpcomingView({
     return () => target.removeEventListener('scroll', update)
   }, [todayStr])
 
-  // ── Urgency dot ───────────────────────────────────────────────────────────
-
-  function urgencyDot(score: number) {
-    if (score >= 70) return 'bg-red-400'
-    if (score >= 40) return 'bg-amber-400'
-    return 'bg-slate-200 dark:bg-slate-700'
-  }
-
-  /** A day's rows: each parent, followed by its subtasks when unfolded. */
+  /**
+   * A day's rows: each parent, followed by its subtasks when unfolded.
+   *
+   * Drawn by the same layout the list view uses, so switching between List and
+   * Upcoming doesn't change what a task looks like. Only `Row` is used, not
+   * `Shell` — a day section is already a bordered container, and nesting the
+   * layout's own container inside it would double the border. The day supplies
+   * the dividers instead.
+   *
+   * Dragging wraps the row rather than living inside it: it's specific to this
+   * view, and pushing it into TaskRowProps would mean implementing a drag
+   * handle four times for one caller.
+   */
   function renderRows(list: (Task & { project: Project })[]) {
     return nest(list).flatMap(({ task, kids }) => {
       const open = expanded.has(task.id)
       return (open ? [task, ...kids] : [task]).map(t => (
-        <TaskRow
+        <div
           key={t.id}
-          task={t}
-          isChild={t.id !== task.id}
-          kidCount={t.id === task.id ? kids.length : 0}
-          collapsed={!open}
-          onToggle={() => toggleExpanded(task.id)}
-          onDone={e => onTaskDone(t, e)}
-          onClick={() => onTaskClick(t)}
-          urgencyDotClass={urgencyDot(t.urgency_score)}
-          isDragging={draggingId === t.id}
+          draggable
           onDragStart={e => handleDragStart(t.id, e)}
           onDragEnd={handleDragEnd}
-        />
+          className={`transition-opacity ${draggingId === t.id ? 'opacity-40' : ''}`}
+        >
+          <Layout.Row
+            task={t}
+            isChild={t.id !== task.id}
+            kidCount={t.id === task.id ? kids.length : 0}
+            collapsed={!open}
+            streak={null}
+            onToggleFold={() => toggleExpanded(task.id)}
+            onOpen={() => onTaskClick(t)}
+            onDone={e => onTaskDone(t, e)}
+          />
+        </div>
       ))
     })
   }
@@ -531,89 +539,6 @@ export default function UpcomingView({
         {/* Sentinel */}
         <div data-sentinel="true" className="h-4" />
       </div>
-    </div>
-  )
-}
-
-// ── Shared task row ───────────────────────────────────────────────────────────
-
-function TaskRow({
-  task, onDone, onClick, urgencyDotClass, isDragging, onDragStart, onDragEnd,
-  isChild = false, kidCount = 0, collapsed = true, onToggle,
-}: {
-  task: Task & { project: Project }
-  onDone: (e: React.MouseEvent) => void
-  onClick: () => void
-  urgencyDotClass: string
-  isDragging: boolean
-  onDragStart: (e: React.DragEvent) => void
-  onDragEnd: () => void
-  isChild?: boolean
-  kidCount?: number
-  collapsed?: boolean
-  onToggle?: () => void
-}) {
-  const proj = task.project ?? INBOX_PROJECT
-  return (
-    <div
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onClick={onClick}
-      className={`group flex items-center gap-2 py-2.5 pr-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-all ${
-        isChild ? 'pl-10' : 'pl-4'
-      } ${isDragging ? 'opacity-40 bg-slate-50 dark:bg-slate-800/50' : ''}`}
-    >
-      {/* Drag handle — visible on group hover */}
-      <span
-        className="opacity-0 group-hover:opacity-100 text-slate-300 dark:text-slate-600 select-none shrink-0 cursor-grab active:cursor-grabbing text-xs leading-none -ml-1 mr-0.5 transition-opacity"
-        onMouseDown={e => e.stopPropagation()} // prevent click handler from firing on handle
-      >
-        ⠿
-      </span>
-
-      {/* Fold toggle on a parent; bullet on a child; nothing otherwise */}
-      {isChild ? (
-        <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 select-none">•</span>
-      ) : kidCount > 0 ? (
-        <button
-          onClick={e => { e.stopPropagation(); onToggle?.() }}
-          title={collapsed ? `Show ${kidCount} subtask${kidCount !== 1 ? 's' : ''}` : 'Hide subtasks'}
-          className="w-3 shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
-        >
-          {collapsed ? '▶' : '▼'}
-        </button>
-      ) : null}
-
-      <button
-        onClick={e => { e.stopPropagation(); onDone(e) }}
-        className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm text-slate-800 dark:text-slate-200 font-medium leading-snug">{task.title}</span>
-          {task.type === 'recurring' && <span className="text-xs text-violet-400">↻</span>}
-        </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          <span
-            className="text-xs font-medium px-1.5 py-0.5 rounded"
-            style={{ background: proj.color + '18', color: proj.color }}
-          >
-            {proj.name}
-          </span>
-          {kidCount > 0 && collapsed && (
-            <span className="text-xs text-slate-400">
-              {kidCount} subtask{kidCount !== 1 ? 's' : ''}
-            </span>
-          )}
-          {task.estimated_minutes && (
-            <span className="text-xs text-slate-400 font-mono">
-              {task.estimated_minutes < 60 ? `${task.estimated_minutes}m` : `${Math.floor(task.estimated_minutes/60)}h`}
-            </span>
-          )}
-        </div>
-      </div>
-      <div className={`w-2 h-2 rounded-full shrink-0 ${urgencyDotClass}`} />
     </div>
   )
 }

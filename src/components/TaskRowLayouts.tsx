@@ -247,7 +247,10 @@ function LedgerRow(p: TaskRowProps) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function AiryShell({ children }: TaskListShellProps) {
-  return <div className="flex flex-col">{children}</div>
+  // -mx-3 cancels the row's own padding so a standalone list still aligns with
+  // the page. The bleed lives here, not on the row: Upcoming renders rows
+  // without a shell inside a day card that clips overflow.
+  return <div className="flex flex-col -mx-3">{children}</div>
 }
 
 function AiryRow(p: TaskRowProps) {
@@ -258,7 +261,7 @@ function AiryRow(p: TaskRowProps) {
   return (
     <div
       onClick={p.onOpen}
-      className="group flex items-start gap-3.5 py-3 -mx-3 px-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
+      className="group flex items-start gap-3.5 py-3 px-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
       style={{ marginLeft: p.isChild ? 24 : undefined }}
     >
       <span className="pt-1"><Fold {...p} onToggleFold={p.onToggleFold} /></span>
@@ -294,7 +297,9 @@ function AiryRow(p: TaskRowProps) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function EditorialShell({ children }: TaskListShellProps) {
-  return <div className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">{children}</div>
+  // Same reasoning as AiryShell: the row carries its padding, the shell cancels
+  // it so a standalone list sits flush with the page.
+  return <div className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800 -mx-4">{children}</div>
 }
 
 function EditorialRow(p: TaskRowProps) {
@@ -305,7 +310,7 @@ function EditorialRow(p: TaskRowProps) {
   return (
     <div
       onClick={p.onOpen}
-      className="group flex items-start gap-5 py-5 cursor-pointer"
+      className="group flex items-start gap-5 py-5 px-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
       style={{ marginLeft: p.isChild ? 28 : undefined }}
     >
       <div className="flex items-center gap-3 shrink-0 pt-1">
