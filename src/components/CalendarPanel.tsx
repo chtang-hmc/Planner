@@ -48,19 +48,18 @@ function eventDuration(e: CalendarEvent): string {
 
 function ConnectPrompt() {
   return (
-    <div className="flex flex-col items-center justify-center h-full py-12 px-4 text-center">
-      <div className="text-3xl mb-3">📅</div>
-      <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+    <div className="flex flex-col items-start justify-center h-full py-12 px-4">
+      <p className="text-[13px] font-medium text-slate-700 dark:text-slate-300 mb-1">
         Connect Google Calendar
       </p>
-      <p className="text-xs text-slate-400 dark:text-slate-500 mb-5 leading-relaxed">
+      <p className="text-[11px] text-slate-400 mb-4 leading-relaxed">
         See your events alongside tasks so you know when you have free focus time.
       </p>
       <a
         href="/api/auth/google"
-        className="inline-block px-4 py-2 rounded-xl bg-accent-500 text-white text-xs font-semibold hover:bg-accent-600 transition-colors"
+        className="inline-block px-3 h-7 leading-7 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-medium hover:opacity-80 transition-opacity"
       >
-        Connect Calendar
+        Connect
       </a>
     </div>
   )
@@ -96,28 +95,30 @@ export default function CalendarPanel({ events, connected }: Props) {
 
   return (
     <aside className="w-64 shrink-0 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col h-full">
-      {/* Header */}
-      <div className="px-4 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
-        <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
+      {/* Header — same micro-label as the Habits section, words not glyphs */}
+      <div className="group px-4 h-12 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           Calendar
         </span>
         {connected && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={handleSync}
               disabled={isPending}
               title="Sync now"
-              className="p-1 rounded text-slate-400 hover:text-accent-500 disabled:opacity-40 transition-colors text-xs"
+              className="text-[11px] font-medium px-1.5 h-6 rounded-lg text-slate-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors"
             >
-              {isPending ? '…' : '↺'}
+              {isPending ? 'Syncing…' : 'Sync'}
             </button>
+            {/* Destructive and rarely wanted: spelling it out made it louder
+                than Sync, so it waits for the pointer to be in the header. */}
             <button
               onClick={handleDisconnect}
               disabled={isPending}
-              title="Disconnect"
-              className="p-1 rounded text-slate-300 hover:text-red-400 disabled:opacity-40 transition-colors text-xs"
+              title="Disconnect Google Calendar"
+              className="text-[11px] font-medium px-1.5 h-6 rounded-lg text-slate-300 dark:text-slate-600 hover:text-red-500 disabled:opacity-40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all"
             >
-              ✕
+              Disconnect
             </button>
           </div>
         )}
@@ -129,41 +130,37 @@ export default function CalendarPanel({ events, connected }: Props) {
           <ConnectPrompt />
         ) : grouped.length === 0 ? (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm text-slate-400">No upcoming events</p>
+            <p className="text-[13px] text-slate-400">No upcoming events</p>
             {syncError && <p className="text-xs text-red-400 mt-2">{syncError}</p>}
           </div>
         ) : (
-          <div className="py-2">
+          <div className="pb-2">
             {syncError && (
               <p className="text-xs text-red-400 px-4 pb-2">{syncError}</p>
             )}
             {grouped.map(([dateStr, dayEvents]) => (
-              <div key={dateStr} className="mb-1">
-                {/* Day label */}
-                <div className="px-4 py-1.5 sticky top-0 bg-white dark:bg-slate-900 z-10">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-600">
+              <div key={dateStr}>
+                <div className="px-4 py-1.5 sticky top-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur z-10 flex items-baseline gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                     {formatDate(dayEvents[0].start_time)}
                   </span>
+                  <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                 </div>
-                {/* Events */}
-                {dayEvents.map(e => (
-                  <div
-                    key={e.id}
-                    className="mx-3 mb-1 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800"
-                  >
-                    <p className="text-xs font-medium text-slate-800 dark:text-slate-200 leading-snug">
-                      {e.title}
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5 tabular-nums">
-                      {formatTime(e.start_time, e.all_day)}
-                      {!e.all_day && eventDuration(e) && (
-                        <span className="ml-1.5 text-slate-300 dark:text-slate-600">
-                          · {eventDuration(e)}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                ))}
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {dayEvents.map(e => (
+                    <div key={e.id} className="px-4 py-2">
+                      <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100 leading-snug">
+                        {e.title}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+                        {formatTime(e.start_time, e.all_day)}
+                        {!e.all_day && eventDuration(e) && (
+                          <span className="text-slate-300 dark:text-slate-600"> · {eventDuration(e)}</span>
+                        )}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>

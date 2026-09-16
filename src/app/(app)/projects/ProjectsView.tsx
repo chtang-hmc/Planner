@@ -274,10 +274,18 @@ export default function ProjectsView({ projectDataList, allProjects }: Props) {
           </div>
         </header>
 
-        {/* Project cards */}
-        <div className="px-6 py-5 flex flex-col gap-4 max-w-2xl">
+        {/* Project cards
+            max-w-2xl with no mx-auto pinned everything to the left and left the
+            rest of the panel empty. Cards now fill the width and break into
+            columns as it grows — stretching one column to 1400px would "fill
+            the panel" and read worse than the 672px it replaced.
+
+            Two columns, not three: a card holds a project header, stats and a
+            task list, and it was laid out for ~672px. Three columns on a wide
+            monitor would put each one near 420px and crowd it. */}
+        <div className="px-6 py-5 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
           {projectDataList.length === 0 ? (
-            <div className="text-center py-20">
+            <div className="col-span-full text-center py-20">
               <p className="text-slate-400 text-sm mb-3">No projects yet.</p>
               <button
                 onClick={() => setShowNewProject(true)}

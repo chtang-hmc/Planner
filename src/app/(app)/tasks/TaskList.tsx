@@ -1,13 +1,12 @@
 'use client'
 
-import { useState, useTransition, useEffect } from 'react'
+import { useState, useTransition, useEffect, useSyncExternalStore } from 'react'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
 import { proposeSchedule, planDay, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { rruleToLabel } from '@/lib/rrule-utils'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
@@ -15,57 +14,11 @@ import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePr
 import DayPlanModal from '@/components/DayPlanModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
+import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
+import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
+import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
+import { formatMinutes, localDateStr } from '@/lib/task-format'
 
-const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
-const CURVE_ICON = { linear: '╱', exponential: '⌒', step: '⌐' }
-
-function urgencyColor(score: number) {
-  if (score >= 70) return 'text-red-500 dark:text-red-400'
-  if (score >= 40) return 'text-amber-500 dark:text-amber-400'
-  return 'text-slate-300 dark:text-slate-600'
-}
-
-/** Priority circle: colored border + subtle fill, white for low */
-function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
-  switch (priority) {
-    case 4: return 'border-red-400    bg-red-50    dark:bg-red-950/40    hover:bg-red-100    dark:hover:bg-red-900/50'
-    case 3: return 'border-orange-400 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/50'
-    case 2: return 'border-blue-400   bg-blue-50   dark:bg-blue-950/40   hover:bg-blue-100   dark:hover:bg-blue-900/50'
-    case 1: return 'border-slate-200  bg-white     dark:bg-slate-900     dark:border-slate-700 hover:border-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950'
-  }
-}
-
-function formatMinutes(m: number | null): string {
-  if (!m) return '—'
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60), rem = m % 60
-  return rem ? `${h}h ${rem}m` : `${h}h`
-}
-
-function localDateStr(d: Date) {
-  return d.getFullYear() + '-'
-    + String(d.getMonth() + 1).padStart(2, '0') + '-'
-    + String(d.getDate()).padStart(2, '0')
-}
-
-function formatDue(iso: string | null): { label: string; urgent: boolean } {
-  if (!iso) return { label: '', urgent: false }
-  // Compare calendar dates in LOCAL time to avoid "overdue" appearing for
-  // tasks due "today" once it's past midnight UTC but still today locally.
-  const taskDate  = iso.slice(0, 10)                        // YYYY-MM-DD stored
-  const today     = new Date()
-  const todayStr  = localDateStr(today)
-  const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1)
-  const tmrwStr   = localDateStr(tomorrow)
-
-  if (taskDate < todayStr) return { label: 'Overdue',  urgent: true  }
-  if (taskDate === todayStr) return { label: 'Today',   urgent: true  }
-  if (taskDate === tmrwStr)  return { label: 'Tomorrow', urgent: false }
-
-  // For further dates, count calendar days from today's local midnight
-  const ms = new Date(taskDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()
-  return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
-}
 
 /** How far ahead a deadline still counts as something to think about today. */
 const RELEVANT_WINDOW_DAYS = 7
@@ -89,6 +42,7 @@ function isRelevant(t: Task, todayStr: string, horizonStr: string): boolean {
   if (t.due_date) return t.due_date.slice(0, 10) <= horizonStr
   return t.priority >= 3
 }
+
 
 /** Rows carry a `parent` embed so a subtask can show what it belongs to. */
 export type TaskRow = Task & { project: Project; parent?: { id: string; title: string } | null }
@@ -119,6 +73,15 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // into something you can survey, so it opens compact and you expand the one
   // project you came for.
   const [openProjects, setOpenProjects] = useState<Set<string>>(new Set())
+  // Which row layout to draw. localStorage can only be read in the browser, so
+  // the server renders the default and the client swaps in the stored value —
+  // useSyncExternalStore does that without a hydration mismatch or an effect.
+  const layoutId = useSyncExternalStore(
+    () => () => {},
+    () => getStoredTaskLayout(),
+    () => DEFAULT_TASK_LAYOUT,
+  )
+  const Layout = TASK_LAYOUT_IMPLS[layoutId]
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -315,200 +278,159 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     setShowAddTask(true)
   }
 
-  /** Rows for a set of top-level tasks, each followed by its subtasks. */
+  /**
+   * Rows for a set of top-level tasks, each followed by its subtasks.
+   *
+   * The row itself is drawn by whichever layout is selected — see
+   * src/lib/task-layouts.ts. This function owns which rows exist and in what
+   * order; the layout owns what one looks like.
+   */
   function renderTaskRows(list: TaskRow[]) {
-    return list.flatMap(parentTask => {
-              const kids = childrenOf.get(parentTask.id) ?? []
-              const isCollapsed = !expanded.has(parentTask.id)
-              const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
-
-              return rows.map(task => {
-              const isChild = task.id !== parentTask.id
-              const est = task.adjusted_minutes ?? task.estimated_minutes
-              const due = formatDue(task.due_date)
-
-              return (
-                <div
-                  key={task.id}
-                  style={isChild ? { marginLeft: '1.5rem' } : undefined}
-                  onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
-                  className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
-                >
-                  {/* Fold toggle on a parent; bullet on a child */}
-                  {isChild ? (
-                    <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 mt-1 select-none">•</span>
-                  ) : kids.length > 0 ? (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        setExpanded(prev => {
-                          const next = new Set(prev)
-                          if (next.has(parentTask.id)) next.delete(parentTask.id)
-                          else next.add(parentTask.id)
-                          return next
-                        })
-                      }}
-                      title={isCollapsed ? `Show ${kids.length} subtasks` : 'Hide subtasks'}
-                      className="w-3 shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
-                    >
-                      {isCollapsed ? '▶' : '▼'}
-                    </button>
-                  ) : (
-                    <span className="w-3 shrink-0" />
-                  )}
-
-                  {/* Done button — colored by priority */}
-                  <button
-                    onClick={e => handleDone(task, e)}
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
-                    title="Mark done"
-                  />
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug">{task.title}</span>
-                      {task.type === 'someday' && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded font-medium">someday</span>
-                      )}
-                      {task.type === 'recurring' && (() => {
-                        const streak = streaks[task.id]
-                        return (
-                          <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
-                            ↻{streak && streak.current_streak > 0 && (
-                              <span className="ml-0.5">{streak.current_streak >= 7 ? '🔥' : '·'}{streak.current_streak}</span>
-                            )}
-                          </span>
-                        )
-                      })()}
-                    </div>
-                    <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
-                      {(() => {
-                        const proj = task.project ?? INBOX_PROJECT
-                        return (
-                          <span
-                            className="text-xs font-medium px-1.5 py-0.5 rounded"
-                            style={{ background: proj.color + '18', color: proj.color }}
-                          >
-                            {proj.name}
-                          </span>
-                        )
-                      })()}
-                      {/* Subtasks appear in the list alongside everything else,
-                          so say what they belong to — "Dahl" on its own is a
-                          mystery once it's out of the parent's checklist. */}
-                      {/* Only when it's loose in the list — nested under its
-                          parent the relationship is already obvious. */}
-                      {task.parent && !isChild && (
-                        <span
-                          className="text-xs text-slate-400 truncate max-w-[12rem]"
-                          title={`Subtask of ${task.parent.title}`}
-                        >
-                          ↳ {task.parent.title}
-                        </span>
-                      )}
-                      {!isChild && kids.length > 0 && isCollapsed && (
-                        <span className="text-xs text-slate-400">
-                          {kids.length} subtask{kids.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
-                      {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
-                      {due.label && (
-                        <span className={`text-xs font-medium ${due.urgent ? 'text-red-500' : 'text-slate-400'}`}>
-                          {due.urgent && due.label !== 'Today' ? '⚠ ' : ''}{due.label}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Urgency */}
-                  <div className="shrink-0 text-right">
-                    <span className={`text-xs font-semibold font-mono tabular-nums ${urgencyColor(task.urgency_score)}`}>
-                      {Math.round(task.urgency_score)}
-                    </span>
-                    <div className={`text-xs font-mono opacity-50 ${urgencyColor(task.urgency_score)}`}>
-                      {CURVE_ICON[task.urgency_curve]}
-                    </div>
-                  </div>
-                </div>
-              )
-              })
+    const rows = list.flatMap(parentTask => {
+      const kids = childrenOf.get(parentTask.id) ?? []
+      const isCollapsed = !expanded.has(parentTask.id)
+      return (isCollapsed ? [parentTask] : [parentTask, ...kids]).map(task => ({
+        task, parentTask, kids, isCollapsed,
+      }))
     })
+
+    return (
+      <Layout.Shell>
+        {rows.map(({ task, parentTask, kids, isCollapsed }) => (
+          <Layout.Row
+            key={task.id}
+            task={task}
+            isChild={task.id !== parentTask.id}
+            kidCount={task.id === parentTask.id ? kids.length : 0}
+            collapsed={isCollapsed}
+            streak={streaks[task.id] ?? null}
+            onToggleFold={() => setExpanded(prev => {
+              const next = new Set(prev)
+              if (next.has(parentTask.id)) next.delete(parentTask.id)
+              else next.add(parentTask.id)
+              return next
+            })}
+            onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+            onDone={e => handleDone(task, e)}
+          />
+        ))}
+      </Layout.Shell>
+    )
   }
 
   return (
     <>
       <div className="min-h-full bg-slate-50 dark:bg-slate-950">
         {/* Top bar */}
+        {/* ── Toolbar ──────────────────────────────────────────────────────
+            Title and the one primary action on top; view, filters and the
+            scheduling actions beneath. The filter row used to sit in a separate
+            band below the header with three different control idioms in it — a
+            segmented control, a bare <select> and toggle pills. They are all one
+            idiom now: same height, same border, same radius, accent only when a
+            control is doing something. */}
         <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
-          <div className="px-6 py-3 flex items-center justify-between gap-3">
-            {/* View toggle */}
-            <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
-              <button
-                onClick={() => setView('list')}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  view === 'list'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                ☰ List
-              </button>
-              <button
-                onClick={() => setView('upcoming')}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  view === 'upcoming'
-                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                }`}
-              >
-                📅 Upcoming
-              </button>
+          <div className="px-6 pt-4 pb-3 flex flex-col gap-3">
+
+            <div className="flex items-baseline justify-between gap-4">
+              <div className="flex items-baseline gap-3 min-w-0">
+                <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tasks</h1>
+                {view === 'list' && (
+                  <span className="text-xs text-slate-400 tabular-nums truncate">
+                    {filtered.length} {filtered.length === 1 ? 'task' : 'tasks'}
+                    {totalMinutes > 0 && ` · ${formatMinutes(totalMinutes)}`}
+                  </span>
+                )}
+              </div>
+              {/* Actions live together: scheduling and Add task are things you
+                  do, not ways of looking at the list. Keeping them out of the
+                  filter row also stops the toolbar wrapping into a stray line
+                  holding nothing but these two. */}
+              <div className="flex items-center gap-2 shrink-0">
+                {gcalWriteEnabled && (
+                  <>
+                    <div className={`${CONTROL} hidden md:flex items-center overflow-hidden`}>
+                      <input
+                        type="date"
+                        value={planDayDate}
+                        onChange={e => setPlanDayDate(e.target.value)}
+                        disabled={scheduling}
+                        className="px-2 h-full text-xs bg-transparent text-slate-600 dark:text-slate-300 focus:outline-none disabled:opacity-40"
+                      />
+                      <button
+                        onClick={handlePlanDay}
+                        disabled={scheduling || !planDayDate}
+                        title="Plan this day — rank and schedule its tasks"
+                        className="px-2.5 h-full text-xs font-medium text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 border-l border-slate-200 dark:border-slate-700 disabled:opacity-40 transition-colors"
+                      >
+                        {scheduling ? '…' : 'Plan'}
+                      </button>
+                    </div>
+                    <button
+                      onClick={handleScheduleWeek}
+                      disabled={scheduling}
+                      title="Schedule my week — auto-fill the week with your tasks"
+                      className={`${CONTROL} px-3 font-medium text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40`}
+                    >
+                      {scheduling ? '…' : 'Schedule week'}
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => openAddTask()}
+                  className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-medium px-3.5 h-7 rounded-lg hover:opacity-80 transition-opacity"
+                >
+                  Add task
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Segmented
+                value={view}
+                onChange={v => setView(v as 'list' | 'upcoming')}
+                options={[{ id: 'list', label: 'List' }, { id: 'upcoming', label: 'Upcoming' }]}
+              />
+
               {view === 'list' && (
-                <span className="text-slate-400 tabular-nums hidden sm:inline">
-                  {filtered.length} tasks · {formatMinutes(totalMinutes)}
-                </span>
-              )}
-              {gcalWriteEnabled && (
                 <>
-                  {/* Plan day: date picker + action button */}
-                  <div className="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <input
-                      type="date"
-                      value={planDayDate}
-                      onChange={e => setPlanDayDate(e.target.value)}
-                      disabled={scheduling}
-                      className="px-2 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-r border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent-500 disabled:opacity-40"
-                    />
-                    <button
-                      onClick={handlePlanDay}
-                      disabled={scheduling || !planDayDate}
-                      title="Plan this day — rank and schedule its tasks"
-                      className="px-3 py-1.5 text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium bg-white dark:bg-slate-800"
-                    >
-                      {scheduling ? '…' : '📋 Plan'}
-                    </button>
-                  </div>
-                  <button
-                    onClick={handleScheduleWeek}
-                    disabled={scheduling}
-                    title="Schedule my week — auto-fill the week with your tasks"
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors font-medium"
+                  <span className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+
+                  <Segmented
+                    value={energyFilter}
+                    onChange={v => setEnergyFilter(v as EnergyLevel | 'all')}
+                    options={[
+                      { id: 'all', label: 'Any' }, { id: 'low', label: 'Low' },
+                      { id: 'medium', label: 'Med' }, { id: 'high', label: 'High' },
+                    ]}
+                    hint="Energy"
+                  />
+
+                  <select
+                    value={projectFilter}
+                    onChange={e => setProjectFilter(e.target.value)}
+                    className={`${CONTROL} px-2.5 text-slate-600 dark:text-slate-300 max-w-[10rem]`}
                   >
-                    {scheduling ? '…' : '🗓 Schedule week'}
-                  </button>
+                    <option value="all">All projects</option>
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+
+                  <Toggle
+                    on={relevantOnly}
+                    onClick={() => setRelevantOnly(v => !v)}
+                    title={`Only what you can act on now — due in the next ${RELEVANT_WINDOW_DAYS} days, already on the calendar, or high priority with no deadline. Hides someday and anything gated by "not before".`}
+                  >
+                    Relevant
+                  </Toggle>
+                  <Toggle on={groupByProject} onClick={() => setGroupByProject(v => !v)} title="Group the list by project">
+                    By project
+                  </Toggle>
+                  <Toggle on={showSomeday} onClick={() => setShowSomeday(v => !v)} title="Include someday tasks">
+                    Someday
+                  </Toggle>
                 </>
               )}
-              <button
-                onClick={() => openAddTask()}
-                className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity"
-              >
-                + Add task
-              </button>
+
             </div>
           </div>
         </header>
@@ -529,68 +451,6 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
         {view === 'list' && (
         <div className="px-6 py-4">
-          {/* Filters */}
-          <div className="flex items-center gap-2 mb-5 flex-wrap">
-            <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5">
-              {(['all', 'low', 'medium', 'high'] as const).map(e => (
-                <button
-                  key={e}
-                  onClick={() => setEnergyFilter(e)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                    energyFilter === e
-                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  {e === 'all' ? 'All energy' : `${ENERGY_ICON[e]} ${e}`}
-                </button>
-              ))}
-            </div>
-
-            <select
-              value={projectFilter}
-              onChange={e => setProjectFilter(e.target.value)}
-              className="text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-600 dark:text-slate-300 font-medium focus:outline-none"
-            >
-              <option value="all">All projects</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-
-            <button
-              onClick={() => setRelevantOnly(v => !v)}
-              title={`Only what you can act on now — due in the next ${RELEVANT_WINDOW_DAYS} days, already on the calendar, or high priority with no deadline. Hides someday and anything gated by "not before".`}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
-                relevantOnly
-                  ? 'bg-accent-50 dark:bg-accent-950 border-accent-200 dark:border-accent-800 text-accent-700 dark:text-accent-300'
-                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500'
-              }`}
-            >
-              ◎ Relevant
-            </button>
-
-            <button
-              onClick={() => setGroupByProject(v => !v)}
-              title="Group the list by project"
-              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
-                groupByProject
-                  ? 'bg-accent-50 dark:bg-accent-950 border-accent-200 dark:border-accent-800 text-accent-700 dark:text-accent-300'
-                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500'
-              }`}
-            >
-              ▤ By project
-            </button>
-
-            <button
-              onClick={() => setShowSomeday(v => !v)}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
-                showSomeday
-                  ? 'bg-amber-50 dark:bg-amber-950 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
-                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500'
-              }`}
-            >
-              📦 Someday
-            </button>
-          </div>
 
           {/* Task rows */}
           <div className="flex flex-col gap-1.5">
@@ -598,7 +458,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
               ? projectGroups.map(g => {
                   const open = openProjects.has(g.key)
                   return (
-                  <div key={g.key} className="flex flex-col gap-1.5">
+                  <div key={g.key} className={`flex flex-col ${Layout.groupGap}`}>
                     <button
                       onClick={() => setOpenProjects(prev => {
                         const next = new Set(prev)
@@ -638,108 +498,20 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             )}
           </div>
 
-          {/* ── Habits section ── */}
           {habits.length > 0 && (
-            <div className="mt-6">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">
-                Habits
-              </h2>
-              <div className="flex flex-col gap-1.5">
-                {habits.map(task => {
-                  const streak = streaks[task.id]
-                  const isPending = pendingHabitIds.has(task.id)
-                  return (
-                    <div
-                      key={task.id}
-                      onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
-                      className="group bg-white dark:bg-slate-900 border border-violet-100 dark:border-violet-900/50 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-violet-200 dark:hover:border-violet-800 hover:shadow-sm transition-all cursor-pointer"
-                    >
-                      {/* Log with a time — same sheet as the habits page */}
-                      <button
-                        onClick={e => { e.stopPropagation(); setLoggingHabit(task) }}
-                        title="Log with a time, and optionally put it on your calendar"
-                        className="w-5 h-5 rounded-full border-2 border-slate-200 dark:border-slate-700 shrink-0 mt-0.5 flex items-center justify-center text-[10px] text-slate-400 hover:border-violet-400 hover:text-violet-500 transition-colors"
-                      >
-                        🕐
-                      </button>
-
-                      {/* One-tap done button */}
-                      <button
-                        onClick={e => handleHabitDone(task, e)}
-                        disabled={isPending}
-                        className={`w-5 h-5 rounded-full border-2 shrink-0 transition-all mt-0.5 flex items-center justify-center ${
-                          isPending
-                            ? 'border-violet-300 dark:border-violet-700 bg-violet-100 dark:bg-violet-900'
-                            : 'border-violet-300 dark:border-violet-700 hover:bg-violet-500 hover:border-violet-500'
-                        }`}
-                        title="Log habit"
-                      >
-                        {isPending && <span className="text-violet-500 text-xs">…</span>}
-                      </button>
-
-                      {/* Name + frequency + weekly progress */}
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.title}</span>
-                        {(() => {
-                          const target = task.weekly_target
-                          const done   = streak?.completions_this_week ?? 0
-                          if (!target) {
-                            return task.rrule
-                              ? <p className="text-xs text-violet-400 dark:text-violet-500 mt-0.5">{rruleToLabel(task.rrule)}</p>
-                              : null
-                          }
-                          const met = done >= target
-                          return (
-                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                              {/* Frequency dots */}
-                              <span className="flex gap-0.5">
-                                {Array.from({ length: target }, (_, i) => (
-                                  <span
-                                    key={i}
-                                    className={`inline-block w-2 h-2 rounded-full ${
-                                      i < done
-                                        ? met ? 'bg-emerald-500' : 'bg-violet-500'
-                                        : 'bg-slate-200 dark:bg-slate-700'
-                                    }`}
-                                  />
-                                ))}
-                              </span>
-                              <span className={`text-xs font-medium tabular-nums ${
-                                met ? 'text-emerald-500' : 'text-violet-400 dark:text-violet-500'
-                              }`}>
-                                {done}/{target}{met ? ' ✓' : ''}
-                              </span>
-                              {task.rrule && (
-                                <span className="text-xs text-slate-300 dark:text-slate-600">· {rruleToLabel(task.rrule)}</span>
-                              )}
-                            </div>
-                          )
-                        })()}
-                      </div>
-
-                      {/* Streak */}
-                      <div className="shrink-0 text-right">
-                        {streak && streak.current_streak > 0 ? (
-                          <>
-                            <div className="flex items-baseline gap-0.5 justify-end">
-                              <span className="text-lg font-bold font-mono tabular-nums text-violet-600 dark:text-violet-400 leading-none">
-                                {streak.current_streak}
-                              </span>
-                              {streak.current_streak >= 7 && <span className="text-sm">🔥</span>}
-                            </div>
-                            <p className="text-xs text-violet-400 dark:text-violet-500">
-                              {streak.current_streak === 1 ? 'day' : 'days'}
-                            </p>
-                          </>
-                        ) : (
-                          <span className="text-xs text-slate-300 dark:text-slate-600">—</span>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
+            <HabitList count={habits.length}>
+              {habits.map(task => (
+                <HabitRow
+                  key={task.id}
+                  task={task}
+                  streak={streaks[task.id] ?? null}
+                  pending={pendingHabitIds.has(task.id)}
+                  onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+                  onDone={e => handleHabitDone(task, e)}
+                  onLogTime={e => { e.stopPropagation(); setLoggingHabit(task) }}
+                />
+              ))}
+            </HabitList>
           )}
         </div>
         )}

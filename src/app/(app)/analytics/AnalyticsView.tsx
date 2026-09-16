@@ -12,21 +12,59 @@ function formatMinutes(m: number): string {
   return rem ? `${h}h ${rem}m` : `${h}h`
 }
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
+// ── Panel ─────────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, accent }: {
-  label: string
-  value: string | number
+/**
+ * One card shell for every chart.
+ *
+ * Six components each carried their own copy of the border, radius, padding and
+ * heading, which is six places for them to drift — and they had, between
+ * `tracking-wide` and `tracking-wider`. The heading is the same micro-label the
+ * task list and calendar panel use.
+ */
+function Panel({ title, sub, children, className = '' }: {
+  title: string
   sub?: string
-  accent?: string   // tailwind text color class
+  children: React.ReactNode
+  className?: string
 }) {
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-5 py-4">
-      <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-1">{label}</p>
-      <p className={`text-3xl font-semibold tabular-nums ${accent ?? 'text-slate-900 dark:text-slate-100'}`}>
-        {value}
-      </p>
-      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+    <section className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 ${className}`}>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
+      {sub && <p className="text-[11px] text-slate-400 mt-0.5">{sub}</p>}
+      <div className={sub ? 'mt-4' : 'mt-3'}>{children}</div>
+    </section>
+  )
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="text-[13px] text-slate-400 text-center py-6">{children}</p>
+}
+
+// ── Stat strip ────────────────────────────────────────────────────────────────
+
+/**
+ * The four headline numbers, in one panel split by hairlines.
+ *
+ * They were four separate bordered boxes with 3xl numbers, two of them tinted
+ * for no reason other than decoration. Colour now means something — only
+ * average urgency keeps it, because a high average is the one number here that
+ * is telling you to act.
+ */
+function StatStrip({ items }: {
+  items: { label: string; value: string | number; sub?: string; accent?: string }[]
+}) {
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-slate-100 dark:divide-slate-800">
+      {items.map(s => (
+        <div key={s.label} className="px-5 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{s.label}</p>
+          <p className={`text-2xl font-semibold tabular-nums mt-1.5 ${s.accent ?? 'text-slate-900 dark:text-slate-100'}`}>
+            {s.value}
+          </p>
+          <p className="text-[11px] text-slate-400 mt-0.5 h-4">{s.sub ?? ''}</p>
+        </div>
+      ))}
     </div>
   )
 }
@@ -34,38 +72,45 @@ function StatCard({ label, value, sub, accent }: {
 // ── Urgency distribution bar chart ────────────────────────────────────────────
 
 const BUCKET_LABELS = ['0–20', '20–40', '40–60', '60–80', '80–100']
-const BUCKET_COLORS = ['#94a3b8', '#94a3b8', '#f59e0b', '#f97316', '#ef4444']
+// One hue deepening across the range, not four unrelated ones. Urgency is a
+// single scale, so it should look like a single scale.
+const BUCKET_OPACITY = [0.25, 0.4, 0.58, 0.78, 1]
 
 function UrgencyChart({ buckets }: { buckets: number[] }) {
   const max = Math.max(...buckets, 1)
   const total = buckets.reduce((s, v) => s + v, 0)
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">Urgency distribution</h3>
+    <Panel title="Urgency distribution" sub={`${total} active task${total === 1 ? '' : 's'}`}>
       {total === 0 ? (
-        <p className="text-sm text-slate-400 italic text-center py-6">No active tasks</p>
+        <Empty>No active tasks</Empty>
       ) : (
-        <div className="flex items-end gap-3 h-32">
-          {buckets.map((count, i) => {
-            const pct = count / max
-            return (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
-                <span className="text-xs font-semibold tabular-nums text-slate-500 dark:text-slate-400">
+        <div>
+          <div className="flex items-end gap-2 h-28">
+            {buckets.map((count, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
+                <span className="text-[11px] font-medium tabular-nums text-slate-500 dark:text-slate-400">
                   {count || ''}
                 </span>
-                <div className="w-full rounded-t-md transition-all" style={{
-                  height: `${Math.max(pct * 96, count > 0 ? 6 : 0)}px`,
-                  background: BUCKET_COLORS[i],
-                  opacity: count === 0 ? 0.15 : 1,
-                }} />
-                <span className="text-xs text-slate-400 tabular-nums">{BUCKET_LABELS[i]}</span>
+                <div
+                  className="w-full max-w-[56px] rounded-sm transition-all bg-red-500"
+                  style={{
+                    height: `${Math.max((count / max) * 88, count > 0 ? 4 : 0)}px`,
+                    opacity: count === 0 ? 0.08 : BUCKET_OPACITY[i],
+                  }}
+                />
               </div>
-            )
-          })}
+            ))}
+          </div>
+          <div className="h-px bg-slate-200 dark:bg-slate-700 mt-0" />
+          <div className="flex gap-2 mt-1.5">
+            {BUCKET_LABELS.map(l => (
+              <span key={l} className="flex-1 text-center text-[10px] text-slate-400 tabular-nums">{l}</span>
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -77,10 +122,9 @@ function ProjectWorkload({ stats }: {
   const maxMin = Math.max(...stats.map(s => s.estimatedMinutes), 1)
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">Project workload</h3>
+    <Panel title="Project workload" sub="Estimated time remaining, by project">
       {stats.length === 0 ? (
-        <p className="text-sm text-slate-400 italic text-center py-6">No data yet</p>
+        <Empty>No data yet</Empty>
       ) : (
         <div className="flex flex-col gap-3">
           {stats.map(({ project, activeCount, estimatedMinutes, doneCount }) => {
@@ -88,30 +132,35 @@ function ProjectWorkload({ stats }: {
             const total = activeCount + doneCount
             const donePct = total > 0 ? Math.round((doneCount / total) * 100) : 0
             return (
-              <div key={project.id}>
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: project.color }} />
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{project.name}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-400 tabular-nums">
-                    <span>{activeCount} active</span>
-                    <span className="font-mono">{formatMinutes(estimatedMinutes)}</span>
-                    <span className="text-accent-500 dark:text-accent-400">{donePct}% done</span>
-                  </div>
+              // Name, bar and numbers on one line rather than the bar on its
+              // own beneath. Stacked, the track ran the full width of the panel
+              // — past 1200px that is a very long hairline saying very little,
+              // and the name and its numbers ended up at opposite ends of the
+              // screen with nothing in between.
+              <div key={project.id} className="flex items-center gap-3">
+                <div className="flex items-center gap-2 w-40 shrink-0 min-w-0">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: project.color }} />
+                  <span className="text-[13px] font-medium text-slate-700 dark:text-slate-300 truncate">
+                    {project.name}
+                  </span>
                 </div>
-                <div className="h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div className="flex-1 max-w-sm h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full"
                     style={{ width: `${pct * 100}%`, background: project.color }}
                   />
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-slate-400 tabular-nums shrink-0 ml-auto">
+                  <span>{activeCount} active</span>
+                  <span className="font-mono">{formatMinutes(estimatedMinutes)}</span>
+                  <span className="text-accent-500 dark:text-accent-400 w-16 text-right">{donePct}% done</span>
                 </div>
               </div>
             )
           })}
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -123,11 +172,7 @@ function BiasChart({ stats }: {
   const withBias = stats.filter(s => s.bias && s.bias.sample_count >= 3)
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Estimation bias</h3>
-      <p className="text-xs text-slate-400 mb-4">
-        How much longer tasks actually take vs. your estimate (1.0 = perfect)
-      </p>
+    <Panel title="Estimation bias" sub="How much longer tasks actually take vs. your estimate (1.0 = perfect)">
       {withBias.length === 0 ? (
         <p className="text-sm text-slate-400 italic text-center py-6">
           Complete 3+ tasks per project to unlock bias data
@@ -137,7 +182,6 @@ function BiasChart({ stats }: {
           {withBias.map(({ project, bias }) => {
             if (!bias) return null
             const ratio = bias.bias_ratio
-            const pct = ratio * 100  // 100 = 1× estimate
             // Bar: center at 100 (1.0), extend left if under, right if over
             // We'll show 50% → 200% range, centered at 100%
             const clampedRatio = Math.min(Math.max(ratio, 0.5), 2.0)
@@ -200,7 +244,7 @@ function BiasChart({ stats }: {
           })}
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -216,8 +260,7 @@ function AccuracyDonut({ accurate, inaccurate }: { accurate: number; inaccurate:
   const dashArr = pct !== null ? (pct / 100) * circumference : 0
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">Estimate accuracy</h3>
+    <Panel title="Estimate accuracy">
       {total === 0 ? (
         <p className="text-sm text-slate-400 italic text-center py-6">
           Complete tasks with reflections to see accuracy
@@ -252,22 +295,17 @@ function AccuracyDonut({ accurate, inaccurate }: { accurate: number; inaccurate:
           </div>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
 // ── Energy level colours (1–5) ────────────────────────────────────────────────
 
-const ENERGY_COLORS = [
-  '',           // unused index 0
-  '#94a3b8',   // 1 — exhausted, slate
-  '#fb923c',   // 2 — low, orange
-  '#fbbf24',   // 3 — okay, amber
-  '#34d399',   // 4 — good, emerald
-  '#14b8a6',   // 5 — energized, teal
-]
+// Energy is one scale, so it reads as one colour getting stronger rather than
+// five unrelated hues. Index 0 is unused; levels run 1–5.
+const ENERGY_OPACITY = ['', '0.2', '0.36', '0.54', '0.76', '1']
 
-const ENERGY_LABELS = ['', '😴 Exhausted', '😔 Low', '😐 Okay', '😊 Good', '⚡ Energized']
+const ENERGY_LABELS = ['', 'Exhausted', 'Low', 'Okay', 'Good', 'Energized']
 
 // ── Rolling 7-day bar chart ───────────────────────────────────────────────────
 
@@ -289,39 +327,45 @@ function EnergyRecentChart({ days }: { days: DailyEnergy[] }) {
   const hasAny = filled.some(Boolean)
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Energy — last 7 days</h3>
-      <p className="text-xs text-slate-400 mb-4">Average self-reported level per day (1–5)</p>
+    <Panel title="Energy — last 7 days" sub="Average self-reported level per day (1–5)">
       {!hasAny ? (
-        <p className="text-sm text-slate-400 italic text-center py-6">
-          Log your energy from the sidebar to see trends here
-        </p>
+        <Empty>Log your energy from the sidebar to see trends here</Empty>
       ) : (
-        <div className="flex items-end gap-2 h-28">
-          {filled.map((entry, i) => {
-            const avg = entry?.avg ?? 0
-            const pct = avg / 5
-            const color = avg > 0 ? ENERGY_COLORS[Math.round(avg)] : undefined
-            return (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1.5" title={entry ? `${ENERGY_LABELS[Math.round(avg)]} · ${entry.count} log${entry.count !== 1 ? 's' : ''}` : 'No logs'}>
-                <span className="text-[10px] font-semibold tabular-nums text-slate-400">
-                  {entry ? avg.toFixed(1) : ''}
-                </span>
+        <div>
+          <div className="flex items-end gap-2 h-24">
+            {filled.map((entry, i) => {
+              const avg = entry?.avg ?? 0
+              return (
                 <div
-                  className="w-full rounded-t-md transition-all"
-                  style={{
-                    height: `${Math.max(pct * 80, entry ? 4 : 0)}px`,
-                    background: color ?? 'transparent',
-                    border: !entry ? '1px dashed #cbd5e1' : undefined,
-                  }}
-                />
-                <span className="text-[10px] text-slate-400">{dayLabel(i)}</span>
-              </div>
-            )
-          })}
+                  key={i}
+                  className="flex-1 flex flex-col items-center gap-1.5 min-w-0"
+                  title={entry
+                    ? `${ENERGY_LABELS[Math.round(avg)]} · ${entry.count} log${entry.count !== 1 ? 's' : ''}`
+                    : 'No logs'}
+                >
+                  <span className="text-[10px] font-medium tabular-nums text-slate-400">
+                    {entry ? avg.toFixed(1) : ''}
+                  </span>
+                  <div
+                    className="w-full max-w-[44px] rounded-sm transition-all bg-accent-500"
+                    style={{
+                      height: `${Math.max((avg / 5) * 72, entry ? 4 : 0)}px`,
+                      opacity: entry ? Number(ENERGY_OPACITY[Math.round(avg)] || 1) : 0,
+                    }}
+                  />
+                </div>
+              )
+            })}
+          </div>
+          <div className="h-px bg-slate-200 dark:bg-slate-700" />
+          <div className="flex gap-2 mt-1.5">
+            {filled.map((_, i) => (
+              <span key={i} className="flex-1 text-center text-[10px] text-slate-400">{dayLabel(i)}</span>
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -330,10 +374,17 @@ function EnergyRecentChart({ days }: { days: DailyEnergy[] }) {
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const HOURS = Array.from({ length: 18 }, (_, i) => i + 6)   // 6 AM → 11 PM
 
-function levelColor(level: number, dark = false): string {
-  if (level <= 0) return dark ? '#1e293b' : '#f1f5f9'    // empty cell
+/**
+ * Opacity for an energy level, 0 for an empty cell.
+ *
+ * The heatmap reads as one colour getting stronger, the same scale the 7-day
+ * bars use. It used to be five unrelated hues, which made a cell's colour say
+ * "which category" when the thing it encodes is "how much".
+ */
+function levelOpacity(level: number): number {
+  if (level <= 0) return 0
   const idx = Math.round(Math.min(Math.max(level, 1), 5))
-  return ENERGY_COLORS[idx]
+  return Number(ENERGY_OPACITY[idx])
 }
 
 function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; weekStartDay: number }) {
@@ -347,9 +398,8 @@ function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; 
   const hasData = patterns.length > 0
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">Energy by time of day</h3>
-      <p className="text-xs text-slate-400 mb-4">
+    <Panel title="Energy by time of day">
+      <p className="text-[11px] text-slate-400 -mt-3 mb-4">
         {hasData
           ? 'Average energy level by hour and day (based on 90-day rolling window)'
           : 'Computed nightly — check back tomorrow after logging today'}
@@ -381,8 +431,10 @@ function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; 
                   return (
                     <div
                       key={h}
-                      className="flex-1 h-5 rounded-sm transition-colors"
-                      style={{ background: levelColor(level) }}
+                      className={`flex-1 h-5 rounded-sm transition-colors ${
+                        level > 0 ? 'bg-accent-500' : 'bg-slate-100 dark:bg-slate-800'
+                      }`}
+                      style={level > 0 ? { opacity: levelOpacity(level) } : undefined}
                       title={p
                         ? `${day} ${h}:00 — ${ENERGY_LABELS[Math.round(level)]} (avg ${level.toFixed(1)}, ${p.sample_count} samples)`
                         : `${day} ${h}:00 — no data`}
@@ -396,7 +448,7 @@ function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; 
             <div className="flex items-center gap-2 mt-3 justify-end">
               {[1, 2, 3, 4, 5].map(v => (
                 <div key={v} className="flex items-center gap-1">
-                  <div className="w-3 h-3 rounded-sm" style={{ background: ENERGY_COLORS[v] }} />
+                  <div className="w-3 h-3 rounded-sm bg-accent-500" style={{ opacity: levelOpacity(v) }} />
                   <span className="text-[9px] text-slate-400">{v}</span>
                 </div>
               ))}
@@ -404,7 +456,7 @@ function EnergyHeatmap({ patterns, weekStartDay }: { patterns: EnergyPattern[]; 
           </div>
         </div>
       )}
-    </div>
+    </Panel>
   )
 }
 
@@ -430,26 +482,24 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
         </div>
       </header>
 
-      <div className="px-6 py-5 flex flex-col gap-5 max-w-2xl">
+      <div className="px-6 py-5 flex flex-col gap-5">
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="Active tasks" value={activeCount} />
-          <StatCard label="Done" value={doneCount} sub="all time" accent="text-accent-500 dark:text-accent-400" />
-          <StatCard label="Est. remaining" value={formatMinutes(totalEstMinutes)} />
-          <StatCard
-            label="Avg urgency"
-            value={Math.round(avgUrgency)}
-            sub="across active tasks"
-            accent={urgencyColor}
-          />
+        {/* Headline numbers */}
+        <StatStrip
+          items={[
+            { label: 'Active tasks',   value: activeCount },
+            { label: 'Done',           value: doneCount, sub: 'all time' },
+            { label: 'Est. remaining', value: formatMinutes(totalEstMinutes) },
+            { label: 'Avg urgency',    value: Math.round(avgUrgency), sub: 'across active tasks', accent: urgencyColor },
+          ]}
+        />
+
+        {/* Two full-width charts stacked left a lot of empty panel beside them
+            once the width cap came off, so they pair up when there is room. */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+          <UrgencyChart buckets={urgencyBuckets} />
+          <ProjectWorkload stats={projectStats} />
         </div>
-
-        {/* Urgency distribution */}
-        <UrgencyChart buckets={urgencyBuckets} />
-
-        {/* Project workload */}
-        <ProjectWorkload stats={projectStats} />
 
         {/* Bias + accuracy side by side */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">

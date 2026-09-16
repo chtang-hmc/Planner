@@ -7,6 +7,10 @@ import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
+import {
+  TASK_LAYOUTS, DEFAULT_TASK_LAYOUT, getStoredTaskLayout, storeTaskLayout,
+  type TaskLayoutId,
+} from '@/lib/task-layouts'
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 
@@ -343,6 +347,96 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// ── Task row layout ───────────────────────────────────────────────────────────
+
+/**
+ * Which of the four row layouts the task list draws.
+ *
+ * Each card carries its own description rather than a name alone: the
+ * difference between Rail and Airy is density and hierarchy, which a label
+ * can't convey, and anything a layout deliberately leaves out is stated so the
+ * choice is informed rather than a guess.
+ */
+function TaskLayoutSection() {
+  const [layout, setLayout] = useState<TaskLayoutId>(DEFAULT_TASK_LAYOUT)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setLayout(getStoredTaskLayout())
+    setMounted(true)
+  }, [])
+
+  function handleSelect(id: TaskLayoutId) {
+    setLayout(id)
+    storeTaskLayout(id)
+  }
+
+  if (!mounted) return null
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Task list layout</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        How a task is drawn in the list. Takes effect next time you open Tasks.
+      </p>
+
+      <div className="grid grid-cols-2 gap-2">
+        {TASK_LAYOUTS.map(opt => {
+          const active = layout === opt.id
+          return (
+            <button
+              key={opt.id}
+              onClick={() => handleSelect(opt.id)}
+              className={`flex flex-col items-start gap-1.5 p-3 rounded-xl border-2 text-left transition-all ${
+                active
+                  ? 'border-accent-500 bg-accent-50 dark:bg-accent-950'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+              }`}
+            >
+              <span className="flex items-center gap-2 w-full">
+                <span className={`text-xs font-semibold ${
+                  active ? 'text-accent-700 dark:text-accent-300' : 'text-slate-700 dark:text-slate-300'
+                }`}>
+                  {opt.label}
+                </span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wide">{opt.density}</span>
+                {active && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-accent-500" />}
+              </span>
+              <span className={`text-[11px] leading-snug ${
+                active ? 'text-accent-600 dark:text-accent-400' : 'text-slate-400'
+              }`}>
+                {opt.blurb}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {(() => {
+        const meta = TASK_LAYOUTS.find(l => l.id === layout)
+        if (!meta) return null
+        return (
+          <div className="mt-3 px-3.5 py-3 rounded-xl bg-slate-50 dark:bg-slate-800/40">
+            <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{meta.description}</p>
+            {meta.omits.length > 0 && (
+              <p className="text-[11px] leading-relaxed text-slate-400 mt-2">
+                <span className="font-medium">Leaves out:</span> {meta.omits.join('; ')}.
+              </p>
+            )}
+          </div>
+        )
+      })()}
+
+      <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
+        All four drop the urgency score and curve from the row — an internal
+        number that is hard to act on, and still shown on the task itself. They
+        also replace emoji with words, and the filled project chip with a dot,
+        so the only colour in a row is how close the deadline is.
+      </p>
+    </section>
+  )
+}
+
 interface SettingsViewProps {
   gcalConnected:    boolean
   gcalHasWriteScope: boolean
@@ -374,6 +468,8 @@ export default function SettingsView({
         <AccentSection />
         <div className="border-t border-slate-200 dark:border-slate-800" />
         <DefaultViewSection />
+        <div className="border-t border-slate-200 dark:border-slate-800" />
+        <TaskLayoutSection />
         <div className="border-t border-slate-200 dark:border-slate-800" />
         <GoogleCalendarSection
           connected={gcalConnected}

@@ -15,14 +15,15 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Task List Views](#task-list-views)
-11. [Inline Search](#inline-search)
-12. [Drag-to-Reschedule](#drag-to-reschedule)
-13. [Priority-Colored Circles](#priority-colored-circles)
-14. [Projects](#projects)
-15. [Color Themes](#color-themes)
-16. [Week Start](#week-start)
-17. [Server / Client Component Split](#server--client-component-split)
+10. [Task Row Layouts](#task-row-layouts)
+11. [Task List Views](#task-list-views)
+12. [Inline Search](#inline-search)
+13. [Drag-to-Reschedule](#drag-to-reschedule)
+14. [Priority-Colored Circles](#priority-colored-circles)
+15. [Projects](#projects)
+16. [Color Themes](#color-themes)
+17. [Week Start](#week-start)
+18. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -707,6 +708,90 @@ Same reason as everywhere else — those columns arrived in later migrations, an
 ### What's not here
 
 Habit exclusivity (gym and running never sharing a day) stays on the habits page. It's a pairing against habits that already exist, and the add modal doesn't have that list — a free-text group name here is exactly the mistake that produced cross-named groups the first time.
+
+---
+
+## Task Row Layouts
+
+The task list draws a row four ways, chosen in **Settings → Task list layout** and stored per browser in `localStorage['planner-task-layout']`.
+
+| Layout | Density | What it is | Leaves out |
+|---|---|---|---|
+| **Rail** (default) | compact | One surface, hairline dividers, priority as a left edge shown only for high and critical. Metadata on a single muted line. | — |
+| **Ledger** | compact | Fixed columns under a header, so attributes line up down the page. Densest; best for "what's due soonest". Subtasks indent inside the title cell only, so columns stay true. | Energy — no column for it without crowding the title |
+| **Airy** | spacious | Generous rhythm, larger title, metadata demoted to a quiet second line. About half the rows per screen. | — |
+| **Editorial** | spacious | Large titles, project as a small uppercase label plus a hairline of project colour in the margin, deadline top-right in small caps. | Energy — the metadata line is kept to three items |
+
+### Where they live
+
+- `src/lib/task-layouts.ts` — the registry: ids, labels, descriptions, `omits`, and the localStorage helpers. No JSX, so both the settings page and the list can import it.
+- `src/components/TaskRowLayouts.tsx` — the four implementations and `TASK_LAYOUT_IMPLS`. Each exports a `Shell` (container, plus a header for Ledger) and a `Row`.
+- `src/lib/task-format.ts` — `formatMinutes`, `formatDue`, `dueToneClass`, shared so a duration reads identically in all four.
+- `src/app/(app)/tasks/TaskList.tsx` — decides *which rows exist and in what order*; the layout decides what one looks like.
+- `/auth/design` — preview endpoint. `?layout=rail|ledger|airy|editorial` isolates one. Under `/auth` because the proxy lets that prefix through without a session, which is the only way to look at the list in a browser that isn't logged in. It renders the shipping components against fixtures, not copies of them — a preview that drifts from the app is worse than none.
+
+### The cost, accepted deliberately
+
+Four layouts means four row implementations, and every feature that touches a row has to be built four times — the fold toggle, the subtask count, the parent breadcrumb, the someday and recurring tags all exist once per layout. That was raised as an argument for one layout plus a density setting and a date-grouping option, which would have covered the same ground from one component. The owner chose to keep all four; this is a single-user app and the preference is theirs.
+
+**`TaskRowProps` is the contract.** Everything a row can show arrives through it, so adding a field makes the compiler point at each layout that hasn't handled it. If a layout should skip it, add a line to that layout's `omits` so the settings page says so.
+
+### The toolbar and the habits section
+
+The rows were redesigned first; the chrome around them followed, in the same language.
+
+**One control idiom.** The filter row used to sit in its own band below the header and mixed three ways of saying "this is a control" — a segmented group, a bare `<select>`, and toggle pills, each with its own height, radius and border. `CONTROL` in `TaskChrome.tsx` is now the shared shell, with `Segmented` for mutually exclusive choices and `Toggle` for on/off filters. Accent means a control is actively changing what you see; everything else stays neutral.
+
+**Actions grouped with actions.** Plan and Schedule week started in the filter row. They aren't filters, and at full width they wrapped onto a line of their own holding nothing else. They now sit beside Add task in the title row: things you *do* on top, ways of *looking* below.
+
+**Habits stopped being a different app.** The section was violet-bordered cards with emoji buttons, sitting under a list of neutral hairline rows. It's now the same surface as Rail — one container, hairline dividers, neutral circle, "Log time" appearing on hover. The weekly dots survived because they're genuinely information-dense, but they use the accent rather than violet, and only when the target is met. The streak reads "12 days running" instead of a flame.
+
+`TaskChrome.tsx` exists so these can be rendered against fixtures at `/auth/design` — the app can't be opened in a browser without a session, and a redesign you can't look at is one you're guessing at.
+
+### Upcoming uses the same rows
+
+Upcoming had its own `TaskRow`, so switching between List and Upcoming changed what a task looked like. It now renders the selected layout too.
+
+**`Row` without `Shell`.** A day section is already a bordered card; nesting a layout's own container inside it would double the border, and Ledger would grow a column header per day. The day supplies the dividers instead.
+
+**Horizontal padding moved from the row to the shell.** Airy bled its hover highlight outside its own box with `-mx-3`, which works in a container-less list and gets clipped by a day card's `overflow-hidden`. The row now carries its padding and the shell cancels it, so a standalone list still sits flush with the page and a row dropped into any container behaves.
+
+**Dragging wraps the row rather than living inside it.** It is specific to this view, and putting it in `TaskRowProps` would mean building a drag handle four times for one caller. The row-level drag handle is gone; the whole row is the grip.
+
+### Sidebar: collapse and resize
+
+Width and collapsed state live in `localStorage` (`src/lib/sidebar-prefs.ts`), read the same way as the task layout — the server renders the defaults, `useSyncExternalStore` swaps in the stored values on hydrate, and anything changed since load is held in an override.
+
+- **Collapsed** is an icon-only rail (56px), not a hidden sidebar: nav glyphs, project colour dots and settings stay reachable, each carrying its label as a `title`. The project heading and the energy logger have no useful rail form and are dropped.
+- **Resize** drags a 6px grip on the right edge, clamped 168–400px. 168 is where project names stop being readable. Double-click resets to 208, the width it always had; arrow keys move it 16px at a time, so the grip is not mouse-only.
+- Pointer events, not mouse events, so a trackpad or pen drags too. The listeners are on the window because the pointer leaves a 6px grip almost immediately and a handler bound to the grip would stop receiving moves. Cursor and `user-select` are set on `<body>` for the duration so they survive the pointer crossing other elements.
+- The drag measures from the sidebar's **own left edge**, not from `clientX` alone. They are identical in the app, but assuming x=0 makes the component work in exactly one position and misbehave anywhere it is previewed or embedded — which is how the bug showed up.
+
+### Analytics
+
+Six chart components each carried their own copy of the card shell — border, radius, padding, heading — so they had already drifted between `tracking-wide` and `tracking-wider`. `Panel` is now the one shell, with `Empty` for the no-data state.
+
+**Colour encodes magnitude, not category.** Urgency buckets were slate / slate / amber / orange / red, and energy was slate / orange / amber / emerald / teal. Both are *one scale*, so five unrelated hues made the colour say "which category" when what it encodes is "how much". Each is now a single hue deepening across the range: red for urgency, the accent for energy, in the bars and the time-of-day heatmap alike.
+
+**Four stat boxes became one strip** divided by hairlines, with 2xl numbers instead of 3xl. Two of the four were tinted for decoration; only average urgency keeps colour, because it is the one number there that is telling you to act.
+
+**Project workload reads across, not down.** Name, bar and figures on one line with the track capped, instead of a full-width bar stacked under its label — past 1200px that was a very long hairline saying very little, with the name and its numbers at opposite ends of the screen.
+
+Bars throughout are slimmer, capped in width, square-cornered rather than heavily rounded, and sit on a real baseline.
+
+### Calendar panel
+
+Restyled to the row language: hairline-separated events on one surface instead of a filled, bordered box per event; 13px titles with 11px muted times; the same uppercase micro-label and day dividers as the Habits section. The `📅` prompt and the `↺` / `✕` glyph buttons became words.
+
+**Disconnect hides until the header is hovered.** Spelling it out made a destructive, rarely-wanted action louder than Sync, which is the opposite of what the glyph version achieved by accident.
+
+### What all four dropped
+
+- **The urgency score and curve glyph** (`67`, `╱ ⌒ ⌐`). An internal model leaking into the UI — nobody acts on "67". It stays on the task detail panel.
+- **Emoji as data encoding** (🌿 ⚡ 🔥 ↻ 📦). Renders differently on every platform and can't be styled. Replaced with words.
+- **The filled project chip.** A coloured dot says the same thing without competing for attention.
+
+Colour in a row is now reserved for one thing: how close the deadline is. The priority circle is neutral in three of the four layouts for the same reason.
 
 ---
 
