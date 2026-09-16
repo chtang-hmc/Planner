@@ -102,8 +102,11 @@ export async function completeTask(
     const now   = new Date().toISOString()
     // Habit days are the user's calendar days, so "which day did this close
     // out" and "when does the next one open" are both asked in their zone.
-    const tz       = await fetchTimezone(db)
-    const todayStr = localDayStr(completedAt, tz)
+    const tz          = await fetchTimezone(db)
+    // Not `todayStr`: that name is a function imported from lib/day and used as
+    // one throughout this file. Shadowing it here turns a later todayStr(tz)
+    // call inside this block into a runtime TypeError.
+    const completedDay = localDayStr(completedAt, tz)
 
     // For rrule habits/tasks: compute next date from rule.
     // Anchor from the task's own due_date (not today) so completing a weekly
@@ -120,7 +123,7 @@ export async function completeTask(
       // occurrences due by the end of the local day, so a habit closed out
       // tonight reappears tomorrow morning wherever the user is — not at
       // whatever hour UTC midnight happens to fall for them.
-      nextDue = startOfLocalDay(addDayStr(todayStr, 1), tz).toISOString()
+      nextDue = startOfLocalDay(addDayStr(completedDay, 1), tz).toISOString()
     }
 
     // A habit must never have two pending occurrences: completing it twice in
@@ -187,7 +190,7 @@ export async function completeTask(
     }
 
     // Start of the current week, per the user's configured first day
-    const weekStartStr = weekStartOfDay(todayStr, await fetchWeekStartDay(db))
+    const weekStartStr = weekStartOfDay(completedDay, await fetchWeekStartDay(db))
 
     const { data: streak } = await db
       .from('habit_streaks')
@@ -199,9 +202,9 @@ export async function completeTask(
       // Already logged today: completing again is a no-op. Without this the
       // streak check below sees last_completed === today (not yesterday),
       // reads it as "not consecutive" and resets a long streak to 1.
-      if (streak.last_completed !== todayStr) {
+      if (streak.last_completed !== completedDay) {
         // Consecutive-day streak
-        const consecutive = streak.last_completed === addDayStr(todayStr, -1)
+        const consecutive = streak.last_completed === addDayStr(completedDay, -1)
         const newStreak = consecutive ? streak.current_streak + 1 : 1
 
         // Weekly count — reset if the stored week_start is from a different week
@@ -211,7 +214,7 @@ export async function completeTask(
         await db.from('habit_streaks').update({
           current_streak:        newStreak,
           longest_streak:        Math.max(newStreak, streak.longest_streak),
-          last_completed:        todayStr,
+          last_completed:        completedDay,
           completions_this_week: newWeeklyCount,
           week_start:            weekStartStr,
         }).eq('task_id', taskId)
@@ -221,7 +224,7 @@ export async function completeTask(
         task_id:               taskId,
         current_streak:        1,
         longest_streak:        1,
-        last_completed:        todayStr,
+        last_completed:        completedDay,
         completions_this_week: 1,
         week_start:            weekStartStr,
       })
@@ -482,33 +485,44 @@ export async function setHabitCompletion(
   const { startISO: dayStart, endISO: dayEnd } = localDayRange(dateStr, tz)
 
   if (!done) {
-    // Un-logging has to take the calendar event with it. The row is about to
-    // disappear, and with it the only record of the event id — leaving an
-    // orphan on the calendar that nothing can ever clean up.
     const { data: doomed } = await db
       .from('tasks')
-      .select('id, gcal_event_id')
+      .select('id, gcal_event_id, scheduled_by')
       .eq('type', 'habit')
       .eq('title', title)
       .eq('status', 'done')
       .gte('completed_at', dayStart)
       .lt('completed_at', dayEnd)
 
-    const eventIds = (doomed ?? []).map(r => r.gcal_event_id).filter(Boolean) as string[]
-    if (eventIds.length > 0) {
+    // Un-logging takes the *session record* off the calendar with it —
+    // otherwise the row disappears along with the only copy of the event id and
+    // the event is orphaned forever. It must not take an auto-scheduled block:
+    // `scheduled_by = 'auto'` marks a 🎯 block confirmSchedule put there, which
+    // is a plan you made, not a record of this completion. Deleting that from
+    // Google Calendar is irreversible and nobody asked for it.
+    const sessionRows = (doomed ?? []).filter(r => r.gcal_event_id && r.scheduled_by !== 'auto')
+    if (sessionRows.length > 0) {
       const token = await getValidToken()
       if (token) {
         // Best-effort: a calendar that won't delete shouldn't block un-logging.
-        await Promise.all(eventIds.map(id =>
-          deleteTaskBlock(token.access_token, id).catch(e =>
-            console.error('setHabitCompletion: could not delete event', id, e))
+        await Promise.all(sessionRows.map(r =>
+          deleteTaskBlock(token.access_token, r.gcal_event_id!).catch(e =>
+            console.error('setHabitCompletion: could not delete event', r.gcal_event_id, e))
         ))
       }
+      await db.from('tasks')
+        .update({ gcal_event_id: null })
+        .in('id', sessionRows.map(r => r.id))
     }
 
+    // Cancelled, not deleted. A deleted row leaves the day looking untouched,
+    // and syncScheduledHabits would re-log it from the calendar block on the
+    // next visit — un-logging a day that had a block could never stick. A
+    // cancelled row is invisible everywhere completions are read (every query
+    // filters status = 'done') but tells the sweep this day was decided.
     const { error } = await db
       .from('tasks')
-      .delete()
+      .update({ status: 'cancelled' })
       .eq('type', 'habit')
       .eq('title', title)
       .eq('status', 'done')
@@ -563,9 +577,10 @@ export async function setHabitCompletion(
     rrule:             template.rrule,
     weekly_target:     template.weekly_target ?? null,
     due_date:          null,
-    // Noon local, so the day survives being read back in any nearby zone and
-    // reads as "sometime that day" rather than a time we're pretending to know.
-    created_at:        noonLocal,
+    // completed_at says when the work happened; created_at is left to the
+    // column default so it says when the row appeared. Back-dating it made
+    // back-filled rows claim to predate the rows they were inserted after,
+    // which destroys the only record of insertion order.
     completed_at:      noonLocal,
     ...(template.exclusive_group ? { exclusive_group: template.exclusive_group } : {}),
   })
@@ -594,6 +609,13 @@ export async function logHabitSession(
     startISO:      string    // the instant it started
     minutes:       number
     addToCalendar: boolean
+    /**
+     * Skip revalidatePath. The sweep writes several of these in a loop and
+     * revalidates once at the end — revalidating per row refreshes the route
+     * mid-loop, which remounts the page and can start a second sweep on top of
+     * the running one.
+     */
+    quiet?:        boolean
   },
 ): Promise<{ error?: string; dateStr?: string; onCalendar?: boolean }> {
   if (!(opts.minutes > 0)) return { error: 'Session needs a length' }
@@ -652,8 +674,7 @@ export async function logHabitSession(
       rrule:             habit.rrule,
       weekly_target:     habit.weekly_target ?? null,
       due_date:          null,
-      created_at:        opts.startISO,
-      completed_at:      opts.startISO,
+      completed_at:      opts.startISO,   // created_at: column default = now()
       ...(habit.exclusive_group ? { exclusive_group: habit.exclusive_group } : {}),
     }).select('id').single()
     if (error) return { error: error.message }
@@ -669,8 +690,7 @@ export async function logHabitSession(
   if (opts.addToCalendar) {
     const token = await getValidToken()
     if (!token) {
-      revalidatePath('/habits')
-      revalidatePath('/tasks')
+      if (!opts.quiet) { revalidatePath('/habits'); revalidatePath('/tasks') }
       return { dateStr, error: "Logged, but Google Calendar isn't connected" }
     }
     try {
@@ -687,15 +707,16 @@ export async function logHabitSession(
     } catch (e) {
       console.error('logHabitSession: calendar write failed', e)
       // The log itself succeeded — say what didn't rather than failing it all.
-      revalidatePath('/habits')
-      revalidatePath('/tasks')
+      if (!opts.quiet) { revalidatePath('/habits'); revalidatePath('/tasks') }
       return { dateStr, onCalendar: false, error: 'Logged, but could not add it to your calendar' }
     }
   }
 
-  revalidatePath('/habits')
-  revalidatePath('/tasks')
-  revalidatePath('/analytics')
+  if (!opts.quiet) {
+    revalidatePath('/habits')
+    revalidatePath('/tasks')
+    revalidatePath('/analytics')
+  }
   return { dateStr, onCalendar }
 }
 
@@ -723,7 +744,27 @@ function calendarKey(title: string): string {
  * never overwrites: a day that already has a completion is skipped, and the
  * caller is handed everything it wrote so it can be undone in one click.
  */
+/**
+ * The sweep currently running, if any.
+ *
+ * Its per-day guard is a read followed by a write with nothing between them, so
+ * two concurrent sweeps both see "not logged yet" and both insert — which is
+ * how a duplicate Piano completion reached the database. Two sweeps overlap
+ * easily: React re-invokes effects on mount in development, and a route refresh
+ * remounts the page. Callers share the in-flight run instead of starting a
+ * second one.
+ */
+let sweepInFlight: Promise<{ logged: { title: string; dateStr: string }[] }> | null = null
+
 export async function syncScheduledHabits(): Promise<{
+  logged: { title: string; dateStr: string }[]
+}> {
+  if (sweepInFlight) return sweepInFlight
+  sweepInFlight = runHabitSweep().finally(() => { sweepInFlight = null })
+  return sweepInFlight
+}
+
+async function runHabitSweep(): Promise<{
   logged: { title: string; dateStr: string }[]
 }> {
   const db = createServiceClient()
@@ -781,11 +822,14 @@ export async function syncScheduledHabits(): Promise<{
   // refuse them anyway, but this runs on every visit to the page and the steady
   // state — everything already filled in — should cost one query, not one per
   // blocked session.
+  // 'cancelled' rows count as decided, not missing. Un-logging a day leaves one
+  // behind precisely so this sweep doesn't re-log it from the calendar block
+  // that is still sitting there — otherwise Undo lasts until the next visit.
   const { data: done } = await db
     .from('tasks')
     .select('title, completed_at')
     .eq('type', 'habit')
-    .eq('status', 'done')
+    .in('status', ['done', 'cancelled'])
     .gte('completed_at', from)
     .not('completed_at', 'is', null)
 
@@ -797,7 +841,7 @@ export async function syncScheduledHabits(): Promise<{
   for (const c of candidates.values()) {
     if (alreadyLogged.has(`${calendarKey(c.title)}|${localDayStr(c.startISO, tz)}`)) continue
     const res = await logHabitSession(c.habitId, {
-      startISO: c.startISO, minutes: c.minutes, addToCalendar: false,
+      startISO: c.startISO, minutes: c.minutes, addToCalendar: false, quiet: true,
     })
     if (res.dateStr && !res.error) logged.push({ title: c.title, dateStr: res.dateStr })
   }

@@ -18,7 +18,7 @@ import {
   type AttackItem,
 } from '@/lib/scheduler'
 import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
-import { isValidTimezone, fetchTimezone, localDayStr, startOfLocalDay } from '@/lib/day'
+import { isValidTimezone, fetchTimezone, localDayStr, startOfLocalDay, addDays as addDayStr } from '@/lib/day'
 
 // ── GCal freeBusy ─────────────────────────────────────────────────────────────
 
@@ -166,12 +166,15 @@ async function buildHabitCandidates(
   // of UTC is still this week, not the next one.
   const weekStart = weekStartOf(new Date(), weekStartDay, tz)
 
-  // Last day of the current week. Sessions are owed *this* week, so they must
-  // not spill past it — "Schedule week" runs a rolling 7 days from today, which
+  // The instant this week ends. Sessions are owed *this* week, so they must not
+  // spill past it — "Schedule week" runs a rolling 7 days from today, which
   // straddles the week boundary whenever today isn't the first day.
-  const weekEndDate = new Date(`${weekStart}T00:00:00Z`)
-  weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6)
-  const weekEnd = weekEndDate.toISOString()
+  //
+  // weekStart is a local calendar day, so it converts through startOfLocalDay
+  // like the completions query below. Reading it as UTC midnight put the
+  // deadline at 17:00 on the week's last day in America/Los_Angeles, quietly
+  // costing the scheduler the final evening of every week.
+  const weekEnd = startOfLocalDay(addDayStr(weekStart, 7), tz).toISOString()
 
   // Progress is counted from the completions themselves, as DISTINCT DAYS per
   // habit title. Two sessions on one day count once — a weekly target means
