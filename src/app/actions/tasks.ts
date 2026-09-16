@@ -32,6 +32,10 @@ export async function completeTask(
   const db = createServiceClient()
   const completedAt = opts?.completedAtISO ?? new Date().toISOString()
 
+  // Read once, shared with the spawn block below.
+  let tzCache: string | null = null
+  const getTz = async () => (tzCache ??= await fetchTimezone(db))
+
   // Fetch the task so we know its rrule and template fields before marking done
   const { data: taskRow } = await db
     .from('tasks')
@@ -39,10 +43,41 @@ export async function completeTask(
     .eq('id', taskId)
     .single()
 
+  /**
+   * A habit records at most one completion per day, and this is the only path
+   * that didn't enforce it — it just flips the pending row.
+   *
+   * Another surface may already have recorded the day: the calendar sweep, the
+   * heatmap, or the log sheet, each of which writes its own row. A second done
+   * row leaves the heatmap and the weekly target unchanged (both count distinct
+   * days) but doubles the minutes for that day, which is how Piano came to read
+   * as 120 minutes on 2026-09-15.
+   *
+   * The occurrence is still closed out, as `cancelled` — the same "this row is
+   * not a completion record" state un-logging uses — so the chain advances and
+   * the day keeps exactly one record.
+   */
+  let closeAs: 'done' | 'cancelled' = 'done'
+  if (taskRow?.type === 'habit') {
+    const tz = await getTz()
+    const { startISO, endISO } = localDayRange(localDayStr(completedAt, tz), tz)
+    const { data: sameDay } = await db
+      .from('tasks')
+      .select('id')
+      .eq('type', 'habit')
+      .eq('title', taskRow.title)
+      .eq('status', 'done')
+      .gte('completed_at', startISO)
+      .lt('completed_at', endISO)
+      .neq('id', taskId)
+      .limit(1)
+    if (sameDay && sameDay.length > 0) closeAs = 'cancelled'
+  }
+
   // Mark task done
   const { error: taskErr } = await db
     .from('tasks')
-    .update({ status: 'done', completed_at: completedAt, actual_minutes: actualMinutes })
+    .update({ status: closeAs, completed_at: completedAt, actual_minutes: actualMinutes })
     .eq('id', taskId)
 
   if (taskErr) throw new Error(taskErr.message)
@@ -102,7 +137,7 @@ export async function completeTask(
     const now   = new Date().toISOString()
     // Habit days are the user's calendar days, so "which day did this close
     // out" and "when does the next one open" are both asked in their zone.
-    const tz          = await fetchTimezone(db)
+    const tz          = await getTz()
     // Not `todayStr`: that name is a function imported from lib/day and used as
     // one throughout this file. Shadowing it here turns a later todayStr(tz)
     // call inside this block into a runtime TypeError.
