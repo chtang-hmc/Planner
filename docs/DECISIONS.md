@@ -613,6 +613,39 @@ How much of a wait is reusable depends on buffers — a 60-minute wait between t
 
 ---
 
+## Add Modal: Compact vs Detailed
+
+`AddTaskModal` is the single add surface for tasks *and* habits (tasks page, projects, review, habits page), so every advanced field the scheduler understands had to live somewhere — and all of them at once made adding "call the dentist" a form to fill in.
+
+Two views, toggled in the header beside the task/habit switch:
+
+- **Compact** — title, project, priority, estimate, due date. Quick-add (the ✦ Claude parse) stays in both views; it's the fastest path in either.
+- **Detailed** — adds notes, energy, repeat, "not before", where / ties-me-up / buffer, and the urgency curve. For habits: notes, priority, energy, schedule, the after-meals exclusion, and placement.
+
+### The choice is remembered
+
+`localStorage['planner.addTask.detailed']`. Someone who reaches for the advanced fields once usually wants them next time; reopening to compact every time makes Detailed feel like it never sticks. Per-viewer convenience, so browser storage is the right home — and it's read through a try/catch, since private windows throw on access.
+
+### Compact says what it's about to apply
+
+Quick-add can set an advanced field (energy, most often), and a remembered detailed session leaves values behind. So compact prints a one-line summary — "Also applying: 🔥 high energy · no buffer" — with a link to reveal the full form. Hidden is fine; hidden *and* silently in effect is how you end up with a task you didn't mean to create.
+
+### Advanced fields are omitted, not defaulted
+
+`createTask` spreads each new column in only when the caller supplied a non-default value:
+
+```ts
+...(data.span_minutes ? { span_minutes: data.span_minutes } : {}),
+```
+
+Same reason as everywhere else — those columns arrived in later migrations, and always naming them would break inserts on a database that hasn't run them. Setting one on an un-migrated database still fails, per "reads degrade, writes don't"; the modal now catches the error and shows the PostgREST message rather than leaving a dead button.
+
+### What's not here
+
+Habit exclusivity (gym and running never sharing a day) stays on the habits page. It's a pairing against habits that already exist, and the add modal doesn't have that list — a free-text group name here is exactly the mistake that produced cross-named groups the first time.
+
+---
+
 ## Task List Views
 
 ### Folding is the default, everywhere

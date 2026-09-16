@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef, useTransition } from 'react'
-import { Project, EnergyLevel } from '@/types'
+import { Project, EnergyLevel, UrgencyCurve } from '@/types'
 import { createTask } from '@/app/actions/tasks'
 import ProjectPicker from '@/components/ProjectPicker'
 import RecurrencePicker from '@/components/RecurrencePicker'
+import { rruleToLabel } from '@/lib/rrule-utils'
 
 interface ParsedResult {
   title: string
@@ -19,6 +20,32 @@ interface ParsedResult {
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 const PRIORITY_LABELS = ['', 'Low', 'Medium', 'High', 'Critical'] as const
 
+const CURVE_OPTS: { val: UrgencyCurve; label: string; desc: string }[] = [
+  { val: 'linear',      label: 'Linear',      desc: 'Pressure builds evenly as the deadline approaches.' },
+  { val: 'exponential', label: 'Exponential', desc: 'Quiet until late, then climbs sharply.' },
+  { val: 'step',        label: 'Step',        desc: 'Nothing, then suddenly everything, near the day.' },
+]
+
+const LOCATION_OPTS = [
+  { val: 'anywhere', label: 'Anywhere', icon: '◎' },
+  { val: 'home',     label: 'Home',     icon: '⌂' },
+  { val: 'away',     label: 'Out',      icon: '↗' },
+] as const
+
+const BUFFER_OPTS: { val: number | null; label: string }[] = [
+  { val: null, label: 'Default' },
+  { val: 0,    label: 'None' },
+  { val: 5,    label: '5m' },
+  { val: 30,   label: '30m' },
+]
+
+const DETAIL_KEY = 'planner.addTask.detailed'
+
+function storedDetailed(): boolean {
+  if (typeof window === 'undefined') return false
+  try { return window.localStorage.getItem(DETAIL_KEY) === '1' } catch { return false }
+}
+
 interface Props {
   projects: Project[]
   initialProjectId?: string
@@ -31,6 +58,15 @@ interface Props {
 export default function AddTaskModal({ projects, initialProjectId, initialDueDate, defaultType, onClose, onCreated }: Props) {
   // Task vs Habit mode
   const [mode, setMode] = useState<'task' | 'habit'>(defaultType ?? 'task')
+
+  // Compact vs detailed. Remembered across adds — someone who reaches for the
+  // advanced fields once usually wants them next time too, and re-opening to
+  // compact every time makes the detailed view feel like it never sticks.
+  const [detailed, setDetailed] = useState(storedDetailed)
+  function chooseView(v: boolean) {
+    setDetailed(v)
+    try { window.localStorage.setItem(DETAIL_KEY, v ? '1' : '0') } catch { /* private mode */ }
+  }
 
   const [text, setText]             = useState('')
   const [parsed, setParsed]         = useState<ParsedResult | null>(null)
@@ -48,6 +84,16 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [rrule, setRrule] = useState<string | null>(null)
 
   const [weeklyTarget, setWeeklyTarget] = useState<string>('')
+
+  // ── Advanced ──
+  const [description, setDescription] = useState('')
+  const [startDate,   setStartDate]   = useState('')
+  const [location,    setLocation]    = useState<string>('anywhere')
+  const [span,        setSpan]        = useState('')
+  const [buffer,      setBuffer]      = useState<number | null>(null)
+  const [curve,       setCurve]       = useState<UrgencyCurve>('linear')
+  const [avoidBreaks, setAvoidBreaks] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   // Pre-fill due date if provided (e.g. from Upcoming view "+ Add task" for a specific day)
   useEffect(() => {
@@ -92,23 +138,128 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
     }
   }
 
+  /**
+   * What's set behind the compact view.
+   *
+   * Quick-add can fill an advanced field (energy, most often) and a remembered
+   * detailed session can leave one set, so compact mode says what it's about to
+   * apply. Hidden is fine; hidden *and* silently in effect isn't.
+   */
+  const hiddenSummary: string[] = (() => {
+    if (detailed) return []
+    const out: string[] = []
+    if (mode === 'task') {
+      if (energy !== 'medium') out.push(`${ENERGY_ICON[energy]} ${energy} energy`)
+      if (rrule)               out.push(`↻ ${rruleToLabel(rrule)}`)
+      if (startDate)           out.push(`not before ${startDate}`)
+      if (curve !== 'linear')  out.push(`${curve} urgency`)
+    } else {
+      if (priority !== 2) out.push(`priority ${priority}`)
+      if (rrule)          out.push(`↻ ${rruleToLabel(rrule)}`)
+      if (avoidBreaks)    out.push('not after meals')
+    }
+    if (location !== 'anywhere') out.push(location === 'home' ? '⌂ at home' : '↗ out')
+    if (span)                    out.push(`ties me up ${span}m`)
+    if (buffer !== null)         out.push(buffer === 0 ? 'no buffer' : `${buffer}m buffer`)
+    return out
+  })()
+
   function handleCreate() {
     if (!title.trim()) return
+    setCreateError(null)
     startTransition(async () => {
-      await createTask({
-        title: title.trim(),
-        project_id: mode === 'habit' ? null : projectId,
-        priority,
-        energy_required: energy,
-        estimated_minutes: estimate ? parseInt(estimate) : null,
-        due_date: mode === 'habit' ? null : (dueDate ? new Date(dueDate).toISOString() : null),
-        urgency_curve: 'linear',
-        rrule: rrule || null,
-        weekly_target: mode === 'habit' && weeklyTarget ? parseInt(weeklyTarget) : null,
-        taskType: mode === 'habit' ? 'habit' : undefined,
-      })
-      onCreated()
+      try {
+        await createTask({
+          title: title.trim(),
+          project_id: mode === 'habit' ? null : projectId,
+          priority,
+          energy_required: energy,
+          estimated_minutes: estimate ? parseInt(estimate) : null,
+          due_date: mode === 'habit' ? null : (dueDate ? new Date(dueDate).toISOString() : null),
+          urgency_curve: mode === 'habit' ? 'linear' : curve,
+          rrule: rrule || null,
+          weekly_target: mode === 'habit' && weeklyTarget ? parseInt(weeklyTarget) : null,
+          taskType: mode === 'habit' ? 'habit' : undefined,
+          description: description.trim() || null,
+          // Habits have no deadline, so "not before" has nothing to sit against.
+          start_date: mode === 'habit' || !startDate ? null : new Date(startDate).toISOString(),
+          location,
+          span_minutes: span ? parseInt(span) : null,
+          buffer_minutes: buffer,
+          avoid_after_breaks: mode === 'habit' && avoidBreaks,
+        })
+        onCreated()
+      } catch (err) {
+        // An advanced field whose migration hasn't been run fails the whole
+        // insert — say which, instead of leaving a dead button.
+        setCreateError(err instanceof Error ? err.message : 'Could not create')
+      }
     })
+  }
+
+  const fieldClass = 'w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500'
+  const labelClass = 'block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5'
+
+  /** Where / ties-me-up / buffer — the placement block, shared by both modes. */
+  function placementFields(accent: 'accent' | 'violet') {
+    const on = accent === 'violet'
+      ? 'bg-violet-600 border-violet-600 text-white'
+      : 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+    return (
+      <div>
+        <label className={labelClass}>Where</label>
+        <div className="flex gap-1.5">
+          {LOCATION_OPTS.map(o => (
+            <button
+              key={o.val}
+              type="button"
+              onClick={() => setLocation(o.val)}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                location === o.val ? on : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+              }`}
+            >
+              {o.icon} {o.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-xs text-slate-400 shrink-0">Ties me up for</span>
+          <input
+            type="number" min={1} step={15} value={span} placeholder="—"
+            onChange={e => setSpan(e.target.value)}
+            className="w-20 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+          />
+          <span className="text-xs text-slate-400">min total</span>
+        </div>
+        <p className="text-[11px] text-slate-400 mt-1">
+          For things like laundry: only the estimate is booked, but you stay put for
+          the full time and nothing that needs you elsewhere is scheduled into it.
+        </p>
+
+        <div className="flex items-center gap-2 mt-3">
+          <span className="text-xs text-slate-400 shrink-0">Buffer</span>
+          <div className="flex gap-1">
+            {BUFFER_OPTS.map(o => (
+              <button
+                key={String(o.val)}
+                type="button"
+                onClick={() => setBuffer(o.val)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                  buffer === o.val ? on : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                }`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-400 mt-1">
+          Transition time kept clear around this. Set None for quick chores — otherwise
+          a 5-minute job needs half an hour of free space to fit.
+        </p>
+      </div>
+    )
   }
 
   return (
@@ -119,12 +270,12 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
       <div className="absolute inset-0 bg-slate-950/40 dark:bg-slate-950/60" />
 
       <div
-        className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl flex flex-col gap-0 overflow-hidden"
+        className="relative w-full max-w-lg max-h-[88vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
-        {/* ── Mode toggle ── */}
-        <div className="px-5 pt-5 pb-0">
-          <div className="flex gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-xl p-0.5 w-fit mb-4">
+        {/* ── Header: what am I adding, and how much of the form do I want ── */}
+        <div className="px-5 pt-5 pb-4 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-xl p-0.5 w-fit">
             {(['task', 'habit'] as const).map(m => (
               <button
                 key={m}
@@ -141,12 +292,31 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
               </button>
             ))}
           </div>
+
+          <div className="flex gap-0.5 bg-slate-100 dark:bg-slate-800 rounded-xl p-0.5 w-fit">
+            {([false, true] as const).map(v => (
+              <button
+                key={String(v)}
+                onClick={() => chooseView(v)}
+                title={v ? 'Every field' : 'Just the essentials'}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  detailed === v
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                {v ? 'Detailed' : 'Compact'}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {/* ── Fields ── */}
+        <div className="flex-1 overflow-y-auto">
         {mode === 'task' ? (
           <>
-            {/* ── Quick-add input (tasks only) ── */}
-            <div className="px-5 pb-0">
+            {/* Quick add — the fastest path in either view */}
+            <div className="px-5">
               <p className="text-xs font-semibold uppercase tracking-wider text-accent-600 dark:text-accent-400 mb-2">
                 ✦ Quick add
               </p>
@@ -175,26 +345,27 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
 
             <div className="border-t border-slate-100 dark:border-slate-800" />
 
-            {/* ── Task fields ── */}
             <div className="p-5 flex flex-col gap-4">
+              {/* ── Essentials ── */}
               <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Title</label>
+                <label className={labelClass}>Title</label>
                 <input
                   ref={inputRef}
                   type="text"
                   value={title}
                   onChange={e => setTitle(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !detailed) handleCreate() }}
                   placeholder="Task title"
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                  className={fieldClass}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Project</label>
+                  <label className={labelClass}>Project</label>
                   <ProjectPicker projects={projects} value={projectId} onChange={setProject} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Priority</label>
+                  <label className={labelClass}>Priority</label>
                   <div className="flex gap-1">
                     {([1, 2, 3, 4] as const).map(p => (
                       <button key={p} onClick={() => setPriority(p)}
@@ -204,82 +375,102 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                   </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Energy required</label>
-                <div className="flex gap-1.5">
-                  {(['low', 'medium', 'high'] as const).map(e => (
-                    <button key={e} onClick={() => setEnergy(e)}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${energy === e ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900' : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'}`}>
-                      {ENERGY_ICON[e]} {e}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Estimate (min)</label>
+                  <label className={labelClass}>Estimate (min)</label>
                   <input type="number" min={1} value={estimate} onChange={e => setEstimate(e.target.value)} placeholder="e.g. 45"
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono" />
+                    className={`${fieldClass} font-mono`} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Due date</label>
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                    className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500" />
+                  <label className={labelClass}>Due date</label>
+                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={fieldClass} />
                 </div>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Repeat</label>
-                <RecurrencePicker value={rrule} onChange={setRrule} />
-              </div>
+
+              {/* ── Everything else ── */}
+              {detailed && (
+                <>
+                  <div>
+                    <label className={labelClass}>Notes</label>
+                    <textarea
+                      value={description}
+                      onChange={e => setDescription(e.target.value)}
+                      rows={2}
+                      placeholder="Anything you'll want in front of you when you sit down to it"
+                      className={`${fieldClass} resize-none`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={labelClass}>Energy required</label>
+                    <div className="flex gap-1.5">
+                      {(['low', 'medium', 'high'] as const).map(e => (
+                        <button key={e} onClick={() => setEnergy(e)}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${energy === e ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900' : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'}`}>
+                          {ENERGY_ICON[e]} {e}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={labelClass}>Repeat</label>
+                    <RecurrencePicker value={rrule} onChange={setRrule} />
+                  </div>
+
+                  <div>
+                    <label className={labelClass}>Not before</label>
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={fieldClass} />
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Won't be scheduled before this, however much free time there is.
+                      Recurring tasks set it themselves so the next one isn't pulled forward.
+                    </p>
+                  </div>
+
+                  {placementFields('accent')}
+
+                  <div>
+                    <label className={labelClass}>Urgency curve</label>
+                    <div className="flex flex-col gap-1.5">
+                      {CURVE_OPTS.map(o => (
+                        <button
+                          key={o.val}
+                          onClick={() => setCurve(o.val)}
+                          className={`flex items-start gap-2.5 px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                            curve === o.val
+                              ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                          }`}
+                        >
+                          <span className="text-xs font-semibold w-20 shrink-0 pt-0.5">{o.label}</span>
+                          <span className={`text-xs leading-snug ${curve === o.val ? 'opacity-70' : 'text-slate-400'}`}>{o.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </>
         ) : (
-          /* ── Habit fields ── */
-          <div className="p-5 flex flex-col gap-4">
+          /* ── Habit ── */
+          <div className="p-5 pt-0 flex flex-col gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">Habit name</label>
+              <label className={labelClass}>Habit name</label>
               <input
                 ref={inputRef}
                 type="text"
                 value={title}
                 onChange={e => setTitle(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleCreate() }}
+                onKeyDown={e => { if (e.key === 'Enter' && !detailed) handleCreate() }}
                 placeholder="e.g. Gym, Run, Meditate, Read"
                 className="w-full border border-violet-200 dark:border-violet-800 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                Priority
-              </label>
-              <div className="flex gap-1">
-                {([1, 2, 3, 4] as const).map(p => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPriority(p)}
-                    title={PRIORITY_LABELS[p]}
-                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
-                      priority === p
-                        ? 'bg-violet-600 border-violet-600 text-white'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300'
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Habits have no deadline, so priority is what decides which one gets
-                the good slot when the week is tight.
-              </p>
-            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                  Times per week
-                </label>
+                <label className={labelClass}>Times per week</label>
                 <div className="flex gap-1">
                   {[2, 3, 4, 5].map(n => (
                     <button
@@ -297,19 +488,14 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                   ))}
                 </div>
                 <input
-                  type="number"
-                  min={1}
-                  max={7}
-                  value={weeklyTarget}
+                  type="number" min={1} max={7} value={weeklyTarget}
                   onChange={e => setWeeklyTarget(e.target.value)}
                   placeholder="or type a number"
                   className="mt-1.5 w-full border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono placeholder:text-slate-300"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                  Session length
-                </label>
+                <label className={labelClass}>Session length</label>
                 <div className="flex gap-1">
                   {[30, 45, 60, 90].map(n => (
                     <button
@@ -327,48 +513,142 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                   ))}
                 </div>
                 <input
-                  type="number"
-                  min={5}
-                  step={5}
-                  value={estimate}
+                  type="number" min={5} step={5} value={estimate}
                   onChange={e => setEstimate(e.target.value)}
                   placeholder="minutes"
                   className="mt-1.5 w-full border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono placeholder:text-slate-300"
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wide mb-1.5">
-                Schedule
-                {!rrule && <span className="ml-1 normal-case text-violet-500 font-normal">● Any day</span>}
-              </label>
-              <RecurrencePicker value={rrule} onChange={setRrule} />
-            </div>
-            <p className="text-xs text-slate-400 -mt-2">
+
+            <p className="text-xs text-slate-400">
               {weeklyTarget && estimate
                 ? `Scheduling your week will book ${weeklyTarget} × ${estimate}m sessions on separate days.`
                 : 'Set a weekly target and session length to have this booked into your schedule automatically.'}
             </p>
+
+            {detailed && (
+              <>
+                <div>
+                  <label className={labelClass}>Notes</label>
+                  <textarea
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    rows={2}
+                    placeholder="Routine, gear, anything worth remembering"
+                    className={`${fieldClass} resize-none`}
+                  />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Priority</label>
+                  <div className="flex gap-1">
+                    {([1, 2, 3, 4] as const).map(p => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setPriority(p)}
+                        title={PRIORITY_LABELS[p]}
+                        className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                          priority === p
+                            ? 'bg-violet-600 border-violet-600 text-white'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Habits have no deadline, so priority is what decides which one gets
+                    the good slot when the week is tight.
+                  </p>
+                </div>
+
+                <div>
+                  <label className={labelClass}>Energy required</label>
+                  <div className="flex gap-1.5">
+                    {(['low', 'medium', 'high'] as const).map(e => (
+                      <button key={e} onClick={() => setEnergy(e)}
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                          energy === e
+                            ? 'bg-violet-600 border-violet-600 text-white'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-violet-300'
+                        }`}>
+                        {ENERGY_ICON[e]} {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClass}>
+                    Schedule
+                    {!rrule && <span className="ml-1 normal-case text-violet-500 font-normal">● Any day</span>}
+                  </label>
+                  <RecurrencePicker value={rrule} onChange={setRrule} />
+                </div>
+
+                <div>
+                  <label className={labelClass}>Meals</label>
+                  <button
+                    type="button"
+                    onClick={() => setAvoidBreaks(v => !v)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                      avoidBreaks
+                        ? 'bg-violet-600 border-violet-600 text-white'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-violet-300'
+                    }`}
+                  >
+                    <span className="text-sm shrink-0">{avoidBreaks ? '☑' : '☐'}</span>
+                    <span className="text-xs leading-snug">
+                      Not for an hour after a meal — for anything strenuous, like a gym
+                      session or a run.
+                    </span>
+                  </button>
+                </div>
+
+                {placementFields('violet')}
+
+                <p className="text-[11px] text-slate-400">
+                  Habits that shouldn't share a day — gym and running, say — are paired
+                  on the <a href="/habits" className="underline hover:text-violet-500">habits page</a>,
+                  where you can pick from the ones you already have.
+                </p>
+              </>
+            )}
           </div>
         )}
+        </div>
 
         {/* ── Actions ── */}
-        <div className="px-5 pb-5 flex gap-2">
-          <button
-            onClick={onClose}
-            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-2 px-3 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleCreate}
-            disabled={!title.trim() || isPending}
-            className={`flex-1 rounded-xl py-2.5 text-sm font-semibold hover:opacity-80 transition-opacity disabled:opacity-40 text-white ${
-              mode === 'habit' ? 'bg-violet-600' : 'bg-slate-900 dark:bg-white dark:text-slate-900'
-            }`}
-          >
-            {isPending ? 'Creating…' : mode === 'habit' ? '↻ Add habit' : '+ Add task'}
-          </button>
+        <div className="px-5 pb-5 pt-3 shrink-0 border-t border-slate-100 dark:border-slate-800">
+          {hiddenSummary.length > 0 && (
+            <p className="text-[11px] text-slate-400 mb-2">
+              Also applying: {hiddenSummary.join(' · ')} —{' '}
+              <button onClick={() => chooseView(true)} className="underline hover:text-accent-500">
+                show detailed
+              </button>
+            </p>
+          )}
+          {createError && <p className="text-xs text-amber-500 mb-2">{createError}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-2 px-3 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreate}
+              disabled={!title.trim() || isPending}
+              className={`flex-1 rounded-xl py-2.5 text-sm font-semibold hover:opacity-80 transition-opacity disabled:opacity-40 text-white ${
+                mode === 'habit' ? 'bg-violet-600' : 'bg-slate-900 dark:bg-white dark:text-slate-900'
+              }`}
+            >
+              {isPending ? 'Creating…' : mode === 'habit' ? '↻ Add habit' : '+ Add task'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

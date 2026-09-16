@@ -700,6 +700,16 @@ export async function createTask(data: {
   weekly_target?: number | null
   /** Explicit type override — 'habit' skips urgency scoring */
   taskType?: 'task' | 'recurring' | 'habit'
+  // ── Advanced fields, set from the add modal's detailed view ──
+  // Each lives behind a later migration, so they're written only when the
+  // caller actually supplied one: omitted, a pre-migration database still
+  // accepts the insert.
+  description?:        string | null
+  start_date?:         string | null
+  location?:           string | null
+  span_minutes?:       number | null
+  buffer_minutes?:     number | null
+  avoid_after_breaks?: boolean
 }) {
   const db = createServiceClient()
   const now = new Date().toISOString()
@@ -730,6 +740,12 @@ export async function createTask(data: {
       status:             'inbox',
       urgency_score,
       created_at:         now,
+      ...(data.description        ? { description:        data.description }        : {}),
+      ...(data.start_date         ? { start_date:         data.start_date }         : {}),
+      ...(data.location && data.location !== 'anywhere' ? { location: data.location } : {}),
+      ...(data.span_minutes       ? { span_minutes:       data.span_minutes }       : {}),
+      ...(data.buffer_minutes != null ? { buffer_minutes: data.buffer_minutes }     : {}),
+      ...(data.avoid_after_breaks ? { avoid_after_breaks: true }                    : {}),
     })
     .select()
     .single()
