@@ -86,8 +86,9 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
-  // Parents whose subtasks are tucked away
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  // Parents whose subtasks are showing. Tracking what's OPEN rather than what's
+  // shut means the default — an empty set — is everything tucked away.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [groupByProject, setGroupByProject] = useState(false)
 
   // Completing a regular task (opens MicroReflection)
@@ -259,7 +260,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   function renderTaskRows(list: TaskRow[]) {
     return list.flatMap(parentTask => {
               const kids = childrenOf.get(parentTask.id) ?? []
-              const isCollapsed = collapsed.has(parentTask.id)
+              const isCollapsed = !expanded.has(parentTask.id)
               const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
 
               return rows.map(task => {
@@ -281,7 +282,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                     <button
                       onClick={e => {
                         e.stopPropagation()
-                        setCollapsed(prev => {
+                        setExpanded(prev => {
                           const next = new Set(prev)
                           if (next.has(parentTask.id)) next.delete(parentTask.id)
                           else next.add(parentTask.id)
