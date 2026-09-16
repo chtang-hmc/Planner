@@ -6,8 +6,10 @@
  * habits page — it used to be hand-rolled (and hardcoded to Monday) in all
  * three. Everything goes through weekStartOf().
  *
- * Days are UTC throughout, matching how habit due dates are stored.
+ * Days are the user's local calendar days — see `src/lib/day.ts`. Weekly
+ * targets count the same days the heatmap draws, so they have to agree.
  */
+import { localDayStr, addDays, dayOfWeek } from '@/lib/day'
 
 /** 0 = Sunday … 6 = Saturday, as returned by Date#getUTCDay(). */
 export type WeekStartDay = 0 | 1 | 6
@@ -25,15 +27,22 @@ export function isWeekStartDay(v: unknown): v is WeekStartDay {
 }
 
 /**
- * The YYYY-MM-DD (UTC) of the week-start day on or before `date`.
+ * The YYYY-MM-DD of the week-start day on or before a given *day*.
  *
- * weekStartOf(Wed 2026-09-16, 1) → '2026-09-14'  (Monday)
- * weekStartOf(Wed 2026-09-16, 0) → '2026-09-13'  (Sunday)
+ * weekStartOfDay('2026-09-16', 1) → '2026-09-14'  (Monday)
+ * weekStartOfDay('2026-09-16', 0) → '2026-09-13'  (Sunday)
+ *
+ * Takes a day string rather than an instant: which week an instant belongs to
+ * depends on the timezone, and that question is answered once, by the caller,
+ * with `localDayStr`.
  */
-export function weekStartOf(date: Date, startDay: number): string {
-  const d = new Date(date)
-  d.setUTCDate(d.getUTCDate() - daysSinceWeekStart(d.getUTCDay(), startDay))
-  return d.toISOString().slice(0, 10)
+export function weekStartOfDay(dayStr: string, startDay: number): string {
+  return addDays(dayStr, -daysSinceWeekStart(dayOfWeek(dayStr), startDay))
+}
+
+/** The week containing an instant, resolved in `tz`. */
+export function weekStartOf(date: Date, startDay: number, tz: string): string {
+  return weekStartOfDay(localDayStr(date, tz), startDay)
 }
 
 /**

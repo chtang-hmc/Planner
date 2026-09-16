@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef } from 'react'
+import { useState, useSyncExternalStore, useTransition, useRef } from 'react'
 import {
   saveWorkingHours,
   saveEnergyLevel,
@@ -496,7 +496,40 @@ function WeekStartConfig({ initial }: { initial: number }) {
       </div>
 
       {error && <p className="text-xs text-amber-500 mt-2">{error}</p>}
+
+      <TimezoneNote />
     </div>
+  )
+}
+
+// ── Timezone ──────────────────────────────────────────────────────────────────
+
+/**
+ * Shows the zone habit days are counted in.
+ *
+ * Read-only by design: it's reported from the browser on every page load
+ * (`TimezoneSync`), so it's already right, and a 400-entry picker to confirm
+ * what the machine knows would be a worse answer than a sentence. Travelling
+ * updates it on the next load, which is the behaviour you'd want anyway.
+ */
+function TimezoneNote() {
+  // The server's zone isn't the user's, so this can only be read in the
+  // browser. useSyncExternalStore renders nothing on the server and the real
+  // value on the client, without a hydration mismatch or an effect that sets
+  // state on mount. The subscribe callback is a no-op: a browser's zone doesn't
+  // change under a live page.
+  const tz = useSyncExternalStore(
+    () => () => {},
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+    () => null,
+  )
+  if (!tz) return null
+  return (
+    <p className="text-xs text-slate-400 mt-3">
+      Days are counted in <span className="font-medium text-slate-500 dark:text-slate-300">{tz}</span>,
+      detected from this browser — so an evening habit counts for the evening you had, not for
+      tomorrow in UTC.
+    </p>
   )
 }
 

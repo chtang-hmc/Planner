@@ -4,7 +4,11 @@ import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
-import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
+import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
+import {
+  fetchTimezone, localDayStr, todayStr, localDayRange, startOfLocalDay,
+  addDays as addDayStr,
+} from '@/lib/day'
 import { getValidToken, deleteTaskBlock, createTaskBlock } from '@/lib/google-calendar'
 
 // Fields whose changes require an urgency recompute
@@ -96,6 +100,10 @@ export async function completeTask(
   if (shouldSpawn) {
     const today = new Date()
     const now   = new Date().toISOString()
+    // Habit days are the user's calendar days, so "which day did this close
+    // out" and "when does the next one open" are both asked in their zone.
+    const tz       = await fetchTimezone(db)
+    const todayStr = localDayStr(completedAt, tz)
 
     // For rrule habits/tasks: compute next date from rule.
     // Anchor from the task's own due_date (not today) so completing a weekly
@@ -108,13 +116,11 @@ export async function completeTask(
       const nextDate = getNextOccurrence(taskRow.rrule, anchor)
       if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
     } else if (isHabit) {
-      // UTC midnight of the next calendar day — local midnight would land a few
-      // hours either side of the UTC day boundary and the habits page (which
-      // filters on UTC day edges) would show the habit a day early or late.
-      const tomorrow = new Date(today)
-      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
-      tomorrow.setUTCHours(0, 0, 0, 0)
-      nextDue = tomorrow.toISOString()
+      // The instant the user's next day begins. The habits page asks for
+      // occurrences due by the end of the local day, so a habit closed out
+      // tonight reappears tomorrow morning wherever the user is — not at
+      // whatever hour UTC midnight happens to fall for them.
+      nextDue = startOfLocalDay(addDayStr(todayStr, 1), tz).toISOString()
     }
 
     // A habit must never have two pending occurrences: completing it twice in
@@ -180,11 +186,8 @@ export async function completeTask(
       })
     }
 
-    // Upsert habit streak
-    const todayStr = today.toISOString().slice(0, 10)
-
     // Start of the current week, per the user's configured first day
-    const weekStartStr = weekStartOf(today, await fetchWeekStartDay(db))
+    const weekStartStr = weekStartOfDay(todayStr, await fetchWeekStartDay(db))
 
     const { data: streak } = await db
       .from('habit_streaks')
@@ -198,10 +201,7 @@ export async function completeTask(
       // reads it as "not consecutive" and resets a long streak to 1.
       if (streak.last_completed !== todayStr) {
         // Consecutive-day streak
-        const yesterday = new Date(today)
-        yesterday.setDate(yesterday.getDate() - 1)
-        const yesterdayStr = yesterday.toISOString().slice(0, 10)
-        const consecutive = streak.last_completed === yesterdayStr
+        const consecutive = streak.last_completed === addDayStr(todayStr, -1)
         const newStreak = consecutive ? streak.current_streak + 1 : 1
 
         // Weekly count — reset if the stored week_start is from a different week
@@ -472,13 +472,14 @@ export async function setHabitCompletion(
 ): Promise<{ error?: string }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: 'Bad date' }
 
-  const today = new Date().toISOString().slice(0, 10)
-  if (dateStr > today) return { error: "Can't log a habit in the future" }
-
   const db = createServiceClient()
+  const tz = await fetchTimezone(db)
 
-  const dayStart = `${dateStr}T00:00:00Z`
-  const dayEnd   = `${dateStr}T23:59:59.999Z`
+  if (dateStr > todayStr(tz)) return { error: "Can't log a habit in the future" }
+
+  // The user's day, expressed as the instants that bound it. Half-open, so a
+  // completion in the last millisecond of a day can't fall between two days.
+  const { startISO: dayStart, endISO: dayEnd } = localDayRange(dateStr, tz)
 
   if (!done) {
     // Un-logging has to take the calendar event with it. The row is about to
@@ -491,7 +492,7 @@ export async function setHabitCompletion(
       .eq('title', title)
       .eq('status', 'done')
       .gte('completed_at', dayStart)
-      .lte('completed_at', dayEnd)
+      .lt('completed_at', dayEnd)
 
     const eventIds = (doomed ?? []).map(r => r.gcal_event_id).filter(Boolean) as string[]
     if (eventIds.length > 0) {
@@ -512,7 +513,7 @@ export async function setHabitCompletion(
       .eq('title', title)
       .eq('status', 'done')
       .gte('completed_at', dayStart)
-      .lte('completed_at', dayEnd)
+      .lt('completed_at', dayEnd)
     if (error) return { error: error.message }
     revalidatePath('/habits')
     return {}
@@ -526,7 +527,7 @@ export async function setHabitCompletion(
     .eq('title', title)
     .eq('status', 'done')
     .gte('completed_at', dayStart)
-    .lte('completed_at', dayEnd)
+    .lt('completed_at', dayEnd)
     .limit(1)
   if (existing && existing.length > 0) return {}
 
@@ -542,6 +543,12 @@ export async function setHabitCompletion(
 
   if (!template) return { error: 'Habit not found' }
 
+  // Midday in the user's zone: safely inside the day whichever way it's read,
+  // and honest that the heatmap records a day, not a time.
+  const noonLocal = new Date(
+    startOfLocalDay(dateStr, tz).getTime() + 12 * 60 * 60_000,
+  ).toISOString()
+
   const { error } = await db.from('tasks').insert({
     title,
     description:       template.description,
@@ -556,8 +563,10 @@ export async function setHabitCompletion(
     rrule:             template.rrule,
     weekly_target:     template.weekly_target ?? null,
     due_date:          null,
-    created_at:        `${dateStr}T12:00:00Z`,
-    completed_at:      `${dateStr}T12:00:00Z`,
+    // Noon local, so the day survives being read back in any nearby zone and
+    // reads as "sometime that day" rather than a time we're pretending to know.
+    created_at:        noonLocal,
+    completed_at:      noonLocal,
     ...(template.exclusive_group ? { exclusive_group: template.exclusive_group } : {}),
   })
   if (error) return { error: error.message }
@@ -575,11 +584,9 @@ export async function setHabitCompletion(
  * noon, or you're filling in Tuesday's gym session — and you want the session on
  * your calendar as a record of where the hour actually went.
  *
- * The day it counts for is the **UTC** day of `startISO`, not the local one.
- * That's the boundary the rest of the habits page uses — spawned occurrences,
- * the completion heatmap, the weekly count — and the day a completion lands on
- * has to be the day the heatmap will draw it on. It's returned so the caller's
- * optimistic update marks the same cell.
+ * The day it counts for is the user's local day containing `startISO`, derived
+ * here and returned so the caller's optimistic update marks the same cell the
+ * heatmap will draw.
  */
 export async function logHabitSession(
   habitId: string,
@@ -595,8 +602,9 @@ export async function logHabitSession(
   if (isNaN(start.getTime()))       return { error: 'Bad start time' }
   if (start.getTime() > Date.now()) return { error: "Can't log a session that hasn't happened yet" }
 
-  const dateStr = start.toISOString().slice(0, 10)
   const db = createServiceClient()
+  const tz      = await fetchTimezone(db)
+  const dateStr = localDayStr(start, tz)
 
   const { data: habit } = await db
     .from('tasks')
@@ -605,8 +613,7 @@ export async function logHabitSession(
     .maybeSingle()
   if (!habit) return { error: 'Habit not found' }
 
-  const dayStart = `${dateStr}T00:00:00Z`
-  const dayEnd   = `${dateStr}T23:59:59.999Z`
+  const { startISO: dayStart, endISO: dayEnd } = localDayRange(dateStr, tz)
 
   // One completion per day, the same rule the heatmap enforces.
   const { data: already } = await db
@@ -616,18 +623,17 @@ export async function logHabitSession(
     .eq('title', habit.title)
     .eq('status', 'done')
     .gte('completed_at', dayStart)
-    .lte('completed_at', dayEnd)
+    .lt('completed_at', dayEnd)
     .limit(1)
   if (already && already.length > 0) return { error: 'Already logged for that day' }
 
   const endISO = new Date(start.getTime() + opts.minutes * 60_000).toISOString()
-  const todayUTC = new Date().toISOString().slice(0, 10)
 
   // Logging today against the pending row completes it properly — streak,
   // weekly count and the next occurrence all follow. Inserting a second row
   // instead would leave today's card still asking to be done.
   let rowId: string
-  if (dateStr === todayUTC && (habit.status === 'inbox' || habit.status === 'active')) {
+  if (dateStr === todayStr(tz) && (habit.status === 'inbox' || habit.status === 'active')) {
     await completeTask(habitId, opts.minutes, null, null, false, { completedAtISO: opts.startISO })
     rowId = habitId
   } else {

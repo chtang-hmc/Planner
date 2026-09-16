@@ -8,44 +8,40 @@ import AddTaskModal from '@/components/AddTaskModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import TaskDetail from '@/components/TaskDetail'
 import { daysSinceWeekStart, weekDayOrder } from '@/lib/week'
+import { addDays, dayOfWeek, todayStr as todayIn } from '@/lib/day'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
 const DAY_LETTERS_BY_DOW = ['S','M','T','W','T','F','S']   // indexed by Date#getDay()
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
-function toDateStr(d: Date) {
-  return d.toISOString().slice(0, 10)
-}
-function addDays(d: Date, n: number) {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r
+/** Month of a day string, 0-11 — parsed as a pure date, no timezone in play. */
+function monthOf(dayStr: string) {
+  return parseInt(dayStr.slice(5, 7), 10) - 1
 }
 
 // ── Streak computation (from raw completion dates) ────────────────────────────
 
-function computeStreak(dates: string[]): { current: number; longest: number; total: number } {
+function computeStreak(dates: string[], today: string): { current: number; longest: number; total: number } {
   const unique = [...new Set(dates)].sort()
   if (unique.length === 0) return { current: 0, longest: 0, total: 0 }
 
-  const todayStr     = toDateStr(new Date())
-  const yesterdayStr = toDateStr(addDays(new Date(), -1))
-  const desc         = [...unique].reverse()
+  const yesterday = addDays(today, -1)
+  const desc      = [...unique].reverse()
 
   // Current streak: consecutive days backwards from today or yesterday
   let current = 0
-  if (desc[0] === todayStr || desc[0] === yesterdayStr) {
+  if (desc[0] === today || desc[0] === yesterday) {
     let prev = desc[0]; current = 1
     for (let i = 1; i < desc.length; i++) {
-      const expected = toDateStr(addDays(new Date(prev + 'T12:00:00'), -1))
-      if (desc[i] === expected) { current++; prev = desc[i] } else break
+      if (desc[i] === addDays(prev, -1)) { current++; prev = desc[i] } else break
     }
   }
 
   // Longest streak
   let longest = 0, run = 1
   for (let i = 1; i < unique.length; i++) {
-    const expected = toDateStr(addDays(new Date(unique[i-1] + 'T12:00:00'), 1))
-    if (unique[i] === expected) { run++; longest = Math.max(longest, run) }
+    if (unique[i] === addDays(unique[i-1], 1)) { run++; longest = Math.max(longest, run) }
     else run = 1
   }
   longest = Math.max(longest, run, current)
@@ -55,29 +51,33 @@ function computeStreak(dates: string[]): { current: number; longest: number; tot
 
 // ── 16-week completion calendar ───────────────────────────────────────────────
 
-function CompletionCalendar({ dates, weekStartDay, onToggle }: {
+function CompletionCalendar({ dates, today, weekStartDay, onToggle }: {
   dates: string[]
+  /** Today in the user's timezone — the grid is built from day strings only. */
+  today: string
   weekStartDay: number
   onToggle: (dateStr: string, done: boolean) => void
 }) {
   const dateSet = new Set(dates)
-  const today   = new Date(); today.setHours(0, 0, 0, 0)
 
   // Grid: 16 weeks, starting 15 weeks back on the user's first day of the week
   // so each column is one of their weeks, not a fixed Sunday-Saturday block.
-  const startDate = addDays(today, -(15 * 7 + daysSinceWeekStart(today.getDay(), weekStartDay)))
-  const totalDays = 16 * 7
-  const allDays   = Array.from({ length: totalDays }, (_, i) => addDays(startDate, i))
+  //
+  // Stepped as day strings rather than Date objects: the old version built
+  // local Dates and read them back as UTC, which shifted every cell by a day
+  // for anyone west of the meridian.
+  const startDate = addDays(today, -(15 * 7 + daysSinceWeekStart(dayOfWeek(today), weekStartDay)))
+  const allDays   = Array.from({ length: 16 * 7 }, (_, i) => addDays(startDate, i))
 
   // Chunk into weeks (columns of 7)
-  const weeks: Date[][] = []
+  const weeks: string[][] = []
   for (let i = 0; i < allDays.length; i += 7) weeks.push(allDays.slice(i, i + 7))
 
   // Month labels: first col where month changes
   const monthMarkers: { col: number; label: string }[] = []
   let lastMonth = -1
   weeks.forEach((week, col) => {
-    const m = week[0].getMonth()
+    const m = monthOf(week[0])
     if (m !== lastMonth) { monthMarkers.push({ col, label: MONTH_NAMES[m] }); lastMonth = m }
   })
 
@@ -109,11 +109,10 @@ function CompletionCalendar({ dates, weekStartDay, onToggle }: {
           {/* Cells */}
           {weeks.map((week, col) => (
             <div key={col} className="flex flex-col gap-px">
-              {week.map((day, row) => {
-                const ds     = toDateStr(day)
-                const done   = dateSet.has(ds)
-                const future = day > today
-                const isToday = ds === toDateStr(today)
+              {week.map((ds, row) => {
+                const done    = dateSet.has(ds)
+                const future  = ds > today
+                const isToday = ds === today
                 return (
                   <button
                     key={row}
@@ -142,6 +141,7 @@ function CompletionCalendar({ dates, weekStartDay, onToggle }: {
 function HabitCard({
   habit,
   dates,
+  today,
   doneToday,
   onDone,
   onOpen,
@@ -153,6 +153,7 @@ function HabitCard({
 }: {
   habit: Task & { project: Project }
   dates: string[]
+  today: string
   doneToday: boolean
   onDone: () => void
   onOpen: () => void
@@ -162,7 +163,7 @@ function HabitCard({
   onToggleDate: (dateStr: string, done: boolean) => void
   onLogAtTime: () => void
 }) {
-  const { current, longest, total } = computeStreak(dates)
+  const { current, longest, total } = computeStreak(dates, today)
   const freq = habit.rrule ? rruleToLabel(habit.rrule) : 'Anytime'
   const proj = habit.project ?? INBOX_PROJECT
 
@@ -258,7 +259,7 @@ function HabitCard({
           <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Last 16 weeks</p>
           <p className="text-[10px] text-slate-300 dark:text-slate-600">click a day to log it</p>
         </div>
-        <CompletionCalendar dates={dates} weekStartDay={weekStartDay} onToggle={onToggleDate} />
+        <CompletionCalendar dates={dates} today={today} weekStartDay={weekStartDay} onToggle={onToggleDate} />
       </div>
     </div>
   )
@@ -274,10 +275,12 @@ interface Props {
   streaks:          Record<string, HabitStreak>
   gcalWriteEnabled: boolean
   weekStartDay:     number
+  /** The user's timezone, so the page and the server agree on what "today" is. */
+  tz:               string
 }
 
 export default function HabitsView({
-  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled, weekStartDay,
+  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled, weekStartDay, tz,
 }: Props) {
   // Track which habits got completed this session (optimistic)
   const [sessionDone, setSessionDone] = useState<Set<string>>(new Set(serverDoneToday))
@@ -292,7 +295,7 @@ export default function HabitsView({
   const [logging,     setLogging]     = useState<(Task & { project: Project }) | null>(null)
   const [, startTransition]          = useTransition()
 
-  const todayStr = toDateStr(new Date())
+  const todayStr = todayIn(tz)
 
   function getDates(habit: Task) {
     const base  = completionMap[habit.title] ?? []
@@ -422,6 +425,7 @@ export default function HabitsView({
                       key={habit.id}
                       habit={habit}
                       dates={getDates(habit)}
+                      today={todayStr}
                       doneToday={false}
                       onDone={() => handleDone(habit)}
                       onOpen={() => setDetailTask(habit)}
@@ -447,6 +451,7 @@ export default function HabitsView({
                         key={habit.id}
                         habit={habit}
                         dates={getDates(habit)}
+                        today={todayStr}
                         doneToday={true}
                         onDone={() => {}}
                         onOpen={() => setDetailTask(habit)}

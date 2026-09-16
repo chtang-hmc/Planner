@@ -79,12 +79,6 @@ export default function LogHabitModal({
   const end   = start ? new Date(start.getTime() + minutes * 60_000) : null
   const inFuture = start ? start.getTime() > opened.at : false
 
-  // The habits page counts days in UTC — spawned occurrences, the heatmap, the
-  // weekly total. A late session can therefore land on the next day's square.
-  // Saying so beats having the streak move somewhere you didn't expect.
-  const countsAs = start ? start.toISOString().slice(0, 10) : null
-  const rollsOver = !!countsAs && !!dateStr && countsAs !== dateStr
-
   function handleLog() {
     if (!start || inFuture) return
     setError(null)
@@ -171,22 +165,11 @@ export default function LogHabitModal({
           </div>
 
           {start && end && (
-            <div>
-              <p className={`text-xs ${inFuture ? 'text-amber-500' : 'text-slate-400'}`}>
-                {inFuture
-                  ? "That's in the future — pick a time that's already happened."
-                  : `${start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · ${fmtDuration(minutes)}`}
-              </p>
-              {!inFuture && rollsOver && (
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Counts toward{' '}
-                  {new Date(countsAs + 'T12:00:00Z').toLocaleDateString(undefined, {
-                    weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
-                  })}
-                  {' '}on the streak — habit days run on UTC.
-                </p>
-              )}
-            </div>
+            <p className={`text-xs ${inFuture ? 'text-amber-500' : 'text-slate-400'}`}>
+              {inFuture
+                ? "That's in the future — pick a time that's already happened."
+                : `${start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · ${fmtDuration(minutes)}`}
+            </p>
           )}
 
           <button

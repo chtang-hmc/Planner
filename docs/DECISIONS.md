@@ -113,6 +113,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
 - `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
 - `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
+- `0014_user_timezone.sql` — `user_scheduling_config.timezone`; habit days are the user's calendar days, and the server needs to know which zone that is
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -515,9 +516,25 @@ When a habit is completed for the day, it's moved to a "Done today" section (gre
 
 The page runs **two** queries: pending habits (`status in (inbox, active)`, due today or earlier) and habits completed today (`status = 'done'`, `completed_at >= start of today UTC`), merged by title with the pending row winning. The second query is load-bearing — completing a habit flips its row to `done` and spawns the next occurrence for tomorrow, so without it a completed habit disappears from the page entirely rather than showing as done. Deriving `doneToday` from the pending list alone (the original approach) always produced an empty set.
 
-### Day boundaries are UTC
+### Day boundaries are the user's local days
 
-`due_date` on a spawned occurrence is written at **UTC midnight** (`setUTCHours(0,0,0,0)`), and the habits page compares against UTC day edges. Both sides must agree: an earlier version spawned at *local* midnight while filtering on *local* end-of-day, which are 1 ms apart — a spawned habit could never satisfy "due today or earlier" and the page rendered empty. This follows the same rule as all-day calendar events (always `T00:00:00Z`).
+*(Was UTC. Changed 2026-09-15 — see "Why it changed" below.)*
+
+Every day-shaped question about a habit — which heatmap square a session lights, whether it's already logged today, what counts toward this week's target, when tomorrow's occurrence appears — is answered in the user's timezone, through `src/lib/day.ts`.
+
+**Two representations, kept apart.** A *day string* (`YYYY-MM-DD`) is a calendar day with no time in it; arithmetic on those (`addDays`, `dayOfWeek`) is pure UTC math and can't drift, because every UTC day is exactly 24 hours. An *instant* is a moment; turning one into a day needs a timezone, which is the single job of `localDayStr`. Mixing the two is what the old code did — building `Date` objects at local midnight and reading them back with `toISOString().slice(0,10)` — which silently shifted every heatmap cell for anyone west of the meridian.
+
+**Where the timezone comes from.** `user_scheduling_config.timezone` (migration 0014), reported by the browser on every page load via `TimezoneSync` and shown in Settings. It has to be stored rather than read at the point of use, because the habits page builds the heatmap *on the server* and server actions do the streak math. `saveTimezone` returns without writing when nothing changed, so the per-load sync costs one query and triggers no revalidation. Missing column or empty value falls back to UTC — exactly the old behaviour, so the app works before 0014 runs.
+
+**DST is handled by asking, not by arithmetic.** `startOfLocalDay` finds the offset by asking `Intl` what the wall clock reads at a candidate instant, then re-reads it at the corrected instant — two passes, because a DST change can move the offset between them. Verified against the 25-hour and 23-hour US days and a half-hour zone (Asia/Kolkata). The one input it can't represent is a local midnight that doesn't exist (spring-forward at 00:00, a handful of zones); it lands on the following hour, the closest real instant.
+
+**Old rows needed no backfill.** Occurrences spawned before the change carry UTC-midnight `due_date`s; new ones carry local midnight. The same calendar day, a different instant — and reading one as the other makes tomorrow's habit appear today (west of UTC for old rows, east of it for new ones). So the page treats a habit as available only once its day has begun under *both* readings, taking the earlier of the two thresholds. Correct for either format, and still correct once every row is local. Backfilled completions were already stored at midday, which is safely inside the day in any nearby zone, so their squares didn't move.
+
+### Why it changed
+
+The UTC rule was right about one thing: both sides of a comparison must agree, and they now do. It was wrong about which day a session belongs to. A 7pm gym session in California is 02:00 UTC the next day, so it lit tomorrow's square, counted toward tomorrow's target, and moved the streak — for evening habits, which is most of them.
+
+The original note justified UTC as matching all-day calendar events. That rule still holds for `due_date` on *tasks* (an all-day event is a date, and `T00:00:00Z` keeps it from sliding), but a habit completion isn't an all-day event — it's a moment that has to be filed under a day, and only the user's timezone can say which.
 
 ### Weekly targets
 
@@ -547,7 +564,7 @@ The one-tap "+" records that a habit happened, which is all most logs need. `log
 
 **Logged events are never tagged `plannerAuto`.** The tag is what the auto-schedule sweep deletes; a logged session is history, and the next "Schedule my week" would erase it. The event id is stored on the completion row instead, and un-logging deletes the event through it — without that, the row disappears along with the only record of the event, orphaning it on the calendar forever.
 
-**The day it counts for is the UTC day of the start instant**, derived server-side and returned to the caller. Everything else about habits buckets on UTC day edges (see *Day boundaries are UTC*), and the day a completion lands on has to be the day the heatmap draws it on. The consequence is real and visible: an evening session west of UTC counts toward the next day. The log sheet says so when it happens rather than letting the streak move somewhere unexpected.
+**The day it counts for is the user's local day containing the start instant**, derived server-side and returned to the caller so the optimistic update marks the cell the heatmap will draw. See *Day boundaries are the user's local days*.
 
 **A failed calendar write doesn't fail the log.** The action returns `dateStr` whenever a row was written, with `error` describing only what didn't happen; the sheet shows the warning and still closes out the log. Reporting total failure for a session that *was* recorded would be a lie, and re-logging would then hit the one-per-day guard.
 
