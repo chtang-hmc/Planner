@@ -767,6 +767,18 @@ Width and collapsed state live in `localStorage` (`src/lib/sidebar-prefs.ts`), r
 - Pointer events, not mouse events, so a trackpad or pen drags too. The listeners are on the window because the pointer leaves a 6px grip almost immediately and a handler bound to the grip would stop receiving moves. Cursor and `user-select` are set on `<body>` for the duration so they survive the pointer crossing other elements.
 - The drag measures from the sidebar's **own left edge**, not from `clientX` alone. They are identical in the app, but assuming x=0 makes the component work in exactly one position and misbehave anywhere it is previewed or embedded — which is how the bug showed up.
 
+### Analytics
+
+Six chart components each carried their own copy of the card shell — border, radius, padding, heading — so they had already drifted between `tracking-wide` and `tracking-wider`. `Panel` is now the one shell, with `Empty` for the no-data state.
+
+**Colour encodes magnitude, not category.** Urgency buckets were slate / slate / amber / orange / red, and energy was slate / orange / amber / emerald / teal. Both are *one scale*, so five unrelated hues made the colour say "which category" when what it encodes is "how much". Each is now a single hue deepening across the range: red for urgency, the accent for energy, in the bars and the time-of-day heatmap alike.
+
+**Four stat boxes became one strip** divided by hairlines, with 2xl numbers instead of 3xl. Two of the four were tinted for decoration; only average urgency keeps colour, because it is the one number there that is telling you to act.
+
+**Project workload reads across, not down.** Name, bar and figures on one line with the track capped, instead of a full-width bar stacked under its label — past 1200px that was a very long hairline saying very little, with the name and its numbers at opposite ends of the screen.
+
+Bars throughout are slimmer, capped in width, square-cornered rather than heavily rounded, and sit on a real baseline.
+
 ### Calendar panel
 
 Restyled to the row language: hairline-separated events on one surface instead of a filled, bordered box per event; 13px titles with 11px muted times; the same uppercase micro-label and day dividers as the Habits section. The `📅` prompt and the `↺` / `✕` glyph buttons became words.

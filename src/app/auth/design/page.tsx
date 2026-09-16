@@ -28,6 +28,8 @@ import { HabitStreak, CalendarEvent } from '@/types'
 import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
+import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
+import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -162,6 +164,34 @@ function ChromePreview() {
   )
 }
 
+const bias = (ratio: number, n: number) =>
+  ({ id: 'b', project_id: 'p', bias_ratio: ratio, sample_count: n, updated_at: '' })
+
+const ANALYTICS: AnalyticsData = {
+  weekStartDay: 1,
+  activeCount: 23, doneCount: 141, totalEstMinutes: 1290, avgUrgency: 46,
+  urgencyBuckets: [4, 7, 6, 4, 2],
+  projectStats: [
+    { project: PP,     activeCount: 8, estimatedMinutes: 420, doneCount: 31, bias: bias(1.35, 12) },
+    { project: TEACH,  activeCount: 4, estimatedMinutes: 260, doneCount: 48, bias: bias(0.92, 20) },
+    { project: CLIN,   activeCount: 6, estimatedMinutes: 310, doneCount: 22, bias: bias(1.08, 7) },
+    { project: COURSE, activeCount: 3, estimatedMinutes: 190, doneCount: 26, bias: bias(1.7, 5) },
+    { project: HOME,   activeCount: 2, estimatedMinutes: 110, doneCount: 14, bias: null },
+  ],
+  accurateSessions: 38, inaccurateSessions: 17,
+  recentEnergy: Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() - (6 - i))
+    return { date: d.toISOString().slice(0, 10), avg: [3.2, 4.1, 2.8, 3.9, 4.4, 3.1, 3.6][i], count: 3 }
+  }),
+  energyPatterns: Array.from({ length: 7 * 18 }, (_, i) => ({
+    day_of_week: Math.floor(i / 18),
+    hour_of_day: (i % 18) + 6,
+    avg_level: 1 + ((Math.sin(i * 1.7) + 1) * 2),
+    sample_count: 4,
+    computed_at: '',
+  })),
+}
+
 // ── Preview ──────────────────────────────────────────────────────────────────
 
 function LayoutPreview({ id, expanded, onToggle }: {
@@ -250,6 +280,15 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <ChromePreview />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Analytics</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800">
+                  <AnalyticsView data={ANALYTICS} />
+                </div>
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
