@@ -736,6 +736,18 @@ Four layouts means four row implementations, and every feature that touches a ro
 
 **`TaskRowProps` is the contract.** Everything a row can show arrives through it, so adding a field makes the compiler point at each layout that hasn't handled it. If a layout should skip it, add a line to that layout's `omits` so the settings page says so.
 
+### The toolbar and the habits section
+
+The rows were redesigned first; the chrome around them followed, in the same language.
+
+**One control idiom.** The filter row used to sit in its own band below the header and mixed three ways of saying "this is a control" — a segmented group, a bare `<select>`, and toggle pills, each with its own height, radius and border. `CONTROL` in `TaskChrome.tsx` is now the shared shell, with `Segmented` for mutually exclusive choices and `Toggle` for on/off filters. Accent means a control is actively changing what you see; everything else stays neutral.
+
+**Actions grouped with actions.** Plan and Schedule week started in the filter row. They aren't filters, and at full width they wrapped onto a line of their own holding nothing else. They now sit beside Add task in the title row: things you *do* on top, ways of *looking* below.
+
+**Habits stopped being a different app.** The section was violet-bordered cards with emoji buttons, sitting under a list of neutral hairline rows. It's now the same surface as Rail — one container, hairline dividers, neutral circle, "Log time" appearing on hover. The weekly dots survived because they're genuinely information-dense, but they use the accent rather than violet, and only when the target is met. The streak reads "12 days running" instead of a flame.
+
+`TaskChrome.tsx` exists so these can be rendered against fixtures at `/auth/design` — the app can't be opened in a browser without a session, and a redesign you can't look at is one you're guessing at.
+
 ### What all four dropped
 
 - **The urgency score and curve glyph** (`67`, `╱ ⌒ ⌐`). An internal model leaking into the UI — nobody acts on "67". It stays on the task detail panel.

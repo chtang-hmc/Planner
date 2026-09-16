@@ -23,6 +23,8 @@ import { useState, useSyncExternalStore } from 'react'
 import { Project } from '@/types'
 import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
+import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
+import { HabitStreak } from '@/types'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,59 @@ const OTHERS: LayoutTask[] = [
     parent: { id: 'elsewhere', title: 'Philosophy Readings' } },
   task({ title: 'Learn a new language sometime this year', project: INBOX, priority: 1, energy_required: 'low', type: 'someday' }),
 ]
+
+const HABITS = [
+  { t: task({ title: 'Gym',   project: HOME, type: 'habit', weekly_target: 2, estimated_minutes: 90 }),
+    s: { task_id: '1', current_streak: 3, longest_streak: 9, last_completed: '', week_start: '', completions_this_week: 2 } },
+  { t: task({ title: 'Piano', project: HOME, type: 'habit', weekly_target: 7, estimated_minutes: 60, rrule: 'FREQ=DAILY' }),
+    s: { task_id: '2', current_streak: 12, longest_streak: 12, last_completed: '', week_start: '', completions_this_week: 4 } },
+  { t: task({ title: 'Learn Language', project: HOME, type: 'habit' }), s: null },
+] as { t: LayoutTask; s: HabitStreak | null }[]
+
+/** The toolbar, against fixture state. */
+function ToolbarPreview() {
+  const [view, setView]       = useState('list')
+  const [energy, setEnergy]   = useState('all')
+  const [relevant, setRel]    = useState(true)
+  const [byProject, setByPrj] = useState(false)
+  const [someday, setSomeday] = useState(false)
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="px-6 pt-4 pb-3 flex flex-col gap-3">
+        <div className="flex items-baseline justify-between gap-4">
+          <div className="flex items-baseline gap-3 min-w-0">
+            <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tasks</h1>
+            <span className="text-xs text-slate-400 tabular-nums truncate">9 tasks · 8h 10m</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className={`${CONTROL} hidden md:flex items-center overflow-hidden`}>
+              <input type="date" defaultValue="2026-09-16"
+                className="px-2 h-full text-xs bg-transparent text-slate-600 dark:text-slate-300 focus:outline-none" />
+              <button className="px-2.5 h-full text-xs font-medium text-slate-500 border-l border-slate-200 dark:border-slate-700">Plan</button>
+            </div>
+            <button className={`${CONTROL} px-3 font-medium text-slate-500`}>Schedule week</button>
+            <button className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-medium px-3.5 h-7 rounded-lg">
+              Add task
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Segmented value={view} onChange={setView}
+            options={[{ id: 'list', label: 'List' }, { id: 'upcoming', label: 'Upcoming' }]} />
+          <span className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
+          <Segmented value={energy} onChange={setEnergy} hint="Energy"
+            options={[{ id: 'all', label: 'Any' }, { id: 'low', label: 'Low' }, { id: 'medium', label: 'Med' }, { id: 'high', label: 'High' }]} />
+          <select className={`${CONTROL} px-2.5 text-slate-600 dark:text-slate-300 max-w-[10rem]`}>
+            <option>All projects</option>
+          </select>
+          <Toggle on={relevant}  onClick={() => setRel(v => !v)}>Relevant</Toggle>
+          <Toggle on={byProject} onClick={() => setByPrj(v => !v)}>By project</Toggle>
+          <Toggle on={someday}   onClick={() => setSomeday(v => !v)}>Someday</Toggle>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── Preview ──────────────────────────────────────────────────────────────────
 
@@ -136,7 +191,7 @@ export default function DesignPreview() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 py-10">
-      <div className="max-w-2xl mx-auto px-6">
+      <div className="max-w-5xl mx-auto px-6">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
           <button onClick={() => setOnly(null)} className={pill(!only)}>All</button>
           {TASK_LAYOUTS.map(l => (
@@ -156,8 +211,31 @@ export default function DesignPreview() {
         </p>
 
         <div className="flex flex-col gap-14">
+          {!only && (
+            <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Toolbar</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <ToolbarPreview />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Habits section</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <HabitList count={HABITS.length}>
+                  {HABITS.map(h => (
+                    <HabitRow key={h.t.id} task={h.t} streak={h.s} pending={false}
+                      onOpen={() => {}} onDone={e => e.stopPropagation()} onLogTime={e => e.stopPropagation()} />
+                  ))}
+                </HabitList>
+              </section>
+            </>
+          )}
           {shown.map(l => (
-            <section key={l.id}>
+            <section key={l.id} className="max-w-2xl">
               <div className="flex items-baseline gap-3 mb-1">
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{l.label}</h2>
                 <span className="text-[10px] text-slate-400 uppercase tracking-wide">{l.density}</span>
