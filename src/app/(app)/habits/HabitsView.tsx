@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
-import { completeTask, setHabitCompletion } from '@/app/actions/tasks'
+import { completeTask, setHabitCompletion, syncScheduledHabits } from '@/app/actions/tasks'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import AddTaskModal from '@/components/AddTaskModal'
 import LogHabitModal from '@/components/LogHabitModal'
@@ -293,6 +293,9 @@ export default function HabitsView({
   const [detailTask,  setDetailTask]  = useState<(Task & { project: Project }) | null>(null)
   // Habit whose "log at a time" sheet is open
   const [logging,     setLogging]     = useState<(Task & { project: Project }) | null>(null)
+  // Sessions filled in from the calendar on this visit, shown so an automatic
+  // write is never a silent one.
+  const [autoLogged,  setAutoLogged]  = useState<{ title: string; dateStr: string }[]>([])
   const [, startTransition]          = useTransition()
 
   const todayStr = todayIn(tz)
@@ -302,6 +305,48 @@ export default function HabitsView({
     const extra = localDates[habit.title] ?? []
     const gone  = new Set(removedDates[habit.title] ?? [])
     return [...new Set([...base, ...extra])].filter(d => !gone.has(d))
+  }
+
+  /**
+   * Fill in habits that were on the calendar on days that have since finished.
+   *
+   * Runs once per visit rather than on a schedule: there's no worker, and the
+   * habits page is where the result is visible anyway. It writes nothing for a
+   * day that's already logged, so re-running is free.
+   */
+  useEffect(() => {
+    let live = true
+    syncScheduledHabits()
+      .then(res => {
+        if (!live || res.logged.length === 0) return
+        setAutoLogged(res.logged)
+        setLocalDates(prev => {
+          const next = { ...prev }
+          for (const l of res.logged) next[l.title] = [...(next[l.title] ?? []), l.dateStr]
+          return next
+        })
+      })
+      .catch(() => {})   // nothing the user did; the page is still correct
+    return () => { live = false }
+  }, [])
+
+  /** Undo the whole auto-logged batch — one click, since it was one action. */
+  function undoAutoLogged() {
+    const batch = autoLogged
+    setAutoLogged([])
+    setLocalDates(prev => {
+      const next = { ...prev }
+      for (const l of batch) next[l.title] = (next[l.title] ?? []).filter(d => d !== l.dateStr)
+      return next
+    })
+    setRemovedDates(prev => {
+      const next = { ...prev }
+      for (const l of batch) next[l.title] = [...(next[l.title] ?? []), l.dateStr]
+      return next
+    })
+    startTransition(async () => {
+      for (const l of batch) await setHabitCompletion(l.title, l.dateStr, false)
+    })
   }
 
   /**
@@ -401,6 +446,26 @@ export default function HabitsView({
             <>
               {toggleError && (
                 <p className="text-xs text-red-500 mb-3">{toggleError}</p>
+              )}
+
+              {autoLogged.length > 0 && (
+                <div className="mb-4 flex items-start gap-3 px-3.5 py-2.5 rounded-xl border border-accent-200 dark:border-accent-900 bg-accent-50 dark:bg-accent-950/40">
+                  <span className="text-sm shrink-0">📅</span>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 flex-1 leading-relaxed">
+                    Filled in from your calendar:{' '}
+                    <span className="font-medium">
+                      {autoLogged.slice(0, 4).map(l => `${l.title} (${l.dateStr.slice(5)})`).join(', ')}
+                      {autoLogged.length > 4 && ` +${autoLogged.length - 4} more`}
+                    </span>
+                    . Days that were blocked out and have since finished.
+                  </p>
+                  <button
+                    onClick={undoAutoLogged}
+                    className="text-xs font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 shrink-0 underline"
+                  >
+                    Undo
+                  </button>
+                </div>
               )}
 
               {/* Daily progress bar */}

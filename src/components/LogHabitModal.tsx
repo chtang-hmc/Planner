@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition } from 'react'
 import { Task } from '@/types'
 import { logHabitSession } from '@/app/actions/tasks'
+import { addDays } from '@/lib/day'
 
 /** Local YYYY-MM-DD — the calendar day a session counts for, in your timezone. */
 function localDateStr(d: Date) {
@@ -124,6 +125,28 @@ export default function LogHabitModal({
                 onChange={e => setDateStr(e.target.value)}
                 className={field}
               />
+              {/* Forgetting for a day or two is the normal case, and a date
+                  picker is a poor way to say "yesterday". */}
+              <div className="flex gap-1 mt-1.5">
+                {[
+                  { label: 'Today',     day: opened.today },
+                  { label: 'Yesterday', day: addDays(opened.today, -1) },
+                  { label: '2 days',    day: addDays(opened.today, -2) },
+                ].map(o => (
+                  <button
+                    key={o.label}
+                    type="button"
+                    onClick={() => setDateStr(o.day)}
+                    className={`flex-1 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
+                      dateStr === o.day
+                        ? 'bg-violet-600 border-violet-600 text-white'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-300 hover:text-violet-500'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <label className={label}>Started at</label>

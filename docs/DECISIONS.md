@@ -568,6 +568,20 @@ The one-tap "+" records that a habit happened, which is all most logs need. `log
 
 **A failed calendar write doesn't fail the log.** The action returns `dateStr` whenever a row was written, with `error` describing only what didn't happen; the sheet shows the warning and still closes out the log. Reporting total failure for a session that *was* recorded would be a lie, and re-logging would then hit the one-per-day guard.
 
+### Filling in from the calendar
+
+If the gym block was on Tuesday and Tuesday is over, you went. `syncScheduledHabits` sweeps finished days and logs the habits that were blocked out on them.
+
+**Only finished days.** Today's blocks are never swept, so a session you haven't done yet is never claimed for you. Seven days back, because the sweep runs on every visit to the habits page and a longer gap is one you'd want to fill in deliberately.
+
+**Matched by title against `calendar_events`, not by the `plannerAuto` tag.** Two reasons. The tag would only find blocks Planner scheduled, and "if I have gym on my calendar" includes events you typed yourself. And `calendar_events` is already synced, so the sweep costs no Google round trip. The comparison strips a leading marker (`🎯 Gym`, `✓ Gym`) and casing, then matches exactly — so "Gym" is the habit and "Piano Lesson" is not, which is what you want when the habit is called "Piano".
+
+**It runs from a client effect, not during render.** The page is a Server Component and rendering must not write. Same shape as `TimezoneSync`.
+
+**Nothing is silent or one-way.** Days already logged are filtered out in one query before any writing, so the steady state costs nothing and an existing completion is never overwritten. What *was* written appears in a banner on the page with a one-click Undo for the whole batch, and individual days can still be un-clicked on the heatmap.
+
+The premise can be wrong — a blocked session you skipped gets logged as done. That's the trade the feature asks for, which is why it's visible and reversible rather than quiet.
+
 ### Deleting and back-filling
 
 Both act on the **title**, since a habit is a chain of rows rather than one row:

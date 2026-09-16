@@ -700,6 +700,116 @@ export async function logHabitSession(
 }
 
 /**
+ * Calendar title → habit title.
+ *
+ * Planner writes its blocks as "🎯 Gym" / "✓ Gym"; an event you typed yourself
+ * is just "Gym". Stripping the leading marker and casing makes both match the
+ * habit, and nothing else does: the comparison is exact after that, so "Gym
+ * with Sarah" is a different event and stays one.
+ */
+function calendarKey(title: string): string {
+  return title.replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase()
+}
+
+/**
+ * Fill in habits you had on the calendar but never logged.
+ *
+ * If the gym block was on Tuesday and Tuesday is over, you went — that's the
+ * premise. Only *finished* days are swept: today's blocks are left alone, so a
+ * session you haven't done yet is never claimed for you.
+ *
+ * Matching is by title against `calendar_events`, which is already synced, so
+ * this covers blocks Planner scheduled *and* events you added yourself. It
+ * never overwrites: a day that already has a completion is skipped, and the
+ * caller is handed everything it wrote so it can be undone in one click.
+ */
+export async function syncScheduledHabits(): Promise<{
+  logged: { title: string; dateStr: string }[]
+}> {
+  const db = createServiceClient()
+  const tz    = await fetchTimezone(db)
+  const today = todayStr(tz)
+
+  // A week back is plenty: the sweep runs on every visit to the habits page,
+  // and a gap longer than that is a deliberate one to fill in by hand.
+  const from = startOfLocalDay(addDayStr(today, -7), tz).toISOString()
+  const to   = startOfLocalDay(today, tz).toISOString()
+
+  const [{ data: habitRows }, { data: events }] = await Promise.all([
+    db.from('tasks')
+      .select('id, title, status, estimated_minutes, created_at')
+      .eq('type', 'habit')
+      .is('parent_id', null)
+      .order('created_at', { ascending: false }),
+    db.from('calendar_events')
+      .select('title, start_time, end_time')
+      .gte('end_time', from)
+      .lt('end_time', to)
+      .eq('all_day', false),
+  ])
+
+  if (!habitRows?.length || !events?.length) return { logged: [] }
+
+  // One row per habit to log against — a pending one if there is one, else the
+  // most recent, which carries the same settings and works as a template.
+  const rowFor = new Map<string, { id: string; title: string }>()
+  for (const h of habitRows) {          // newest first
+    const key     = calendarKey(h.title)
+    const pending = h.status === 'inbox' || h.status === 'active'
+    if (!rowFor.has(key) || pending) rowFor.set(key, h)
+  }
+
+  // Earliest block on a given day wins — if you blocked the gym twice, the
+  // session is the day, not each block, which is how completions are counted.
+  const candidates = new Map<string, { habitId: string; startISO: string; minutes: number; title: string }>()
+  for (const ev of events) {
+    const row = rowFor.get(calendarKey(ev.title))
+    if (!row) continue
+    const dateStr = localDayStr(ev.start_time, tz)
+    const key = `${row.id}|${dateStr}`
+    const minutes = Math.max(
+      1,
+      Math.round((new Date(ev.end_time).getTime() - new Date(ev.start_time).getTime()) / 60_000),
+    )
+    const held = candidates.get(key)
+    if (!held || ev.start_time < held.startISO) {
+      candidates.set(key, { habitId: row.id, startISO: ev.start_time, minutes, title: row.title })
+    }
+  }
+
+  // Drop days already logged before doing any work. logHabitSession would
+  // refuse them anyway, but this runs on every visit to the page and the steady
+  // state — everything already filled in — should cost one query, not one per
+  // blocked session.
+  const { data: done } = await db
+    .from('tasks')
+    .select('title, completed_at')
+    .eq('type', 'habit')
+    .eq('status', 'done')
+    .gte('completed_at', from)
+    .not('completed_at', 'is', null)
+
+  const alreadyLogged = new Set(
+    (done ?? []).map(d => `${calendarKey(d.title)}|${localDayStr(d.completed_at, tz)}`),
+  )
+
+  const logged: { title: string; dateStr: string }[] = []
+  for (const c of candidates.values()) {
+    if (alreadyLogged.has(`${calendarKey(c.title)}|${localDayStr(c.startISO, tz)}`)) continue
+    const res = await logHabitSession(c.habitId, {
+      startISO: c.startISO, minutes: c.minutes, addToCalendar: false,
+    })
+    if (res.dateStr && !res.error) logged.push({ title: c.title, dateStr: res.dateStr })
+  }
+
+  if (logged.length > 0) {
+    revalidatePath('/habits')
+    revalidatePath('/tasks')
+  }
+  return { logged }
+}
+
+/**
  * Where a task happens and how long it ties you up.
  *
  * Separate from updateTask because these columns arrive in 0009: a failed write
