@@ -593,9 +593,12 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   // the values copied at creation and quietly drift once the parent moves —
   // showing under the wrong project, or outliving the deadline they belong to.
   const cascade: Record<string, unknown> = {}
-  if ('project_id' in data) cascade.project_id = data.project_id
-  if ('due_date'   in data) cascade.due_date   = data.due_date
-  if ('location'   in data) cascade.location   = data.location
+  if ('project_id'      in data) cascade.project_id      = data.project_id
+  if ('due_date'        in data) cascade.due_date        = data.due_date
+  if ('location'        in data) cascade.location        = data.location
+  // Energy cascades too, by request. Note this does overwrite a per-subtask
+  // override — changing the parent's energy resets every step to match.
+  if ('energy_required' in data) cascade.energy_required = data.energy_required
   if (Object.keys(cascade).length > 0) {
     await db.from('tasks').update(cascade).eq('parent_id', taskId)
   }
@@ -798,10 +801,8 @@ export async function createSubtask(
     status:            'active',
     type:              'task',
     priority:          1,
-    // Steps of one piece of work take the same energy by default — reading is
-    // reading. Not cascaded on parent change, unlike project and deadline,
-    // because a per-subtask override is meaningful here (one dense paper among
-    // easy ones) and cascading would silently overwrite it.
+    // Steps of one piece of work take the same energy as the parent, and follow
+    // it when it changes (see the cascade in updateTask).
     energy_required:   parent?.energy_required ?? 'low',
     urgency_score:     0,
     urgency_curve:     'linear',
