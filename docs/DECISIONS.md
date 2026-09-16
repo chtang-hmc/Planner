@@ -632,6 +632,8 @@ Priority and urgency are read from the parent at scheduling time rather than cop
 
 The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
 
+**Views must not trust the copy either.** Upcoming files tasks by date and originally skipped any task with no `due_date`, so a subtask carrying null — one created before inheritance existed, or after the parent's date was cleared — appeared on no day at all. It vanished from that view while the list, which nests by `parent_id`, showed it correctly: five of six readings missing under "Public Policy Readings", which read as a nesting bug and wasn't one. `dueDay()` now falls back to the parent's date, matching what the scheduler already did. A subtask that *does* have its own date keeps it, so dragging one to another day still moves it.
+
 Subtasks appear in the main list like any other task, so each shows `↳ Parent title` — "Dahl" on its own is a mystery once it's out of the parent's checklist. The row carries a `parent:parent_id(id, title)` embed. Note the syntax: `tasks!parent_id` resolves to the *children* of a row (an array); `parent_id(...)` is the many-to-one direction.
 
 ### Chained scheduling

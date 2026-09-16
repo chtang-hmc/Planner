@@ -155,8 +155,28 @@ export default function UpcomingView({
     (!q || t.title.toLowerCase().includes(q) || (t.description ?? '').toLowerCase().includes(q))
   )
 
+  /**
+   * The day a task is filed under, as YYYY-MM-DD.
+   *
+   * A subtask with no deadline of its own follows its parent's. Upcoming places
+   * tasks by date, so an undated subtask otherwise appears on no day at all —
+   * it vanished from this view entirely while the list, which nests by
+   * parent_id, showed it fine. Subtasks are created with the parent's deadline
+   * copied, but ones made before that rule (or after the parent's date was
+   * cleared) carry null, and a view shouldn't depend on the data being tidy.
+   *
+   * A subtask that *does* have its own date keeps it, so dragging one to
+   * another day still moves it.
+   */
+  const byId = new Map(effectiveTasks.map(t => [t.id, t]))
+  function dueDay(t: Task): string | null {
+    if (t.due_date) return t.due_date.slice(0, 10)
+    if (t.parent_id) return byId.get(t.parent_id)?.due_date?.slice(0, 10) ?? null
+    return null
+  }
+
   const overdueTasks = activeTasks
-    .filter(t => t.due_date && t.due_date.slice(0,10) < todayStr)
+    .filter(t => { const d = dueDay(t); return d !== null && d < todayStr })
     .sort((a, b) => b.urgency_score - a.urgency_score)
 
   function dayEvents(d: Date) {
@@ -168,7 +188,7 @@ export default function UpcomingView({
   function dayTasks(d: Date) {
     const ds = toDateStr(d)
     return activeTasks
-      .filter(t => t.due_date && t.due_date.slice(0,10) === ds)
+      .filter(t => dueDay(t) === ds)
       .sort((a, b) => b.urgency_score - a.urgency_score)
   }
 
