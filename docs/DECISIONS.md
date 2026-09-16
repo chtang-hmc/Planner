@@ -406,6 +406,12 @@ The global 15-minute buffer suits work that needs settling-in time but makes sma
 
 The buffer applied is the **placing task's own**, not the maximum of it and its neighbour's. Taking the max would be defensible as "the neighbour still wants breathing room", but it defeats the purpose: the chore would still inherit 15 minutes from whatever sits next to it and still wouldn't fit. Blocks placed later apply their own buffer against it as usual.
 
+### Working hours past midnight
+
+A day's window is `[start, end]`, and an end **at or before** the start means it runs into the next day: "10:00 to 01:30" is a fifteen-and-a-half hour day, not a negative one. `workWindow()` is the single definition, used by both free-slot scanning and the fixed-sequence check.
+
+The interval check can't just look up the day containing a block's start — 00:30 belongs to the *previous* day's hours — so it tests the block against every day's window instead.
+
 ### Scheduler: atomic work
 
 `SchedulerTask.atomic` marks work that can't be split across sittings — it takes one unbroken block instead of being chunked by `maxSessionMinutes`. Habit sessions set it (see [Scheduling habits](#scheduling-habits)); ordinary tasks don't, and still segment as before.
@@ -555,7 +561,9 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 ### Subtasks inherit from their parent
 
-A subtask is part of one piece of work, so it takes the parent's **project** and **deadline**. Set at creation, and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
+A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **priority** and **urgency**.
+
+Priority and urgency are read from the parent at scheduling time rather than copied. Subtasks are created at priority 1 with urgency 0, so a chain under a task marked P4 used to sort to the very bottom and get whatever slots were left — the exact opposite of what marking the parent critical is for. Project, deadline and location are set at creation and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
 
 The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
 

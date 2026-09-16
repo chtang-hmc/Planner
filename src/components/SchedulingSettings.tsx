@@ -81,7 +81,12 @@ function WorkingHoursSection({ initial, weekStartDay }: { initial: WorkingHours[
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">Working hours</label>
+        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+          Working hours
+          <span className="ml-1.5 normal-case font-normal text-slate-300 dark:text-slate-600">
+            end before start = past midnight
+          </span>
+        </label>
         <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
           {(['simple', 'custom'] as const).map(m => (
             <button
@@ -197,6 +202,10 @@ function WorkingHoursSection({ initial, weekStartDay }: { initial: WorkingHours[
                 }}
                 className="flex-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 disabled:opacity-40"
               />
+              {/* An end at or before the start means the day runs past midnight */}
+              {(row.end_hour * 60 + row.end_minute) <= (row.start_hour * 60 + row.start_minute) && (
+                <span className="text-[10px] text-accent-500 shrink-0 font-medium">next day</span>
+              )}
             </div>
             )
           })}

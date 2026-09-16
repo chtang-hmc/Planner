@@ -511,6 +511,7 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   const cascade: Record<string, unknown> = {}
   if ('project_id' in data) cascade.project_id = data.project_id
   if ('due_date'   in data) cascade.due_date   = data.due_date
+  if ('location'   in data) cascade.location   = data.location
   if (Object.keys(cascade).length > 0) {
     await db.from('tasks').update(cascade).eq('parent_id', taskId)
   }
@@ -703,7 +704,7 @@ export async function createSubtask(
   // later than the thing it's a part of.
   const { data: parent } = await db
     .from('tasks')
-    .select('project_id, due_date')
+    .select('project_id, due_date, location')
     .eq('id', parentId)
     .maybeSingle()
 
@@ -719,6 +720,7 @@ export async function createSubtask(
     estimated_minutes: estimatedMinutes ?? null,
     project_id:        parent?.project_id ?? null,
     due_date:          parent?.due_date ?? null,
+    location:          parent?.location ?? 'anywhere',
     created_at:        new Date().toISOString(),
   })
   if (error) throw new Error(error.message)

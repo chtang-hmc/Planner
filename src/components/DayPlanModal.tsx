@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { confirmSchedule } from '@/app/actions/scheduling'
+import ScheduleWeekCalendar, { type CalendarBlock } from '@/components/ScheduleWeekCalendar'
+import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { AttackItem, SchedulerTask } from '@/lib/scheduler'
 import type { PreviewBlock } from './SchedulePreviewModal'
 
@@ -34,6 +35,7 @@ interface SerializedAttackItem {
 }
 
 interface Props {
+  existing:       ExistingItem[]
   attackList:     SerializedAttackItem[]
   proposedBlocks: PreviewBlock[]
   unschedulable:  SchedulerTask[]
@@ -43,6 +45,7 @@ interface Props {
 }
 
 export default function DayPlanModal({
+  existing,
   attackList,
   proposedBlocks,
   unschedulable,
@@ -51,18 +54,34 @@ export default function DayPlanModal({
   onConfirmed,
 }: Props) {
   const [, startTransition] = useTransition()
+  const [view, setView] = useState<'calendar' | 'list'>('calendar')
+  const blockKey = (b: PreviewBlock) => `${b.taskId}|${b.startISO}`
+  const [rejected, setRejected] = useState<Set<string>>(new Set())
+  const [moved, setMoved] = useState<Record<string, { startISO: string; endISO: string }>>({})
+
+  const effective = (b: PreviewBlock): PreviewBlock => {
+    const m = moved[blockKey(b)]
+    return m ? { ...b, startISO: m.startISO, endISO: m.endISO } : b
+  }
+  const approved = proposedBlocks.filter(b => !rejected.has(blockKey(b))).map(effective)
+  const calendarBlocks: CalendarBlock[] = proposedBlocks.map(b => {
+    const eff = effective(b)
+    return { key: blockKey(b), block: eff, start: new Date(eff.startISO), end: new Date(eff.endISO),
+             rejected: rejected.has(blockKey(b)) }
+  })
+
   const [confirming, setConfirming] = useState(false)
   const [confirmed,  setConfirmed]  = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
 
   function handleConfirm() {
-    if (proposedBlocks.length === 0) return
+    if (approved.length === 0) return
     setConfirming(true)
     setConfirmError(null)
     startTransition(async () => {
       try {
         const result = await confirmSchedule(
-          proposedBlocks.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
+          approved.map(b => ({ taskId: b.taskId, startISO: b.startISO, endISO: b.endISO }))
         )
         if (result.confirmed === 0 && result.failed > 0) {
           setConfirmError(result.error ?? `Failed to create ${result.failed} calendar event${result.failed !== 1 ? 's' : ''}`)
@@ -98,12 +117,46 @@ export default function DayPlanModal({
               {proposedBlocks.length > 0 && ` · ${proposedBlocks.length} new block${proposedBlocks.length !== 1 ? 's' : ''} to schedule`}
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xl leading-none">×</button>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+              {(['calendar', 'list'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-2.5 py-1 text-xs font-medium capitalize transition-colors ${
+                    view === v
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                      : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xl leading-none">×</button>
+          </div>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {attackList.length === 0 ? (
+          {view === 'calendar' ? (
+            calendarBlocks.length === 0 && existing.length === 0 ? (
+              <p className="text-center text-slate-400 text-sm py-10">Nothing on this day yet.</p>
+            ) : (
+              <ScheduleWeekCalendar
+                proposals={calendarBlocks}
+                existing={existing}
+                onToggle={k => setRejected(prev => {
+                  const next = new Set(prev)
+                  if (next.has(k)) next.delete(k); else next.add(k)
+                  return next
+                })}
+                onMove={(key, start, end) =>
+                  setMoved(prev => ({ ...prev, [key]: { startISO: start.toISOString(), endISO: end.toISOString() } }))
+                }
+              />
+            )
+          ) : attackList.length === 0 ? (
             <p className="text-center text-slate-400 text-sm py-10">No tasks due on this day.</p>
           ) : (
             <div className="flex flex-col gap-1.5">
@@ -192,10 +245,16 @@ export default function DayPlanModal({
             {proposedBlocks.length > 0 && (
               <button
                 onClick={handleConfirm}
-                disabled={confirming || confirmed}
+                disabled={confirming || confirmed || approved.length === 0}
                 className="flex-1 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-semibold hover:opacity-80 disabled:opacity-40 transition-opacity"
               >
-                {confirmed ? 'Scheduled ✓' : confirming ? 'Scheduling…' : `Block ${proposedBlocks.length} on calendar`}
+                {confirmed
+                  ? 'Scheduled ✓'
+                  : confirming
+                    ? 'Scheduling…'
+                    : approved.length === proposedBlocks.length
+                      ? `Block ${approved.length} on calendar`
+                      : `Block ${approved.length} of ${proposedBlocks.length}`}
               </button>
             )}
           </div>

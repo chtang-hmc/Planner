@@ -380,6 +380,24 @@ export function runScheduler(
   const placedLoc: { start: number; end: number; loc: TaskLocation }[] = []
 
   /**
+   * The working window for the day beginning at `dayMs`, as [start, end].
+   *
+   * An end at or before the start means the window runs past midnight —
+   * "10:00 to 01:30" is a fifteen-and-a-half hour day ending next morning, not
+   * a negative one. Returns null when the day is switched off.
+   */
+  function workWindow(dayMs: number): Interval | null {
+    const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
+    const wh = workingHours.find(w => w.day_of_week === dow)
+    if (!wh || !wh.enabled) return null
+
+    const startOff = (wh.start_hour * 60 + wh.start_minute) * 60_000
+    let   endOff   = (wh.end_hour   * 60 + wh.end_minute)   * 60_000
+    if (endOff <= startOff) endOff += 24 * 60 * 60_000      // spills into the next day
+    return [dayMs + startOff, dayMs + endOff]
+  }
+
+  /**
    * Free intervals across the horizon for work with these constraints.
    * Shared by single tasks and subtask chains so both see the same day
    * boundaries, buffers, breaks and tethers.
@@ -404,13 +422,9 @@ export function runScheduler(
     for (const dayMs of days) {
       if (dayMs > dueMs) break
 
-      const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
-      const wh = workingHours.find(w => w.day_of_week === dow)
-      if (!wh || !wh.enabled) continue
-
-      // Working window = local midnight + hours offset (ms arithmetic, tz-safe)
-      const workStartMs = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
-      const workEndMs   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
+      const win = workWindow(dayMs)
+      if (!win) continue
+      const [workStartMs, workEndMs] = win
 
       const dayBusy = allBusy.filter(([s, e]) => s < workEndMs && e > workStartMs)
 
@@ -454,15 +468,14 @@ export function runScheduler(
     const { bufferMs, loc, avoidAfterBreaks } = opts
     if (start < nowMs) return false
 
-    // Inside working hours for that day
-    const dayMs = days.find(d => start >= d && start < d + 86_400_000)
-    if (dayMs === undefined) return false
-    const { dow } = localPartsAt(dayMs + 60_000, tz)
-    const wh = workingHours.find(w => w.day_of_week === dow)
-    if (!wh || !wh.enabled) return false
-    const workStart = dayMs + (wh.start_hour * 60 + wh.start_minute) * 60_000
-    const workEnd   = dayMs + (wh.end_hour   * 60 + wh.end_minute)   * 60_000
-    if (start < workStart || end > workEnd) return false
+    // Must sit inside some day's working window. Checked against every day
+    // rather than the one containing `start`, because a window that runs past
+    // midnight puts 00:30 inside the PREVIOUS day's hours.
+    const insideHours = days.some(d => {
+      const win = workWindow(d)
+      return win !== null && start >= win[0] && end <= win[1]
+    })
+    if (!insideHours) return false
 
     const hits = (iv: Interval, pad: number) => start < iv[1] + pad && end > iv[0] - pad
     if (busyIntervals.some(iv => hits(iv, bufferMs))) return false

@@ -88,6 +88,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [showSomeday, setShowSomeday]     = useState(false)
   // Parents whose subtasks are tucked away
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [groupByProject, setGroupByProject] = useState(false)
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -108,7 +109,8 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
   } | null>(null)
   const [dayPlan, setDayPlan] = useState<{
-    blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']; unschedulable: SchedulerTask[]
+    blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']
+    unschedulable: SchedulerTask[]; existing: ExistingItem[]
   } | null>(null)
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
@@ -165,6 +167,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           })),
           attackList: res.attackList,
           unschedulable: res.unschedulable,
+          existing: res.existing,
         })
       } finally {
         setScheduling(false)
@@ -207,6 +210,21 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   }
   const topLevel = filtered.filter(t => !(t.parent_id && visibleIds.has(t.parent_id)))
 
+  // Project groups, in the order the sidebar lists them, with Inbox last.
+  const projectGroups = (() => {
+    if (!groupByProject) return null
+    const byId = new Map<string, TaskRow[]>()
+    for (const t of topLevel) {
+      const key = t.project_id ?? ''
+      byId.set(key, [...(byId.get(key) ?? []), t])
+    }
+    const ordered = projects
+      .filter(p => byId.has(p.id))
+      .map(p => ({ project: p, rows: byId.get(p.id)! }))
+    if (byId.has('')) ordered.push({ project: INBOX_PROJECT, rows: byId.get('')! })
+    return ordered
+  })()
+
   const totalMinutes = filtered.reduce((s, t) => s + (t.adjusted_minutes ?? t.estimated_minutes ?? 0), 0)
 
   function handleDone(task: Task & { project: Project }, e: React.MouseEvent) {
@@ -235,6 +253,128 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   function openAddTask(dueDate?: string) {
     setAddTaskDueDate(dueDate)
     setShowAddTask(true)
+  }
+
+  /** Rows for a set of top-level tasks, each followed by its subtasks. */
+  function renderTaskRows(list: TaskRow[]) {
+    return list.flatMap(parentTask => {
+              const kids = childrenOf.get(parentTask.id) ?? []
+              const isCollapsed = collapsed.has(parentTask.id)
+              const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
+
+              return rows.map(task => {
+              const isChild = task.id !== parentTask.id
+              const est = task.adjusted_minutes ?? task.estimated_minutes
+              const due = formatDue(task.due_date)
+
+              return (
+                <div
+                  key={task.id}
+                  style={isChild ? { marginLeft: '1.5rem' } : undefined}
+                  onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+                  className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
+                >
+                  {/* Fold toggle on a parent; bullet on a child */}
+                  {isChild ? (
+                    <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 mt-1 select-none">•</span>
+                  ) : kids.length > 0 ? (
+                    <button
+                      onClick={e => {
+                        e.stopPropagation()
+                        setCollapsed(prev => {
+                          const next = new Set(prev)
+                          if (next.has(parentTask.id)) next.delete(parentTask.id)
+                          else next.add(parentTask.id)
+                          return next
+                        })
+                      }}
+                      title={isCollapsed ? `Show ${kids.length} subtasks` : 'Hide subtasks'}
+                      className="w-3 shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
+                    >
+                      {isCollapsed ? '▶' : '▼'}
+                    </button>
+                  ) : (
+                    <span className="w-3 shrink-0" />
+                  )}
+
+                  {/* Done button — colored by priority */}
+                  <button
+                    onClick={e => handleDone(task, e)}
+                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
+                    title="Mark done"
+                  />
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug">{task.title}</span>
+                      {task.type === 'someday' && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded font-medium">someday</span>
+                      )}
+                      {task.type === 'recurring' && (() => {
+                        const streak = streaks[task.id]
+                        return (
+                          <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
+                            ↻{streak && streak.current_streak > 0 && (
+                              <span className="ml-0.5">{streak.current_streak >= 7 ? '🔥' : '·'}{streak.current_streak}</span>
+                            )}
+                          </span>
+                        )
+                      })()}
+                    </div>
+                    <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
+                      {(() => {
+                        const proj = task.project ?? INBOX_PROJECT
+                        return (
+                          <span
+                            className="text-xs font-medium px-1.5 py-0.5 rounded"
+                            style={{ background: proj.color + '18', color: proj.color }}
+                          >
+                            {proj.name}
+                          </span>
+                        )
+                      })()}
+                      {/* Subtasks appear in the list alongside everything else,
+                          so say what they belong to — "Dahl" on its own is a
+                          mystery once it's out of the parent's checklist. */}
+                      {/* Only when it's loose in the list — nested under its
+                          parent the relationship is already obvious. */}
+                      {task.parent && !isChild && (
+                        <span
+                          className="text-xs text-slate-400 truncate max-w-[12rem]"
+                          title={`Subtask of ${task.parent.title}`}
+                        >
+                          ↳ {task.parent.title}
+                        </span>
+                      )}
+                      {!isChild && kids.length > 0 && isCollapsed && (
+                        <span className="text-xs text-slate-400">
+                          {kids.length} subtask{kids.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
+                      {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
+                      {due.label && (
+                        <span className={`text-xs font-medium ${due.urgent ? 'text-red-500' : 'text-slate-400'}`}>
+                          {due.urgent && due.label !== 'Today' ? '⚠ ' : ''}{due.label}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Urgency */}
+                  <div className="shrink-0 text-right">
+                    <span className={`text-xs font-semibold font-mono tabular-nums ${urgencyColor(task.urgency_score)}`}>
+                      {Math.round(task.urgency_score)}
+                    </span>
+                    <div className={`text-xs font-mono opacity-50 ${urgencyColor(task.urgency_score)}`}>
+                      {CURVE_ICON[task.urgency_curve]}
+                    </div>
+                  </div>
+                </div>
+              )
+              })
+    })
   }
 
   return (
@@ -357,6 +497,18 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             </select>
 
             <button
+              onClick={() => setGroupByProject(v => !v)}
+              title="Group the list by project"
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
+                groupByProject
+                  ? 'bg-accent-50 dark:bg-accent-950 border-accent-200 dark:border-accent-800 text-accent-700 dark:text-accent-300'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500'
+              }`}
+            >
+              ▤ By project
+            </button>
+
+            <button
               onClick={() => setShowSomeday(v => !v)}
               className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
                 showSomeday
@@ -370,124 +522,23 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
           {/* Task rows */}
           <div className="flex flex-col gap-1.5">
-            {topLevel.flatMap(parentTask => {
-              const kids = childrenOf.get(parentTask.id) ?? []
-              const isCollapsed = collapsed.has(parentTask.id)
-              const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
-
-              return rows.map(task => {
-              const isChild = task.id !== parentTask.id
-              const est = task.adjusted_minutes ?? task.estimated_minutes
-              const due = formatDue(task.due_date)
-
-              return (
-                <div
-                  key={task.id}
-                  style={isChild ? { marginLeft: '1.5rem' } : undefined}
-                  onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
-                  className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
-                >
-                  {/* Fold toggle on a parent; bullet on a child */}
-                  {isChild ? (
-                    <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 mt-1 select-none">•</span>
-                  ) : kids.length > 0 ? (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        setCollapsed(prev => {
-                          const next = new Set(prev)
-                          if (next.has(parentTask.id)) next.delete(parentTask.id)
-                          else next.add(parentTask.id)
-                          return next
-                        })
-                      }}
-                      title={isCollapsed ? `Show ${kids.length} subtasks` : 'Hide subtasks'}
-                      className="w-3 shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
-                    >
-                      {isCollapsed ? '▶' : '▼'}
-                    </button>
-                  ) : (
-                    <span className="w-3 shrink-0" />
-                  )}
-
-                  {/* Done button — colored by priority */}
-                  <button
-                    onClick={e => handleDone(task, e)}
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
-                    title="Mark done"
-                  />
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug">{task.title}</span>
-                      {task.type === 'someday' && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded font-medium">someday</span>
-                      )}
-                      {task.type === 'recurring' && (() => {
-                        const streak = streaks[task.id]
-                        return (
-                          <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
-                            ↻{streak && streak.current_streak > 0 && (
-                              <span className="ml-0.5">{streak.current_streak >= 7 ? '🔥' : '·'}{streak.current_streak}</span>
-                            )}
-                          </span>
-                        )
-                      })()}
+            {groupByProject && projectGroups
+              ? projectGroups.map(g => (
+                  <div key={g.project.id || "inbox"} className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2 mt-2 first:mt-0">
+                      <span
+                        className="text-xs font-semibold px-1.5 py-0.5 rounded"
+                        style={{ background: g.project.color + '18', color: g.project.color }}
+                      >
+                        {g.project.name}
+                      </span>
+                      <span className="text-xs text-slate-400">{g.rows.length}</span>
+                      <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                     </div>
-                    <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
-                      {(() => {
-                        const proj = task.project ?? INBOX_PROJECT
-                        return (
-                          <span
-                            className="text-xs font-medium px-1.5 py-0.5 rounded"
-                            style={{ background: proj.color + '18', color: proj.color }}
-                          >
-                            {proj.name}
-                          </span>
-                        )
-                      })()}
-                      {/* Subtasks appear in the list alongside everything else,
-                          so say what they belong to — "Dahl" on its own is a
-                          mystery once it's out of the parent's checklist. */}
-                      {/* Only when it's loose in the list — nested under its
-                          parent the relationship is already obvious. */}
-                      {task.parent && !isChild && (
-                        <span
-                          className="text-xs text-slate-400 truncate max-w-[12rem]"
-                          title={`Subtask of ${task.parent.title}`}
-                        >
-                          ↳ {task.parent.title}
-                        </span>
-                      )}
-                      {!isChild && kids.length > 0 && isCollapsed && (
-                        <span className="text-xs text-slate-400">
-                          {kids.length} subtask{kids.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
-                      {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
-                      {due.label && (
-                        <span className={`text-xs font-medium ${due.urgent ? 'text-red-500' : 'text-slate-400'}`}>
-                          {due.urgent && due.label !== 'Today' ? '⚠ ' : ''}{due.label}
-                        </span>
-                      )}
-                    </div>
+                    {renderTaskRows(g.rows)}
                   </div>
-
-                  {/* Urgency */}
-                  <div className="shrink-0 text-right">
-                    <span className={`text-xs font-semibold font-mono tabular-nums ${urgencyColor(task.urgency_score)}`}>
-                      {Math.round(task.urgency_score)}
-                    </span>
-                    <div className={`text-xs font-mono opacity-50 ${urgencyColor(task.urgency_score)}`}>
-                      {CURVE_ICON[task.urgency_curve]}
-                    </div>
-                  </div>
-                </div>
-              )
-              })
-            })}
+                ))
+              : renderTaskRows(topLevel)}
 
             {filtered.length === 0 && (
               <div className="text-center py-16 text-slate-400 text-sm">
@@ -639,6 +690,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
       {/* Plan my day */}
       {dayPlan && (
         <DayPlanModal
+          existing={dayPlan.existing}
           proposedBlocks={dayPlan.blocks}
           attackList={dayPlan.attackList}
           unschedulable={dayPlan.unschedulable}

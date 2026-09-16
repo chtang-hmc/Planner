@@ -378,8 +378,12 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     candidates.push({
       id:               s.id,
       title:            blockLabel(s.title, parent?.title),
-      priority:         s.priority,
-      urgency_score:    s.urgency_score,
+      // Importance belongs to the parent. Subtasks are created at priority 1
+      // with urgency 0, so a chain under a critical task used to sort to the
+      // very bottom and get whatever slots were left — the opposite of what
+      // marking the parent P4 is supposed to do.
+      priority:         parent?.priority ?? s.priority,
+      urgency_score:    parent?.urgency_score ?? s.urgency_score,
       energy_required:  s.energy_required,
       duration_minutes: duration,
       // Read from the parent every run rather than trusting the copy made at
@@ -390,7 +394,11 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       chainGroup:       s.parent_id,
       gapAfterMinutes:  s.gap_after_minutes ?? undefined,
       chainIndex:       chainIndex.get(s.parent_id)!,
-      location:         s.location ?? 'anywhere',
+      // Location follows the parent unless the subtask sets its own: the steps
+      // of a laundry cycle happen wherever the laundry is.
+      location:         s.location && s.location !== 'anywhere'
+                          ? s.location
+                          : (parent?.location ?? 'anywhere'),
       spanMinutes:      s.span_minutes ?? undefined,
       bufferMinutes:    s.buffer_minutes ?? undefined,
     })
@@ -613,6 +621,8 @@ export async function markScheduleManual(taskId: string): Promise<void> {
 // ── planDay ───────────────────────────────────────────────────────────────────
 
 export interface DayPlan {
+  /** Already on the day — context for the calendar view. */
+  existing:       ExistingItem[]
   proposedBlocks: SerializedBlock[]
   attackList:     SerializedAttackItem[]
   unschedulable:  SchedulerTask[]
@@ -629,8 +639,8 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   const dayStr = dateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
 
   // Propose blocks for the chosen day (internally fetches scheduling inputs)
-  const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone, dayStr)
-  if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
+  const { scheduled, unschedulable, existing, error } = await proposeSchedule(1, timezone, dayStr)
+  if (error) return { existing: [], proposedBlocks: [], attackList: [], unschedulable: [], error }
 
   // Fetch only the energy schedule for buildAttackList — avoids double-fetching
   // working hours and config that proposeSchedule already consumed above.
@@ -707,7 +717,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
     rank:              item.rank,
   }))
 
-  return { proposedBlocks: scheduled, attackList, unschedulable, error: undefined }
+  return { existing, proposedBlocks: scheduled, attackList, unschedulable, error: undefined }
 }
 
 // ── Settings actions ──────────────────────────────────────────────────────────
