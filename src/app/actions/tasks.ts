@@ -4,8 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
-import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
-import { getValidToken, deleteTaskBlock } from '@/lib/google-calendar'
+import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
+import {
+  fetchTimezone, localDayStr, todayStr, localDayRange, startOfLocalDay,
+  addDays as addDayStr,
+} from '@/lib/day'
+import { getValidToken, deleteTaskBlock, createTaskBlock } from '@/lib/google-calendar'
 
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
@@ -17,9 +21,16 @@ export async function completeTask(
   estimateAccurate: boolean | null,
   blockerNote: string | null,
   /** When true, recurring tasks are NOT given a next occurrence (permanently done). */
-  permanent = false
+  permanent = false,
+  /**
+   * When the work actually happened. Defaults to now; passed explicitly when
+   * logging a habit session after the fact ("I ran at 7am", logged at noon) so
+   * the record and its calendar event sit at the real time.
+   */
+  opts?: { completedAtISO?: string },
 ) {
   const db = createServiceClient()
+  const completedAt = opts?.completedAtISO ?? new Date().toISOString()
 
   // Fetch the task so we know its rrule and template fields before marking done
   const { data: taskRow } = await db
@@ -31,7 +42,7 @@ export async function completeTask(
   // Mark task done
   const { error: taskErr } = await db
     .from('tasks')
-    .update({ status: 'done', completed_at: new Date().toISOString(), actual_minutes: actualMinutes })
+    .update({ status: 'done', completed_at: completedAt, actual_minutes: actualMinutes })
     .eq('id', taskId)
 
   if (taskErr) throw new Error(taskErr.message)
@@ -89,6 +100,10 @@ export async function completeTask(
   if (shouldSpawn) {
     const today = new Date()
     const now   = new Date().toISOString()
+    // Habit days are the user's calendar days, so "which day did this close
+    // out" and "when does the next one open" are both asked in their zone.
+    const tz       = await fetchTimezone(db)
+    const todayStr = localDayStr(completedAt, tz)
 
     // For rrule habits/tasks: compute next date from rule.
     // Anchor from the task's own due_date (not today) so completing a weekly
@@ -101,13 +116,11 @@ export async function completeTask(
       const nextDate = getNextOccurrence(taskRow.rrule, anchor)
       if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
     } else if (isHabit) {
-      // UTC midnight of the next calendar day — local midnight would land a few
-      // hours either side of the UTC day boundary and the habits page (which
-      // filters on UTC day edges) would show the habit a day early or late.
-      const tomorrow = new Date(today)
-      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
-      tomorrow.setUTCHours(0, 0, 0, 0)
-      nextDue = tomorrow.toISOString()
+      // The instant the user's next day begins. The habits page asks for
+      // occurrences due by the end of the local day, so a habit closed out
+      // tonight reappears tomorrow morning wherever the user is — not at
+      // whatever hour UTC midnight happens to fall for them.
+      nextDue = startOfLocalDay(addDayStr(todayStr, 1), tz).toISOString()
     }
 
     // A habit must never have two pending occurrences: completing it twice in
@@ -173,11 +186,8 @@ export async function completeTask(
       })
     }
 
-    // Upsert habit streak
-    const todayStr = today.toISOString().slice(0, 10)
-
     // Start of the current week, per the user's configured first day
-    const weekStartStr = weekStartOf(today, await fetchWeekStartDay(db))
+    const weekStartStr = weekStartOfDay(todayStr, await fetchWeekStartDay(db))
 
     const { data: streak } = await db
       .from('habit_streaks')
@@ -191,10 +201,7 @@ export async function completeTask(
       // reads it as "not consecutive" and resets a long streak to 1.
       if (streak.last_completed !== todayStr) {
         // Consecutive-day streak
-        const yesterday = new Date(today)
-        yesterday.setDate(yesterday.getDate() - 1)
-        const yesterdayStr = yesterday.toISOString().slice(0, 10)
-        const consecutive = streak.last_completed === yesterdayStr
+        const consecutive = streak.last_completed === addDayStr(todayStr, -1)
         const newStreak = consecutive ? streak.current_streak + 1 : 1
 
         // Weekly count — reset if the stored week_start is from a different week
@@ -465,15 +472,40 @@ export async function setHabitCompletion(
 ): Promise<{ error?: string }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: 'Bad date' }
 
-  const today = new Date().toISOString().slice(0, 10)
-  if (dateStr > today) return { error: "Can't log a habit in the future" }
-
   const db = createServiceClient()
+  const tz = await fetchTimezone(db)
 
-  const dayStart = `${dateStr}T00:00:00Z`
-  const dayEnd   = `${dateStr}T23:59:59.999Z`
+  if (dateStr > todayStr(tz)) return { error: "Can't log a habit in the future" }
+
+  // The user's day, expressed as the instants that bound it. Half-open, so a
+  // completion in the last millisecond of a day can't fall between two days.
+  const { startISO: dayStart, endISO: dayEnd } = localDayRange(dateStr, tz)
 
   if (!done) {
+    // Un-logging has to take the calendar event with it. The row is about to
+    // disappear, and with it the only record of the event id — leaving an
+    // orphan on the calendar that nothing can ever clean up.
+    const { data: doomed } = await db
+      .from('tasks')
+      .select('id, gcal_event_id')
+      .eq('type', 'habit')
+      .eq('title', title)
+      .eq('status', 'done')
+      .gte('completed_at', dayStart)
+      .lt('completed_at', dayEnd)
+
+    const eventIds = (doomed ?? []).map(r => r.gcal_event_id).filter(Boolean) as string[]
+    if (eventIds.length > 0) {
+      const token = await getValidToken()
+      if (token) {
+        // Best-effort: a calendar that won't delete shouldn't block un-logging.
+        await Promise.all(eventIds.map(id =>
+          deleteTaskBlock(token.access_token, id).catch(e =>
+            console.error('setHabitCompletion: could not delete event', id, e))
+        ))
+      }
+    }
+
     const { error } = await db
       .from('tasks')
       .delete()
@@ -481,7 +513,7 @@ export async function setHabitCompletion(
       .eq('title', title)
       .eq('status', 'done')
       .gte('completed_at', dayStart)
-      .lte('completed_at', dayEnd)
+      .lt('completed_at', dayEnd)
     if (error) return { error: error.message }
     revalidatePath('/habits')
     return {}
@@ -495,7 +527,7 @@ export async function setHabitCompletion(
     .eq('title', title)
     .eq('status', 'done')
     .gte('completed_at', dayStart)
-    .lte('completed_at', dayEnd)
+    .lt('completed_at', dayEnd)
     .limit(1)
   if (existing && existing.length > 0) return {}
 
@@ -511,6 +543,12 @@ export async function setHabitCompletion(
 
   if (!template) return { error: 'Habit not found' }
 
+  // Midday in the user's zone: safely inside the day whichever way it's read,
+  // and honest that the heatmap records a day, not a time.
+  const noonLocal = new Date(
+    startOfLocalDay(dateStr, tz).getTime() + 12 * 60 * 60_000,
+  ).toISOString()
+
   const { error } = await db.from('tasks').insert({
     title,
     description:       template.description,
@@ -525,8 +563,10 @@ export async function setHabitCompletion(
     rrule:             template.rrule,
     weekly_target:     template.weekly_target ?? null,
     due_date:          null,
-    created_at:        `${dateStr}T12:00:00Z`,
-    completed_at:      `${dateStr}T12:00:00Z`,
+    // Noon local, so the day survives being read back in any nearby zone and
+    // reads as "sometime that day" rather than a time we're pretending to know.
+    created_at:        noonLocal,
+    completed_at:      noonLocal,
     ...(template.exclusive_group ? { exclusive_group: template.exclusive_group } : {}),
   })
   if (error) return { error: error.message }
@@ -534,6 +574,239 @@ export async function setHabitCompletion(
   revalidatePath('/habits')
   revalidatePath('/analytics')
   return {}
+}
+
+/**
+ * Log a habit session at a specific time, optionally putting it on the calendar.
+ *
+ * The one-tap "+" records that a habit happened *today*, which is all most logs
+ * need. This is for when the time matters: you ran at 7am and are logging it at
+ * noon, or you're filling in Tuesday's gym session — and you want the session on
+ * your calendar as a record of where the hour actually went.
+ *
+ * The day it counts for is the user's local day containing `startISO`, derived
+ * here and returned so the caller's optimistic update marks the same cell the
+ * heatmap will draw.
+ */
+export async function logHabitSession(
+  habitId: string,
+  opts: {
+    startISO:      string    // the instant it started
+    minutes:       number
+    addToCalendar: boolean
+  },
+): Promise<{ error?: string; dateStr?: string; onCalendar?: boolean }> {
+  if (!(opts.minutes > 0)) return { error: 'Session needs a length' }
+
+  const start = new Date(opts.startISO)
+  if (isNaN(start.getTime()))       return { error: 'Bad start time' }
+  if (start.getTime() > Date.now()) return { error: "Can't log a session that hasn't happened yet" }
+
+  const db = createServiceClient()
+  const tz      = await fetchTimezone(db)
+  const dateStr = localDayStr(start, tz)
+
+  const { data: habit } = await db
+    .from('tasks')
+    .select('*')
+    .eq('id', habitId)
+    .maybeSingle()
+  if (!habit) return { error: 'Habit not found' }
+
+  const { startISO: dayStart, endISO: dayEnd } = localDayRange(dateStr, tz)
+
+  // One completion per day, the same rule the heatmap enforces.
+  const { data: already } = await db
+    .from('tasks')
+    .select('id')
+    .eq('type', 'habit')
+    .eq('title', habit.title)
+    .eq('status', 'done')
+    .gte('completed_at', dayStart)
+    .lt('completed_at', dayEnd)
+    .limit(1)
+  if (already && already.length > 0) return { error: 'Already logged for that day' }
+
+  const endISO = new Date(start.getTime() + opts.minutes * 60_000).toISOString()
+
+  // Logging today against the pending row completes it properly — streak,
+  // weekly count and the next occurrence all follow. Inserting a second row
+  // instead would leave today's card still asking to be done.
+  let rowId: string
+  if (dateStr === todayStr(tz) && (habit.status === 'inbox' || habit.status === 'active')) {
+    await completeTask(habitId, opts.minutes, null, null, false, { completedAtISO: opts.startISO })
+    rowId = habitId
+  } else {
+    const { data: inserted, error } = await db.from('tasks').insert({
+      title:             habit.title,
+      description:       habit.description,
+      project_id:        habit.project_id,
+      type:              'habit',
+      status:            'done',
+      priority:          habit.priority,
+      energy_required:   habit.energy_required,
+      urgency_curve:     habit.urgency_curve,
+      urgency_score:     0,
+      estimated_minutes: habit.estimated_minutes,
+      actual_minutes:    opts.minutes,
+      rrule:             habit.rrule,
+      weekly_target:     habit.weekly_target ?? null,
+      due_date:          null,
+      created_at:        opts.startISO,
+      completed_at:      opts.startISO,
+      ...(habit.exclusive_group ? { exclusive_group: habit.exclusive_group } : {}),
+    }).select('id').single()
+    if (error) return { error: error.message }
+    rowId = inserted.id
+  }
+
+  // The session's real place in the day, whether or not it reaches Google.
+  await db.from('tasks')
+    .update({ scheduled_start: opts.startISO, scheduled_end: endISO })
+    .eq('id', rowId)
+
+  let onCalendar = false
+  if (opts.addToCalendar) {
+    const token = await getValidToken()
+    if (!token) {
+      revalidatePath('/habits')
+      revalidatePath('/tasks')
+      return { dateStr, error: "Logged, but Google Calendar isn't connected" }
+    }
+    try {
+      // auto = false: this is a record of something that happened, not a
+      // proposal. Tagging it would put it in the auto-schedule sweep's path
+      // and the next "Schedule my week" would delete your own history.
+      const eventId = await createTaskBlock(
+        token.access_token,
+        { title: habit.title, description: habit.description, priority: habit.priority, id: rowId },
+        opts.startISO, endISO, false, '✓',
+      )
+      await db.from('tasks').update({ gcal_event_id: eventId }).eq('id', rowId)
+      onCalendar = true
+    } catch (e) {
+      console.error('logHabitSession: calendar write failed', e)
+      // The log itself succeeded — say what didn't rather than failing it all.
+      revalidatePath('/habits')
+      revalidatePath('/tasks')
+      return { dateStr, onCalendar: false, error: 'Logged, but could not add it to your calendar' }
+    }
+  }
+
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  revalidatePath('/analytics')
+  return { dateStr, onCalendar }
+}
+
+/**
+ * Calendar title → habit title.
+ *
+ * Planner writes its blocks as "🎯 Gym" / "✓ Gym"; an event you typed yourself
+ * is just "Gym". Stripping the leading marker and casing makes both match the
+ * habit, and nothing else does: the comparison is exact after that, so "Gym
+ * with Sarah" is a different event and stays one.
+ */
+function calendarKey(title: string): string {
+  return title.replace(/^[^\p{L}\p{N}]+/u, '').trim().toLowerCase()
+}
+
+/**
+ * Fill in habits you had on the calendar but never logged.
+ *
+ * If the gym block was on Tuesday and Tuesday is over, you went — that's the
+ * premise. Only *finished* days are swept: today's blocks are left alone, so a
+ * session you haven't done yet is never claimed for you.
+ *
+ * Matching is by title against `calendar_events`, which is already synced, so
+ * this covers blocks Planner scheduled *and* events you added yourself. It
+ * never overwrites: a day that already has a completion is skipped, and the
+ * caller is handed everything it wrote so it can be undone in one click.
+ */
+export async function syncScheduledHabits(): Promise<{
+  logged: { title: string; dateStr: string }[]
+}> {
+  const db = createServiceClient()
+  const tz    = await fetchTimezone(db)
+  const today = todayStr(tz)
+
+  // A week back is plenty: the sweep runs on every visit to the habits page,
+  // and a gap longer than that is a deliberate one to fill in by hand.
+  const from = startOfLocalDay(addDayStr(today, -7), tz).toISOString()
+  const to   = startOfLocalDay(today, tz).toISOString()
+
+  const [{ data: habitRows }, { data: events }] = await Promise.all([
+    db.from('tasks')
+      .select('id, title, status, estimated_minutes, created_at')
+      .eq('type', 'habit')
+      .is('parent_id', null)
+      .order('created_at', { ascending: false }),
+    db.from('calendar_events')
+      .select('title, start_time, end_time')
+      .gte('end_time', from)
+      .lt('end_time', to)
+      .eq('all_day', false),
+  ])
+
+  if (!habitRows?.length || !events?.length) return { logged: [] }
+
+  // One row per habit to log against — a pending one if there is one, else the
+  // most recent, which carries the same settings and works as a template.
+  const rowFor = new Map<string, { id: string; title: string }>()
+  for (const h of habitRows) {          // newest first
+    const key     = calendarKey(h.title)
+    const pending = h.status === 'inbox' || h.status === 'active'
+    if (!rowFor.has(key) || pending) rowFor.set(key, h)
+  }
+
+  // Earliest block on a given day wins — if you blocked the gym twice, the
+  // session is the day, not each block, which is how completions are counted.
+  const candidates = new Map<string, { habitId: string; startISO: string; minutes: number; title: string }>()
+  for (const ev of events) {
+    const row = rowFor.get(calendarKey(ev.title))
+    if (!row) continue
+    const dateStr = localDayStr(ev.start_time, tz)
+    const key = `${row.id}|${dateStr}`
+    const minutes = Math.max(
+      1,
+      Math.round((new Date(ev.end_time).getTime() - new Date(ev.start_time).getTime()) / 60_000),
+    )
+    const held = candidates.get(key)
+    if (!held || ev.start_time < held.startISO) {
+      candidates.set(key, { habitId: row.id, startISO: ev.start_time, minutes, title: row.title })
+    }
+  }
+
+  // Drop days already logged before doing any work. logHabitSession would
+  // refuse them anyway, but this runs on every visit to the page and the steady
+  // state — everything already filled in — should cost one query, not one per
+  // blocked session.
+  const { data: done } = await db
+    .from('tasks')
+    .select('title, completed_at')
+    .eq('type', 'habit')
+    .eq('status', 'done')
+    .gte('completed_at', from)
+    .not('completed_at', 'is', null)
+
+  const alreadyLogged = new Set(
+    (done ?? []).map(d => `${calendarKey(d.title)}|${localDayStr(d.completed_at, tz)}`),
+  )
+
+  const logged: { title: string; dateStr: string }[] = []
+  for (const c of candidates.values()) {
+    if (alreadyLogged.has(`${calendarKey(c.title)}|${localDayStr(c.startISO, tz)}`)) continue
+    const res = await logHabitSession(c.habitId, {
+      startISO: c.startISO, minutes: c.minutes, addToCalendar: false,
+    })
+    if (res.dateStr && !res.error) logged.push({ title: c.title, dateStr: res.dateStr })
+  }
+
+  if (logged.length > 0) {
+    revalidatePath('/habits')
+    revalidatePath('/tasks')
+  }
+  return { logged }
 }
 
 /**
@@ -700,6 +973,16 @@ export async function createTask(data: {
   weekly_target?: number | null
   /** Explicit type override — 'habit' skips urgency scoring */
   taskType?: 'task' | 'recurring' | 'habit'
+  // ── Advanced fields, set from the add modal's detailed view ──
+  // Each lives behind a later migration, so they're written only when the
+  // caller actually supplied one: omitted, a pre-migration database still
+  // accepts the insert.
+  description?:        string | null
+  start_date?:         string | null
+  location?:           string | null
+  span_minutes?:       number | null
+  buffer_minutes?:     number | null
+  avoid_after_breaks?: boolean
 }) {
   const db = createServiceClient()
   const now = new Date().toISOString()
@@ -730,6 +1013,12 @@ export async function createTask(data: {
       status:             'inbox',
       urgency_score,
       created_at:         now,
+      ...(data.description        ? { description:        data.description }        : {}),
+      ...(data.start_date         ? { start_date:         data.start_date }         : {}),
+      ...(data.location && data.location !== 'anywhere' ? { location: data.location } : {}),
+      ...(data.span_minutes       ? { span_minutes:       data.span_minutes }       : {}),
+      ...(data.buffer_minutes != null ? { buffer_minutes: data.buffer_minutes }     : {}),
+      ...(data.avoid_after_breaks ? { avoid_after_breaks: true }                    : {}),
     })
     .select()
     .single()

@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, HabitStreak } from '@/types'
-import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
+import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
+import { fetchTimezone, localDayStr, todayStr, localDayRange, startOfLocalDay, addDays } from '@/lib/day'
 import HabitsView from './HabitsView'
 
 export const dynamic = 'force-dynamic'
@@ -9,12 +10,27 @@ export default async function HabitsPage() {
   const db = createServiceClient()
   const cutoff = new Date(Date.now() - 112 * 24 * 60 * 60 * 1000).toISOString() // 16 weeks back
 
-  // Day boundaries in UTC — due_date is always stored at UTC midnight (see
-  // CLAUDE.md), so comparing against UTC day edges keeps "due today" stable
-  // regardless of the server's local timezone.
-  const now        = new Date()
-  const endOfDay   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999))
-  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+  // The user's day, as instants. Habit days are local days (src/lib/day.ts):
+  // an evening session belongs to the evening you had, not to whatever date it
+  // already is in UTC.
+  const tz    = await fetchTimezone(db)
+  const today = todayStr(tz)
+  const { startISO: startOfDay, endISO: endOfDay } = localDayRange(today, tz)
+
+  // When does tomorrow's occurrence stop being hidden?
+  //
+  // A spawned habit's due_date is written at *local* midnight now, but rows
+  // spawned before that change sit at *UTC* midnight — the same calendar day
+  // meaning a different instant. Reading an old row as a local one shows
+  // tomorrow's habit today; reading a new one as UTC does the same east of the
+  // meridian. So a habit becomes available only once its day has begun under
+  // both readings: the earlier threshold of the two, which is what this min is.
+  // No backfill needed, and it stays correct once every row is local.
+  const tomorrow  = addDays(today, 1)
+  const available = [
+    startOfLocalDay(tomorrow, tz).toISOString(),
+    `${tomorrow}T00:00:00.000Z`,
+  ].sort()[0]
 
   const [
     { data: activeHabits },
@@ -30,7 +46,7 @@ export default async function HabitsPage() {
       .eq('type', 'habit')
       .in('status', ['inbox', 'active'])
       .is('parent_id', null)
-      .or(`due_date.is.null,due_date.lte.${endOfDay.toISOString()}`)
+      .or(`due_date.is.null,due_date.lt.${available}`)
       .order('title'),
 
     // Habits already completed today. Completing a habit flips its row to
@@ -41,7 +57,8 @@ export default async function HabitsPage() {
       .eq('type', 'habit')
       .eq('status', 'done')
       .is('parent_id', null)
-      .gte('completed_at', startOfDay.toISOString())
+      .gte('completed_at', startOfDay)
+      .lt('completed_at', endOfDay)
       .order('title'),
 
     // Completed habit instances in the past 16 weeks for the calendar
@@ -75,7 +92,7 @@ export default async function HabitsPage() {
   const completionMap: Record<string, string[]> = {}
   for (const c of completions ?? []) {
     if (!c.completed_at) continue
-    const date = c.completed_at.slice(0, 10)
+    const date = localDayStr(c.completed_at, tz)
     if (!completionMap[c.title]) completionMap[c.title] = []
     if (!completionMap[c.title].includes(date)) completionMap[c.title].push(date)
   }
@@ -106,7 +123,7 @@ export default async function HabitsPage() {
   // always stale. The streak handed to TaskDetail is patched with the real
   // count below.
   const weekStartDay = await fetchWeekStartDay(db)
-  const weekStartStr = weekStartOf(new Date(), weekStartDay)
+  const weekStartStr = weekStartOfDay(today, weekStartDay)
 
   const weeklyDays: Record<string, number> = {}
   for (const [title, dates] of Object.entries(completionMap)) {
@@ -134,6 +151,7 @@ export default async function HabitsPage() {
       streaks={streaks}
       gcalWriteEnabled={gcalWriteEnabled}
       weekStartDay={weekStartDay}
+      tz={tz}
     />
   )
 }

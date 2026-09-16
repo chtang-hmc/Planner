@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
 import TimerShell from '@/components/TimerShell'
 import TopSearchBar from '@/components/TopSearchBar'
+import TimezoneSync from '@/components/TimezoneSync'
 import { Project } from '@/types'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <TimerShell>
+      <TimezoneSync />
       <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
         <Sidebar projects={(projects ?? []) as Project[]} />
 

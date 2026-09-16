@@ -15,13 +15,14 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Inline Search](#inline-search)
-11. [Drag-to-Reschedule](#drag-to-reschedule)
-12. [Priority-Colored Circles](#priority-colored-circles)
-13. [Projects](#projects)
-14. [Color Themes](#color-themes)
-15. [Week Start](#week-start)
-16. [Server / Client Component Split](#server--client-component-split)
+10. [Task List Views](#task-list-views)
+11. [Inline Search](#inline-search)
+12. [Drag-to-Reschedule](#drag-to-reschedule)
+13. [Priority-Colored Circles](#priority-colored-circles)
+14. [Projects](#projects)
+15. [Color Themes](#color-themes)
+16. [Week Start](#week-start)
+17. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -112,6 +113,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
 - `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
 - `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
+- `0014_user_timezone.sql` — `user_scheduling_config.timezone`; habit days are the user's calendar days, and the server needs to know which zone that is
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -276,10 +278,18 @@ Three functions in `src/lib/google-calendar.ts`:
 
 | Function | GCal API call | Notes |
 |---|---|---|
-| `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low) |
+| `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low). Takes a `prefix` — `✓` marks a session already done rather than work planned ahead |
 | `updateTaskBlock()` | `PATCH /calendars/primary/events/:id` | Updates start/end only |
 | `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
 | `listAutoScheduledEventIds()` | `GET /calendars/primary/events?privateExtendedProperty=plannerAuto=true` | Lists auto-scheduled blocks in a window, for cleanup |
+
+### Every event Planner writes says so
+
+`PLANNER_SIGNATURE` (`— Created by Planner`) is appended to the description of every event `createTaskBlock` writes, below the task's own notes when it has any.
+
+The `plannerAuto` extended property already marks auto-scheduled blocks, but extended properties are invisible inside Google Calendar — from there, a focus block is indistinguishable from an event you made yourself, which matters most when you're deciding whether something is safe to delete or move. Description is the one field Calendar shows in every view, on every client.
+
+It goes on *all* Planner-written events, not just tagged ones, because the question it answers ("did I make this or did the app?") is the same either way.
 
 ### Reviewing a week: whole horizon, partial approval
 
@@ -506,9 +516,36 @@ When a habit is completed for the day, it's moved to a "Done today" section (gre
 
 The page runs **two** queries: pending habits (`status in (inbox, active)`, due today or earlier) and habits completed today (`status = 'done'`, `completed_at >= start of today UTC`), merged by title with the pending row winning. The second query is load-bearing — completing a habit flips its row to `done` and spawns the next occurrence for tomorrow, so without it a completed habit disappears from the page entirely rather than showing as done. Deriving `doneToday` from the pending list alone (the original approach) always produced an empty set.
 
-### Day boundaries are UTC
+### A due date is a day, never an instant
 
-`due_date` on a spawned occurrence is written at **UTC midnight** (`setUTCHours(0,0,0,0)`), and the habits page compares against UTC day edges. Both sides must agree: an earlier version spawned at *local* midnight while filtering on *local* end-of-day, which are 1 ms apart — a spawned habit could never satisfy "due today or earlier" and the page rendered empty. This follows the same rule as all-day calendar events (always `T00:00:00Z`).
+`due_date` stores a calendar day at UTC midnight. Two things follow, and the weekly review got both wrong:
+
+- **Compare it as a day.** `due_date < new Date().toISOString()` marks a task due *today* as overdue the moment UTC midnight passes — mid-afternoon the day before on the US west coast. Compare `due_date.slice(0,10)` against the user's today instead.
+- **Render it as a day.** Passing the whole instant to `toLocaleDateString` shifts it backwards west of UTC: `2026-09-16T00:00Z` is 5pm on the 15th in California, so a task due tomorrow displayed as today. Format `slice(0,10) + 'T12:00:00Z'` with `timeZone: 'UTC'` to get the day that was picked.
+
+The list view already did this (`formatDue` compares local date strings); the review page and `ReviewView` were written before that and kept the instant comparison. Checked against real data: three tasks due the 16th read as overdue and dated the 15th, and every other due date displayed a day early.
+
+Habit *completions* are different — those are real moments, filed under a day by timezone. See below.
+
+### Day boundaries are the user's local days
+
+*(Was UTC. Changed 2026-09-15 — see "Why it changed" below.)*
+
+Every day-shaped question about a habit — which heatmap square a session lights, whether it's already logged today, what counts toward this week's target, when tomorrow's occurrence appears — is answered in the user's timezone, through `src/lib/day.ts`.
+
+**Two representations, kept apart.** A *day string* (`YYYY-MM-DD`) is a calendar day with no time in it; arithmetic on those (`addDays`, `dayOfWeek`) is pure UTC math and can't drift, because every UTC day is exactly 24 hours. An *instant* is a moment; turning one into a day needs a timezone, which is the single job of `localDayStr`. Mixing the two is what the old code did — building `Date` objects at local midnight and reading them back with `toISOString().slice(0,10)` — which silently shifted every heatmap cell for anyone west of the meridian.
+
+**Where the timezone comes from.** `user_scheduling_config.timezone` (migration 0014), reported by the browser on every page load via `TimezoneSync` and shown in Settings. It has to be stored rather than read at the point of use, because the habits page builds the heatmap *on the server* and server actions do the streak math. `saveTimezone` returns without writing when nothing changed, so the per-load sync costs one query and triggers no revalidation. Missing column or empty value falls back to UTC — exactly the old behaviour, so the app works before 0014 runs.
+
+**DST is handled by asking, not by arithmetic.** `startOfLocalDay` finds the offset by asking `Intl` what the wall clock reads at a candidate instant, then re-reads it at the corrected instant — two passes, because a DST change can move the offset between them. Verified against the 25-hour and 23-hour US days and a half-hour zone (Asia/Kolkata). The one input it can't represent is a local midnight that doesn't exist (spring-forward at 00:00, a handful of zones); it lands on the following hour, the closest real instant.
+
+**Old rows needed no backfill.** Occurrences spawned before the change carry UTC-midnight `due_date`s; new ones carry local midnight. The same calendar day, a different instant — and reading one as the other makes tomorrow's habit appear today (west of UTC for old rows, east of it for new ones). So the page treats a habit as available only once its day has begun under *both* readings, taking the earlier of the two thresholds. Correct for either format, and still correct once every row is local. Backfilled completions were already stored at midday, which is safely inside the day in any nearby zone, so their squares didn't move.
+
+### Why it changed
+
+The UTC rule was right about one thing: both sides of a comparison must agree, and they now do. It was wrong about which day a session belongs to. A 7pm gym session in California is 02:00 UTC the next day, so it lit tomorrow's square, counted toward tomorrow's target, and moved the streak — for evening habits, which is most of them.
+
+The original note justified UTC as matching all-day calendar events. That rule still holds for `due_date` on *tasks* (an all-day event is a date, and `T00:00:00Z` keeps it from sliding), but a habit completion isn't an all-day event — it's a moment that has to be filed under a day, and only the user's timezone can say which.
 
 ### Weekly targets
 
@@ -529,6 +566,32 @@ Same-day completion is also a no-op for the streak. The consecutive-day check is
 ### Habits have no deadlines
 
 The detail panel hides the due-date picker, urgency curve, and urgency breakdown for habits — all deadline machinery, and habits are stored with `urgency_score` 0 regardless. `due_date` remains internally as the next-occurrence marker the habits page filters on, but it is no longer user-editable, so it can't be set by hand in a way that breaks the occurrence chain.
+
+### Logging a session at a time
+
+The one-tap "+" records that a habit happened, which is all most logs need. `logHabitSession` is for when the hour matters — you ran at 7am and are logging it at noon — and optionally writes the session to Google Calendar as a record of where the time went.
+
+**Today goes through `completeTask`, not a second row.** Logging today against the pending occurrence completes it properly: streak, weekly count and the next occurrence all follow. Inserting a done row alongside it (what `setHabitCompletion` does for past days) would leave today's card still asking to be done, and the "+" button would then create a duplicate. `completeTask` took an optional `completedAtISO` so the record sits at the real time rather than at the moment you pressed the button.
+
+**Logged events are never tagged `plannerAuto`.** The tag is what the auto-schedule sweep deletes; a logged session is history, and the next "Schedule my week" would erase it. The event id is stored on the completion row instead, and un-logging deletes the event through it — without that, the row disappears along with the only record of the event, orphaning it on the calendar forever.
+
+**The day it counts for is the user's local day containing the start instant**, derived server-side and returned to the caller so the optimistic update marks the cell the heatmap will draw. See *Day boundaries are the user's local days*.
+
+**A failed calendar write doesn't fail the log.** The action returns `dateStr` whenever a row was written, with `error` describing only what didn't happen; the sheet shows the warning and still closes out the log. Reporting total failure for a session that *was* recorded would be a lie, and re-logging would then hit the one-per-day guard.
+
+### Filling in from the calendar
+
+If the gym block was on Tuesday and Tuesday is over, you went. `syncScheduledHabits` sweeps finished days and logs the habits that were blocked out on them.
+
+**Only finished days.** Today's blocks are never swept, so a session you haven't done yet is never claimed for you. Seven days back, because the sweep runs on every visit to the habits page and a longer gap is one you'd want to fill in deliberately.
+
+**Matched by title against `calendar_events`, not by the `plannerAuto` tag.** Two reasons. The tag would only find blocks Planner scheduled, and "if I have gym on my calendar" includes events you typed yourself. And `calendar_events` is already synced, so the sweep costs no Google round trip. The comparison strips a leading marker (`🎯 Gym`, `✓ Gym`) and casing, then matches exactly — so "Gym" is the habit and "Piano Lesson" is not, which is what you want when the habit is called "Piano".
+
+**It runs from a client effect, not during render.** The page is a Server Component and rendering must not write. Same shape as `TimezoneSync`.
+
+**Nothing is silent or one-way.** Days already logged are filtered out in one query before any writing, so the steady state costs nothing and an existing completion is never overwritten. What *was* written appears in a banner on the page with a one-click Undo for the whole batch, and individual days can still be un-clicked on the heatmap.
+
+The premise can be wrong — a blocked session you skipped gets logged as done. That's the trade the feature asks for, which is why it's visible and reversible rather than quiet.
 
 ### Deleting and back-filling
 
@@ -580,6 +643,8 @@ Priority and urgency are read from the parent at scheduling time rather than cop
 
 The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
 
+**Views must not trust the copy either.** Upcoming files tasks by date and originally skipped any task with no `due_date`, so a subtask carrying null — one created before inheritance existed, or after the parent's date was cleared — appeared on no day at all. It vanished from that view while the list, which nests by `parent_id`, showed it correctly: five of six readings missing under "Public Policy Readings", which read as a nesting bug and wasn't one. `dueDay()` now falls back to the parent's date, matching what the scheduler already did. A subtask that *does* have its own date keeps it, so dragging one to another day still moves it.
+
 Subtasks appear in the main list like any other task, so each shows `↳ Parent title` — "Dahl" on its own is a mystery once it's out of the parent's checklist. The row carries a `parent:parent_id(id, title)` embed. Note the syntax: `tasks!parent_id` resolves to the *children* of a row (an array); `parent_id(...)` is the many-to-one direction.
 
 ### Chained scheduling
@@ -609,6 +674,69 @@ How much of a wait is reusable depends on buffers — a 60-minute wait between t
 ### Server actions
 
 `getSubtasks(taskId)`, `createSubtask(taskId, title)`, `toggleSubtask(id, done)`, `deleteSubtask(id)` — all in `src/app/actions/tasks.ts`. The SubtaskSection component in TaskDetail handles optimistic updates locally and refreshes from the server after each write.
+
+---
+
+## Add Modal: Compact vs Detailed
+
+`AddTaskModal` is the single add surface for tasks *and* habits (tasks page, projects, review, habits page), so every advanced field the scheduler understands had to live somewhere — and all of them at once made adding "call the dentist" a form to fill in.
+
+Two views, toggled in the header beside the task/habit switch:
+
+- **Compact** — title, project, priority, estimate, due date. Quick-add (the ✦ Claude parse) stays in both views; it's the fastest path in either.
+- **Detailed** — adds notes, energy, repeat, "not before", where / ties-me-up / buffer, and the urgency curve. For habits: notes, priority, energy, schedule, the after-meals exclusion, and placement.
+
+### The choice is remembered
+
+`localStorage['planner.addTask.detailed']`. Someone who reaches for the advanced fields once usually wants them next time; reopening to compact every time makes Detailed feel like it never sticks. Per-viewer convenience, so browser storage is the right home — and it's read through a try/catch, since private windows throw on access.
+
+### Compact says what it's about to apply
+
+Quick-add can set an advanced field (energy, most often), and a remembered detailed session leaves values behind. So compact prints a one-line summary — "Also applying: 🔥 high energy · no buffer" — with a link to reveal the full form. Hidden is fine; hidden *and* silently in effect is how you end up with a task you didn't mean to create.
+
+### Advanced fields are omitted, not defaulted
+
+`createTask` spreads each new column in only when the caller supplied a non-default value:
+
+```ts
+...(data.span_minutes ? { span_minutes: data.span_minutes } : {}),
+```
+
+Same reason as everywhere else — those columns arrived in later migrations, and always naming them would break inserts on a database that hasn't run them. Setting one on an un-migrated database still fails, per "reads degrade, writes don't"; the modal now catches the error and shows the PostgREST message rather than leaving a dead button.
+
+### What's not here
+
+Habit exclusivity (gym and running never sharing a day) stays on the habits page. It's a pairing against habits that already exist, and the add modal doesn't have that list — a free-text group name here is exactly the mistake that produced cross-named groups the first time.
+
+---
+
+## Task List Views
+
+### Folding is the default, everywhere
+
+Both the list and Upcoming track which parents are **open** (`expanded`), not which are shut, so the default — an empty set — is everything tucked away. Same for project groups (`openProjects`). Inverting the state was the whole fix: a "collapsed" set defaults to nothing collapsed, which is the opposite of what these features are for.
+
+Project grouping in particular exists to compress a long list into something you can survey. Opening it expanded shows the same wall of rows with headers added, so it starts compact and each header carries the numbers you'd otherwise expand to find — task count and total estimated time, including the group's subtasks.
+
+Upcoming needed the same fold for a sharper reason: subtasks inherit their parent's deadline, so an unfolded reading list dumps every chapter into a single day section.
+
+A subtask whose parent isn't in the same bucket — different due date, or filtered out — stays a top-level row rather than disappearing. Nothing is ever hidden by having a parent somewhere else.
+
+### The "Relevant" filter
+
+One filter for "what am I doing now", as opposed to the full list's "what do I owe anyone, ever". A task is relevant when:
+
+- it isn't `someday` (a parking lot, never current)
+- it isn't gated by a future `start_date` — you can't start it yet, however urgent it scores
+- **and** it's already blocked on the calendar (that's the plan), or due within `RELEVANT_WINDOW_DAYS` (7), or — with no deadline at all — priority ≥ 3
+
+The no-deadline fallback to priority is the one judgement call. Without a date, priority is the only signal separating "matters" from "eventually", and dropping undated tasks entirely would hide most of the Inbox.
+
+Subtasks ride on their parent's relevance, checked against the unfiltered task list. Parents pass their deadline down, but a chain member without one of its own would otherwise vanish out from under a parent that's still showing.
+
+Deliberately **not** a filter on `urgency_score`. Urgency blends priority and deadline into one number, so a threshold can't distinguish "critical but not due for a month" from "trivial and due tomorrow" — and both answers are wrong for a filter whose whole job is "can I act on this now".
+
+Dates compare as local `YYYY-MM-DD` strings, the same way `formatDue` does, for the same reason: a UTC comparison makes a task due today read as overdue after local midnight UTC.
 
 ---
 

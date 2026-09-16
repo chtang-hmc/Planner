@@ -18,6 +18,7 @@ import {
   type AttackItem,
 } from '@/lib/scheduler'
 import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
+import { isValidTimezone, fetchTimezone, localDayStr, startOfLocalDay } from '@/lib/day'
 
 // ── GCal freeBusy ─────────────────────────────────────────────────────────────
 
@@ -147,8 +148,8 @@ export interface SerializedAttackItem {
 async function buildHabitCandidates(
   db: ReturnType<typeof createServiceClient>
 ): Promise<SchedulerTask[]> {
-  // Independent of each other — one round trip instead of two
-  const [{ data: habits }, weekStartDay] = await Promise.all([
+  // Independent of each other — one round trip instead of three
+  const [{ data: habits }, weekStartDay, tz] = await Promise.all([
     db.from('tasks')
       .select('*')        // '*' so a pre-0007 database (no exclusive_group) still works
       .eq('type', 'habit')
@@ -156,11 +157,14 @@ async function buildHabitCandidates(
       .is('parent_id', null)
       .or('scheduled_by.is.null,scheduled_by.eq.auto'),
     fetchWeekStartDay(db),
+    fetchTimezone(db),
   ])
 
   if (!habits || habits.length === 0) return []
 
-  const weekStart = weekStartOf(new Date(), weekStartDay)
+  // Which week it is depends on where you are — a Sunday-evening session west
+  // of UTC is still this week, not the next one.
+  const weekStart = weekStartOf(new Date(), weekStartDay, tz)
 
   // Last day of the current week. Sessions are owed *this* week, so they must
   // not spill past it — "Schedule week" runs a rolling 7 days from today, which
@@ -182,14 +186,14 @@ async function buildHabitCandidates(
     .select('title, completed_at')
     .eq('type', 'habit')
     .eq('status', 'done')
-    .gte('completed_at', `${weekStart}T00:00:00Z`)
+    .gte('completed_at', startOfLocalDay(weekStart, tz).toISOString())
     .not('completed_at', 'is', null)
 
   const daysByTitle = new Map<string, Set<string>>()
   for (const r of doneRows ?? []) {
     if (!r.completed_at) continue
     const set = daysByTitle.get(r.title) ?? new Set<string>()
-    set.add(r.completed_at.slice(0, 10))
+    set.add(localDayStr(r.completed_at, tz))
     daysByTitle.set(r.title, set)
   }
 
@@ -816,6 +820,44 @@ export async function getWeekStartDay(): Promise<number> {
  * Save the preferred first day of the week. Habit weekly targets count from
  * this day, so changing it re-derives "this week" everywhere at once.
  */
+/**
+ * Record the user's timezone.
+ *
+ * Habit days are local days, and both server actions and the server-rendered
+ * habits page need to know which zone that is — so it's stored rather than read
+ * off the browser at the point of use. `TimezoneSync` reports it automatically
+ * on load; this is also what the Settings control writes.
+ *
+ * Returns `changed` so the caller knows whether anything moved: the sync runs
+ * on every page load and must not trigger a revalidation storm.
+ */
+export async function saveTimezone(tz: string): Promise<{ error?: string; changed?: boolean }> {
+  if (!isValidTimezone(tz)) return { error: 'Unrecognised timezone' }
+
+  const db = createServiceClient()
+  const { data } = await db.from('user_scheduling_config').select('*').limit(1).maybeSingle()
+
+  if (data?.timezone === tz) return { changed: false }
+
+  const { error } = data
+    ? await db.from('user_scheduling_config').update({ timezone: tz }).eq('id', data.id)
+    : await db.from('user_scheduling_config').insert({
+        max_session_minutes: 90, buffer_minutes: 15, timezone: tz,
+      })
+
+  if (error) {
+    // Missing until 0014 runs. Reads fall back to UTC, which is the old
+    // behaviour, so the app works — only the preference can't be stored.
+    console.error('saveTimezone:', error.message)
+    return { error: 'Could not save — run migration 0014_user_timezone.sql first.' }
+  }
+
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  revalidatePath('/settings')
+  return { changed: true }
+}
+
 export async function saveWeekStartDay(day: number): Promise<{ error?: string }> {
   if (!isWeekStartDay(day)) return { error: 'Unsupported day' }
 

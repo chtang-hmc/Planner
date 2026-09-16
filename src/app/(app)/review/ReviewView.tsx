@@ -15,8 +15,26 @@ function formatMinutes(m: number | null) {
   return r ? `${h}h ${r}m` : `${h}h`
 }
 
+/**
+ * Render a due date as the day it was picked.
+ *
+ * A due date is a calendar day stored at UTC midnight, so handing the whole
+ * instant to toLocaleDateString shifts it: 2026-09-16T00:00Z is 5pm on the
+ * 15th in California, and a task due tomorrow rendered as today. Formatting
+ * the date part in UTC keeps the day that was chosen.
+ */
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  return new Date(iso.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC',
+  })
+}
+
+/** Today where the user is, as YYYY-MM-DD — the same shape a due date slices to. */
+function localToday() {
+  const d = new Date()
+  return d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0')
 }
 
 // ── Step config ───────────────────────────────────────────────────────────────
@@ -57,7 +75,7 @@ function TaskTriageRow({ task, actions, triaged }: TriageRowProps) {
           </span>
           {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
           {task.due_date && (
-            <span className={`text-xs font-medium ${task.due_date < new Date().toISOString() ? 'text-red-500' : 'text-slate-400'}`}>
+            <span className={`text-xs font-medium ${task.due_date.slice(0, 10) < localToday() ? 'text-red-500' : 'text-slate-400'}`}>
               {formatDate(task.due_date)}
             </span>
           )}
