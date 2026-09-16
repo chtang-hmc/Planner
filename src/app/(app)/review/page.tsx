@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { daysSinceWeekStart, fetchWeekStartDay } from '@/lib/week'
+import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
+import { fetchTimezone, todayStr, addDays, startOfLocalDay } from '@/lib/day'
 import { Task, Project, INBOX_PROJECT } from '@/types'
 import ReviewView from './ReviewView'
 
@@ -26,20 +27,20 @@ export interface ReviewData {
   projects: Project[]
 }
 
-/** Start of the current week in local time, per the configured first day. */
-function weekStartLocal(weekStartDay: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - daysSinceWeekStart(d.getDay(), weekStartDay))
-  d.setHours(0, 0, 0, 0)
-  return d.toISOString()
-}
-
 export default async function ReviewPage() {
   const db = createServiceClient()
-  const now = new Date().toISOString()
-  const weekStartDay = await fetchWeekStartDay(db)
-  const weekStart = weekStartLocal(weekStartDay)
-  const in7days = new Date(Date.now() + 7 * 86400000).toISOString()
+  const [weekStartDay, tz] = await Promise.all([fetchWeekStartDay(db), fetchTimezone(db)])
+
+  // A due date is a calendar *day*, stored at UTC midnight — so it's compared
+  // as a day, against the user's today. Comparing it to the current instant
+  // (what this did before) marks a task due today as overdue the moment UTC
+  // midnight passes, which is mid-afternoon the day before on the US west
+  // coast: "due tomorrow" showed up overdue, and dated today.
+  const today    = todayStr(tz)
+  const in7days  = addDays(today, 7)
+  // completed_at is a real instant, so the week boundary is one too — the
+  // user's local week start, not the server's midnight.
+  const weekStart = startOfLocalDay(weekStartOfDay(today, weekStartDay), tz).toISOString()
 
   const [
     { data: completedThisWeek },
@@ -64,11 +65,13 @@ export default async function ReviewPage() {
     return tasks.map(t => ({ ...t, project: t.project ?? INBOX_PROJECT })) as (Task & { project: Project })[]
   }
 
-  const overdue  = withFallback(allActive.filter(t => t.due_date && t.due_date < now))
+  const overdue  = withFallback(allActive.filter(t => t.due_date && t.due_date.slice(0, 10) < today))
   const inbox    = withFallback(allActive.filter(t => !t.project_id && t.type !== 'someday'))
-  const upcoming = withFallback(allActive.filter(t =>
-    t.due_date && t.due_date >= now && t.due_date <= in7days
-  ))
+  const upcoming = withFallback(allActive.filter(t => {
+    if (!t.due_date) return false
+    const day = t.due_date.slice(0, 10)
+    return day >= today && day <= in7days
+  }))
   const someday  = withFallback(allActive.filter(t => t.type === 'someday'))
 
   const data: ReviewData = {

@@ -516,6 +516,17 @@ When a habit is completed for the day, it's moved to a "Done today" section (gre
 
 The page runs **two** queries: pending habits (`status in (inbox, active)`, due today or earlier) and habits completed today (`status = 'done'`, `completed_at >= start of today UTC`), merged by title with the pending row winning. The second query is load-bearing — completing a habit flips its row to `done` and spawns the next occurrence for tomorrow, so without it a completed habit disappears from the page entirely rather than showing as done. Deriving `doneToday` from the pending list alone (the original approach) always produced an empty set.
 
+### A due date is a day, never an instant
+
+`due_date` stores a calendar day at UTC midnight. Two things follow, and the weekly review got both wrong:
+
+- **Compare it as a day.** `due_date < new Date().toISOString()` marks a task due *today* as overdue the moment UTC midnight passes — mid-afternoon the day before on the US west coast. Compare `due_date.slice(0,10)` against the user's today instead.
+- **Render it as a day.** Passing the whole instant to `toLocaleDateString` shifts it backwards west of UTC: `2026-09-16T00:00Z` is 5pm on the 15th in California, so a task due tomorrow displayed as today. Format `slice(0,10) + 'T12:00:00Z'` with `timeZone: 'UTC'` to get the day that was picked.
+
+The list view already did this (`formatDue` compares local date strings); the review page and `ReviewView` were written before that and kept the instant comparison. Checked against real data: three tasks due the 16th read as overdue and dated the 15th, and every other due date displayed a day early.
+
+Habit *completions* are different — those are real moments, filed under a day by timezone. See below.
+
 ### Day boundaries are the user's local days
 
 *(Was UTC. Changed 2026-09-15 — see "Why it changed" below.)*
