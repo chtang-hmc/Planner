@@ -23,7 +23,8 @@
 15. [Projects](#projects)
 16. [Color Themes](#color-themes)
 17. [Week Start](#week-start)
-18. [Server / Client Component Split](#server--client-component-split)
+18. [Tests](#tests)
+19. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -929,6 +930,48 @@ Shared rather than written twice: both places need to pick a project *and* make 
 The detail panel previously accepted a `projects` prop and never used it: a task's project was fixed at creation with no way to change it afterwards.
 
 Habits don't get a project picker — they're deliberately project-less.
+
+---
+
+## Tests
+
+`npm test` (vitest, `npm run test:watch` to iterate). 77 tests over the pure logic — the scheduler, urgency, and the day and week helpers.
+
+### Why these four and nothing else
+
+Every one of them is a place a real bug shipped from. The urgency formula and its PL/pgSQL twin once disagreed by a sign, so the nightly recompute silently overwrote correct scores. Habit days were bucketed in UTC, filing evening sessions under the wrong date. `weekEnd` read a local day string as UTC midnight and cost the scheduler the last evening of every week. The scheduler itself — 863 lines deciding what the product actually does — had no coverage at all.
+
+They are also the cheapest things in the app to test: data in, data out, no database, no network, no DOM. The whole suite runs in under half a second.
+
+### They are behaviour tests
+
+They assert the rule a user would describe — "gym and running never land on the same day", "a chain runs back to back", "the more urgent task is booked earlier" — not the exact minute a block starts. Placement heuristics can change without rewriting the suite; the rules can't change without someone noticing.
+
+Several encode a specific incident, and say so in a comment: the 120-minute session that became two blocks under a 90-minute cap, the laundry chain that came out in the wrong order, the four habit sessions that reported zero failures.
+
+### Two behaviours pinned rather than fixed
+
+- **`step` urgency floors at 0.08, not 0**, so a step task carries ~4 points of pressure even beyond the horizon where the other curves carry none. Migration 0011 does the same, so the two sides agree — changing it would move every existing score and need a new migration. The comment above `curveShape` used to claim every curve starts at 0; it no longer does.
+- **A zero-duration task is silently skipped** by the scheduler — neither placed nor reported. Callers filter those out first, so it is unreachable in practice.
+
+### CI
+
+`.github/workflows/ci.yml` runs types, lint and tests on every pull request and on pushes to `main`. `npm ci` rather than `npm install`, so a green run means the tree the lockfile describes.
+
+**No CD.** Nothing is deployed — there is no Vercel, Docker or other hosting config, and the app runs from `next dev`. A deploy pipeline would be answering a question this project does not have; if it is ever hosted on Vercel, that platform deploys on push by itself.
+
+**The lint backlog was decided, not fixed.** Turning lint on surfaced 22 errors, one of which was real (a breadcrumb using `<a>` where `<Link>` belongs — a full page reload). The other 21 were two rules misfiring on deliberate patterns, so they were configured rather than worked around:
+
+- `react/no-unescaped-entities` — **off**. Apostrophes in prose; the codebase writes them literally throughout, and escaping eleven of them would leave the only escaped apostrophes in the project.
+- `react-hooks/set-state-in-effect` and `react-hooks/purity` — **warn**. The first flags reading `localStorage` on mount, which is how a client preference applies without a hydration mismatch; `useSyncExternalStore` is used where it fits, but the settings sections need the mounted guard. The second flags `new Date()` inside async Server Components, which render once per request. Both stay visible so new instances still show up.
+
+CI that is red on the day it lands is CI that gets ignored, so the rules a project does not intend to follow are turned down deliberately rather than left to fail.
+
+**Migrations get a warning, not a gate.** CI cannot see which migrations are applied to Supabase, but a PR that adds one prints a warning naming the files. 0013 sat unapplied for days once while the feature that needed it silently did nothing.
+
+### What is not covered
+
+Anything touching Supabase or Google Calendar: the server actions, the sweep, the calendar writes. Those need fixtures and a fake for two external services, which is a much bigger commitment than the value it would return right now. The riskiest of them — logging a session to the calendar, and the habit sweep — are worth exercising by hand instead.
 
 ---
 
