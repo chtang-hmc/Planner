@@ -273,7 +273,7 @@ export default function ProjectDetailView({
           </div>
         </header>
 
-        <div className="px-6 py-5 max-w-2xl flex flex-col gap-6">
+        <div className="px-6 py-5 flex flex-col gap-6">
 
           {/* ── Stats ── */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 flex flex-col gap-4">

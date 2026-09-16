@@ -430,7 +430,7 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
         </div>
       </header>
 
-      <div className="px-6 py-5 flex flex-col gap-5 max-w-2xl">
+      <div className="px-6 py-5 flex flex-col gap-5">
 
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -445,11 +445,12 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
           />
         </div>
 
-        {/* Urgency distribution */}
-        <UrgencyChart buckets={urgencyBuckets} />
-
-        {/* Project workload */}
-        <ProjectWorkload stats={projectStats} />
+        {/* Two full-width charts stacked left a lot of empty panel beside them
+            once the width cap came off, so they pair up when there is room. */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+          <UrgencyChart buckets={urgencyBuckets} />
+          <ProjectWorkload stats={projectStats} />
+        </div>
 
         {/* Bias + accuracy side by side */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
