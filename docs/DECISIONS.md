@@ -15,14 +15,15 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Task List Views](#task-list-views)
-11. [Inline Search](#inline-search)
-12. [Drag-to-Reschedule](#drag-to-reschedule)
-13. [Priority-Colored Circles](#priority-colored-circles)
-14. [Projects](#projects)
-15. [Color Themes](#color-themes)
-16. [Week Start](#week-start)
-17. [Server / Client Component Split](#server--client-component-split)
+10. [Task Row Layouts](#task-row-layouts)
+11. [Task List Views](#task-list-views)
+12. [Inline Search](#inline-search)
+13. [Drag-to-Reschedule](#drag-to-reschedule)
+14. [Priority-Colored Circles](#priority-colored-circles)
+15. [Projects](#projects)
+16. [Color Themes](#color-themes)
+17. [Week Start](#week-start)
+18. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -707,6 +708,41 @@ Same reason as everywhere else — those columns arrived in later migrations, an
 ### What's not here
 
 Habit exclusivity (gym and running never sharing a day) stays on the habits page. It's a pairing against habits that already exist, and the add modal doesn't have that list — a free-text group name here is exactly the mistake that produced cross-named groups the first time.
+
+---
+
+## Task Row Layouts
+
+The task list draws a row four ways, chosen in **Settings → Task list layout** and stored per browser in `localStorage['planner-task-layout']`.
+
+| Layout | Density | What it is | Leaves out |
+|---|---|---|---|
+| **Rail** (default) | compact | One surface, hairline dividers, priority as a left edge shown only for high and critical. Metadata on a single muted line. | — |
+| **Ledger** | compact | Fixed columns under a header, so attributes line up down the page. Densest; best for "what's due soonest". Subtasks indent inside the title cell only, so columns stay true. | Energy — no column for it without crowding the title |
+| **Airy** | spacious | Generous rhythm, larger title, metadata demoted to a quiet second line. About half the rows per screen. | — |
+| **Editorial** | spacious | Large titles, project as a small uppercase label plus a hairline of project colour in the margin, deadline top-right in small caps. | Energy — the metadata line is kept to three items |
+
+### Where they live
+
+- `src/lib/task-layouts.ts` — the registry: ids, labels, descriptions, `omits`, and the localStorage helpers. No JSX, so both the settings page and the list can import it.
+- `src/components/TaskRowLayouts.tsx` — the four implementations and `TASK_LAYOUT_IMPLS`. Each exports a `Shell` (container, plus a header for Ledger) and a `Row`.
+- `src/lib/task-format.ts` — `formatMinutes`, `formatDue`, `dueToneClass`, shared so a duration reads identically in all four.
+- `src/app/(app)/tasks/TaskList.tsx` — decides *which rows exist and in what order*; the layout decides what one looks like.
+- `/auth/design` — preview endpoint. `?layout=rail|ledger|airy|editorial` isolates one. Under `/auth` because the proxy lets that prefix through without a session, which is the only way to look at the list in a browser that isn't logged in. It renders the shipping components against fixtures, not copies of them — a preview that drifts from the app is worse than none.
+
+### The cost, accepted deliberately
+
+Four layouts means four row implementations, and every feature that touches a row has to be built four times — the fold toggle, the subtask count, the parent breadcrumb, the someday and recurring tags all exist once per layout. That was raised as an argument for one layout plus a density setting and a date-grouping option, which would have covered the same ground from one component. The owner chose to keep all four; this is a single-user app and the preference is theirs.
+
+**`TaskRowProps` is the contract.** Everything a row can show arrives through it, so adding a field makes the compiler point at each layout that hasn't handled it. If a layout should skip it, add a line to that layout's `omits` so the settings page says so.
+
+### What all four dropped
+
+- **The urgency score and curve glyph** (`67`, `╱ ⌒ ⌐`). An internal model leaking into the UI — nobody acts on "67". It stays on the task detail panel.
+- **Emoji as data encoding** (🌿 ⚡ 🔥 ↻ 📦). Renders differently on every platform and can't be styled. Replaced with words.
+- **The filled project chip.** A coloured dot says the same thing without competing for attention.
+
+Colour in a row is now reserved for one thing: how close the deadline is. The priority circle is neutral in three of the four layouts for the same reason.
 
 ---
 

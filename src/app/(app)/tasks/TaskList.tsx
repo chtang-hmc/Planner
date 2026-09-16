@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useEffect } from 'react'
+import { useState, useTransition, useEffect, useSyncExternalStore } from 'react'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
@@ -15,57 +15,11 @@ import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePr
 import DayPlanModal from '@/components/DayPlanModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
+import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
+import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
+import { formatMinutes, localDateStr } from '@/lib/task-format'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
-const CURVE_ICON = { linear: '╱', exponential: '⌒', step: '⌐' }
-
-function urgencyColor(score: number) {
-  if (score >= 70) return 'text-red-500 dark:text-red-400'
-  if (score >= 40) return 'text-amber-500 dark:text-amber-400'
-  return 'text-slate-300 dark:text-slate-600'
-}
-
-/** Priority circle: colored border + subtle fill, white for low */
-function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
-  switch (priority) {
-    case 4: return 'border-red-400    bg-red-50    dark:bg-red-950/40    hover:bg-red-100    dark:hover:bg-red-900/50'
-    case 3: return 'border-orange-400 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/50'
-    case 2: return 'border-blue-400   bg-blue-50   dark:bg-blue-950/40   hover:bg-blue-100   dark:hover:bg-blue-900/50'
-    case 1: return 'border-slate-200  bg-white     dark:bg-slate-900     dark:border-slate-700 hover:border-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950'
-  }
-}
-
-function formatMinutes(m: number | null): string {
-  if (!m) return '—'
-  if (m < 60) return `${m}m`
-  const h = Math.floor(m / 60), rem = m % 60
-  return rem ? `${h}h ${rem}m` : `${h}h`
-}
-
-function localDateStr(d: Date) {
-  return d.getFullYear() + '-'
-    + String(d.getMonth() + 1).padStart(2, '0') + '-'
-    + String(d.getDate()).padStart(2, '0')
-}
-
-function formatDue(iso: string | null): { label: string; urgent: boolean } {
-  if (!iso) return { label: '', urgent: false }
-  // Compare calendar dates in LOCAL time to avoid "overdue" appearing for
-  // tasks due "today" once it's past midnight UTC but still today locally.
-  const taskDate  = iso.slice(0, 10)                        // YYYY-MM-DD stored
-  const today     = new Date()
-  const todayStr  = localDateStr(today)
-  const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1)
-  const tmrwStr   = localDateStr(tomorrow)
-
-  if (taskDate < todayStr) return { label: 'Overdue',  urgent: true  }
-  if (taskDate === todayStr) return { label: 'Today',   urgent: true  }
-  if (taskDate === tmrwStr)  return { label: 'Tomorrow', urgent: false }
-
-  // For further dates, count calendar days from today's local midnight
-  const ms = new Date(taskDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()
-  return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
-}
 
 /** How far ahead a deadline still counts as something to think about today. */
 const RELEVANT_WINDOW_DAYS = 7
@@ -119,6 +73,15 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // into something you can survey, so it opens compact and you expand the one
   // project you came for.
   const [openProjects, setOpenProjects] = useState<Set<string>>(new Set())
+  // Which row layout to draw. localStorage can only be read in the browser, so
+  // the server renders the default and the client swaps in the stored value —
+  // useSyncExternalStore does that without a hydration mismatch or an effect.
+  const layoutId = useSyncExternalStore(
+    () => () => {},
+    () => getStoredTaskLayout(),
+    () => DEFAULT_TASK_LAYOUT,
+  )
+  const Layout = TASK_LAYOUT_IMPLS[layoutId]
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -315,126 +278,44 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     setShowAddTask(true)
   }
 
-  /** Rows for a set of top-level tasks, each followed by its subtasks. */
+  /**
+   * Rows for a set of top-level tasks, each followed by its subtasks.
+   *
+   * The row itself is drawn by whichever layout is selected — see
+   * src/lib/task-layouts.ts. This function owns which rows exist and in what
+   * order; the layout owns what one looks like.
+   */
   function renderTaskRows(list: TaskRow[]) {
-    return list.flatMap(parentTask => {
-              const kids = childrenOf.get(parentTask.id) ?? []
-              const isCollapsed = !expanded.has(parentTask.id)
-              const rows = isCollapsed ? [parentTask] : [parentTask, ...kids]
-
-              return rows.map(task => {
-              const isChild = task.id !== parentTask.id
-              const est = task.adjusted_minutes ?? task.estimated_minutes
-              const due = formatDue(task.due_date)
-
-              return (
-                <div
-                  key={task.id}
-                  style={isChild ? { marginLeft: '1.5rem' } : undefined}
-                  onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
-                  className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-sm transition-all cursor-pointer"
-                >
-                  {/* Fold toggle on a parent; bullet on a child */}
-                  {isChild ? (
-                    <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 mt-1 select-none">•</span>
-                  ) : kids.length > 0 ? (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        setExpanded(prev => {
-                          const next = new Set(prev)
-                          if (next.has(parentTask.id)) next.delete(parentTask.id)
-                          else next.add(parentTask.id)
-                          return next
-                        })
-                      }}
-                      title={isCollapsed ? `Show ${kids.length} subtasks` : 'Hide subtasks'}
-                      className="w-3 shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
-                    >
-                      {isCollapsed ? '▶' : '▼'}
-                    </button>
-                  ) : (
-                    <span className="w-3 shrink-0" />
-                  )}
-
-                  {/* Done button — colored by priority */}
-                  <button
-                    onClick={e => handleDone(task, e)}
-                    className={`w-4 h-4 rounded-full border-2 shrink-0 transition-all mt-0.5 ${priorityCircleClass(task.priority)}`}
-                    title="Mark done"
-                  />
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug">{task.title}</span>
-                      {task.type === 'someday' && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded font-medium">someday</span>
-                      )}
-                      {task.type === 'recurring' && (() => {
-                        const streak = streaks[task.id]
-                        return (
-                          <span className="text-xs text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950 px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5">
-                            ↻{streak && streak.current_streak > 0 && (
-                              <span className="ml-0.5">{streak.current_streak >= 7 ? '🔥' : '·'}{streak.current_streak}</span>
-                            )}
-                          </span>
-                        )
-                      })()}
-                    </div>
-                    <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
-                      {(() => {
-                        const proj = task.project ?? INBOX_PROJECT
-                        return (
-                          <span
-                            className="text-xs font-medium px-1.5 py-0.5 rounded"
-                            style={{ background: proj.color + '18', color: proj.color }}
-                          >
-                            {proj.name}
-                          </span>
-                        )
-                      })()}
-                      {/* Subtasks appear in the list alongside everything else,
-                          so say what they belong to — "Dahl" on its own is a
-                          mystery once it's out of the parent's checklist. */}
-                      {/* Only when it's loose in the list — nested under its
-                          parent the relationship is already obvious. */}
-                      {task.parent && !isChild && (
-                        <span
-                          className="text-xs text-slate-400 truncate max-w-[12rem]"
-                          title={`Subtask of ${task.parent.title}`}
-                        >
-                          ↳ {task.parent.title}
-                        </span>
-                      )}
-                      {!isChild && kids.length > 0 && isCollapsed && (
-                        <span className="text-xs text-slate-400">
-                          {kids.length} subtask{kids.length !== 1 ? 's' : ''}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
-                      {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
-                      {due.label && (
-                        <span className={`text-xs font-medium ${due.urgent ? 'text-red-500' : 'text-slate-400'}`}>
-                          {due.urgent && due.label !== 'Today' ? '⚠ ' : ''}{due.label}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Urgency */}
-                  <div className="shrink-0 text-right">
-                    <span className={`text-xs font-semibold font-mono tabular-nums ${urgencyColor(task.urgency_score)}`}>
-                      {Math.round(task.urgency_score)}
-                    </span>
-                    <div className={`text-xs font-mono opacity-50 ${urgencyColor(task.urgency_score)}`}>
-                      {CURVE_ICON[task.urgency_curve]}
-                    </div>
-                  </div>
-                </div>
-              )
-              })
+    const rows = list.flatMap(parentTask => {
+      const kids = childrenOf.get(parentTask.id) ?? []
+      const isCollapsed = !expanded.has(parentTask.id)
+      return (isCollapsed ? [parentTask] : [parentTask, ...kids]).map(task => ({
+        task, parentTask, kids, isCollapsed,
+      }))
     })
+
+    return (
+      <Layout.Shell>
+        {rows.map(({ task, parentTask, kids, isCollapsed }) => (
+          <Layout.Row
+            key={task.id}
+            task={task}
+            isChild={task.id !== parentTask.id}
+            kidCount={task.id === parentTask.id ? kids.length : 0}
+            collapsed={isCollapsed}
+            streak={streaks[task.id] ?? null}
+            onToggleFold={() => setExpanded(prev => {
+              const next = new Set(prev)
+              if (next.has(parentTask.id)) next.delete(parentTask.id)
+              else next.add(parentTask.id)
+              return next
+            })}
+            onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+            onDone={e => handleDone(task, e)}
+          />
+        ))}
+      </Layout.Shell>
+    )
   }
 
   return (
@@ -598,7 +479,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
               ? projectGroups.map(g => {
                   const open = openProjects.has(g.key)
                   return (
-                  <div key={g.key} className="flex flex-col gap-1.5">
+                  <div key={g.key} className={`flex flex-col ${Layout.groupGap}`}>
                     <button
                       onClick={() => setOpenProjects(prev => {
                         const next = new Set(prev)
