@@ -426,7 +426,12 @@ export default function HabitsView({
           </div>
         </header>
 
-        <div className="px-6 py-5 max-w-3xl">
+        {/* max-w-3xl with no mx-auto pinned everything to the left and left the
+            rest of the panel empty. The cards were already a two-column grid,
+            so they just need the room and one more column when there is width
+            for it — a habit card holds a header, three stats and a 16-week
+            heatmap, and stays readable down to about 380px. */}
+        <div className="px-6 py-5">
           {habits.length === 0 ? (
             /* Empty state */
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
@@ -468,8 +473,9 @@ export default function HabitsView({
                 </div>
               )}
 
-              {/* Daily progress bar */}
-              <div className="mb-5">
+              {/* Daily progress bar — a full-width 1px rule across a wide panel
+                  reads as a divider, not a measure, so it keeps a sane width. */}
+              <div className="mb-5 max-w-md">
                 <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
                   <span>Today</span>
                   <span className="font-mono text-slate-600 dark:text-slate-300">{doneCountToday}/{habits.length}</span>
@@ -484,7 +490,7 @@ export default function HabitsView({
 
               {/* Active habits (not done today) */}
               {active.length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4 items-start">
                   {active.map(habit => (
                     <HabitCard
                       key={habit.id}
@@ -510,7 +516,7 @@ export default function HabitsView({
                   {active.length > 0 && (
                     <p className="text-xs text-slate-400 uppercase tracking-wide font-medium mb-3 mt-2">Done today</p>
                   )}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
                     {doneList.map(habit => (
                       <HabitCard
                         key={habit.id}

@@ -29,6 +29,7 @@ import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
+import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -280,6 +281,30 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <ChromePreview />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Habits page</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800">
+                  <HabitsView
+                    habits={HABITS.map(h => h.t)}
+                    completionMap={Object.fromEntries(HABITS.map(h => [
+                      h.t.title,
+                      Array.from({ length: 30 }, (_, i) => {
+                        const d = new Date(); d.setDate(d.getDate() - i)
+                        return i % 3 === 0 ? d.toISOString().slice(0, 10) : ''
+                      }).filter(Boolean),
+                    ]))}
+                    doneToday={[]}
+                    projects={[HOME]}
+                    streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
+                    gcalWriteEnabled
+                    weekStartDay={1}
+                    tz="America/Los_Angeles"
+                  />
+                </div>
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
