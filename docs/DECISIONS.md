@@ -954,6 +954,21 @@ Several encode a specific incident, and say so in a comment: the 120-minute sess
 - **`step` urgency floors at 0.08, not 0**, so a step task carries ~4 points of pressure even beyond the horizon where the other curves carry none. Migration 0011 does the same, so the two sides agree — changing it would move every existing score and need a new migration. The comment above `curveShape` used to claim every curve starts at 0; it no longer does.
 - **A zero-duration task is silently skipped** by the scheduler — neither placed nor reported. Callers filter those out first, so it is unreachable in practice.
 
+### CI
+
+`.github/workflows/ci.yml` runs types, lint and tests on every pull request and on pushes to `main`. `npm ci` rather than `npm install`, so a green run means the tree the lockfile describes.
+
+**No CD.** Nothing is deployed — there is no Vercel, Docker or other hosting config, and the app runs from `next dev`. A deploy pipeline would be answering a question this project does not have; if it is ever hosted on Vercel, that platform deploys on push by itself.
+
+**The lint backlog was decided, not fixed.** Turning lint on surfaced 22 errors, one of which was real (a breadcrumb using `<a>` where `<Link>` belongs — a full page reload). The other 21 were two rules misfiring on deliberate patterns, so they were configured rather than worked around:
+
+- `react/no-unescaped-entities` — **off**. Apostrophes in prose; the codebase writes them literally throughout, and escaping eleven of them would leave the only escaped apostrophes in the project.
+- `react-hooks/set-state-in-effect` and `react-hooks/purity` — **warn**. The first flags reading `localStorage` on mount, which is how a client preference applies without a hydration mismatch; `useSyncExternalStore` is used where it fits, but the settings sections need the mounted guard. The second flags `new Date()` inside async Server Components, which render once per request. Both stay visible so new instances still show up.
+
+CI that is red on the day it lands is CI that gets ignored, so the rules a project does not intend to follow are turned down deliberately rather than left to fail.
+
+**Migrations get a warning, not a gate.** CI cannot see which migrations are applied to Supabase, but a PR that adds one prints a warning naming the files. 0013 sat unapplied for days once while the feature that needed it silently did nothing.
+
 ### What is not covered
 
 Anything touching Supabase or Google Calendar: the server actions, the sweep, the calendar writes. Those need fixtures and a fake for two external services, which is a much bigger commitment than the value it would return right now. The riskiest of them — logging a session to the calendar, and the habit sweep — are worth exercising by hand instead.

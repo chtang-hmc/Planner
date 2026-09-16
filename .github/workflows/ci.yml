@@ -1,0 +1,51 @@
+name: CI
+
+# Pull requests and pushes to main. The three checks below are the ones
+# CLAUDE.md asks for before committing; running them here is what makes that
+# a rule rather than a habit.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The timezone tests depend on full ICU data, which the official
+          # Node images carry. 22 is the LTS closest to the local runtime.
+          node-version: 22
+          cache: npm
+
+      # `npm ci` rather than `npm install`: it installs exactly what the
+      # lockfile says, so a green run here means the same tree everyone else has.
+      - run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx eslint
+
+      - name: Tests
+        run: npm test
+
+      # Migrations are applied by hand against Supabase, and one has been
+      # forgotten before — 0013 sat unapplied for days while the feature that
+      # needed it silently did nothing. CI cannot see the database, but it can
+      # make a new migration impossible to merge without noticing.
+      - name: Flag new migrations
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          NEW=$(git diff --name-only --diff-filter=A "origin/${{ github.base_ref }}"...HEAD -- supabase/migrations/ || true)
+          if [ -n "$NEW" ]; then
+            echo "::warning title=Migration needs applying::This PR adds migrations. Apply them to Supabase before merging:"
+            echo "$NEW" | while read -r f; do echo "::warning::  $f"; done
+          else
+            echo "No new migrations."
+          fi

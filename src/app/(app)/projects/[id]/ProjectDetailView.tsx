@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Task, Project, EstimationProfile, HabitStreak, EnergyLevel, INBOX_PROJECT } from '@/types'
 
 function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
@@ -236,7 +237,7 @@ export default function ProjectDetailView({
           <div className="px-6 py-4">
             {/* Breadcrumb */}
             <p className="text-xs text-slate-400 mb-2">
-              <a href="/projects" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">Projects</a>
+              <Link href="/projects" className="hover:text-slate-600 dark:hover:text-slate-300 transition-colors">Projects</Link>
               <span className="mx-1.5">›</span>
               <span>{project.name}</span>
             </p>
