@@ -2,14 +2,15 @@
 
 import { useState, useTransition } from 'react'
 import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
-import { completeTask } from '@/app/actions/tasks'
+import { completeTask, setHabitCompletion } from '@/app/actions/tasks'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import AddTaskModal from '@/components/AddTaskModal'
 import TaskDetail from '@/components/TaskDetail'
+import { daysSinceWeekStart, weekDayOrder } from '@/lib/week'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
-const DAY_LETTERS = ['S','M','T','W','T','F','S']
+const DAY_LETTERS_BY_DOW = ['S','M','T','W','T','F','S']   // indexed by Date#getDay()
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 function toDateStr(d: Date) {
@@ -53,12 +54,17 @@ function computeStreak(dates: string[]): { current: number; longest: number; tot
 
 // ── 16-week completion calendar ───────────────────────────────────────────────
 
-function CompletionCalendar({ dates }: { dates: string[] }) {
+function CompletionCalendar({ dates, weekStartDay, onToggle }: {
+  dates: string[]
+  weekStartDay: number
+  onToggle: (dateStr: string, done: boolean) => void
+}) {
   const dateSet = new Set(dates)
   const today   = new Date(); today.setHours(0, 0, 0, 0)
 
-  // Grid: 16 weeks, start from the Sunday 15 weeks ago
-  const startDate = addDays(today, -(15 * 7 + today.getDay()))
+  // Grid: 16 weeks, starting 15 weeks back on the user's first day of the week
+  // so each column is one of their weeks, not a fixed Sunday-Saturday block.
+  const startDate = addDays(today, -(15 * 7 + daysSinceWeekStart(today.getDay(), weekStartDay)))
   const totalDays = 16 * 7
   const allDays   = Array.from({ length: totalDays }, (_, i) => addDays(startDate, i))
 
@@ -92,9 +98,9 @@ function CompletionCalendar({ dates }: { dates: string[] }) {
         <div className="flex gap-px">
           {/* Day labels */}
           <div className="flex flex-col gap-px mr-1 w-4">
-            {DAY_LETTERS.map((l, i) => (
+            {weekDayOrder(weekStartDay).map((dow, i) => (
               <div key={i} className={`h-3.5 text-[9px] flex items-center text-slate-300 dark:text-slate-600 ${i % 2 === 0 ? 'invisible' : ''}`}>
-                {l}
+                {DAY_LETTERS_BY_DOW[dow]}
               </div>
             ))}
           </div>
@@ -108,14 +114,16 @@ function CompletionCalendar({ dates }: { dates: string[] }) {
                 const future = day > today
                 const isToday = ds === toDateStr(today)
                 return (
-                  <div
+                  <button
                     key={row}
-                    title={ds + (done ? ' ✓' : '')}
+                    disabled={future}
+                    onClick={() => onToggle(ds, !done)}
+                    title={future ? ds : `${ds}${done ? ' ✓ — click to remove' : ' — click to log'}`}
                     className={`w-3.5 h-3.5 rounded-sm transition-colors ${
-                      future    ? 'bg-slate-50 dark:bg-slate-900/30' :
-                      done      ? 'bg-accent-500 dark:bg-accent-400' :
-                      isToday   ? 'ring-1 ring-accent-300 dark:ring-accent-700 bg-slate-100 dark:bg-slate-800' :
-                                  'bg-slate-100 dark:bg-slate-800'
+                      future    ? 'bg-slate-50 dark:bg-slate-900/30 cursor-default' :
+                      done      ? 'bg-accent-500 dark:bg-accent-400 hover:opacity-70' :
+                      isToday   ? 'ring-1 ring-accent-300 dark:ring-accent-700 bg-slate-100 dark:bg-slate-800 hover:bg-accent-200 dark:hover:bg-accent-800' :
+                                  'bg-slate-100 dark:bg-slate-800 hover:bg-accent-200 dark:hover:bg-accent-800'
                     }`}
                   />
                 )
@@ -138,6 +146,8 @@ function HabitCard({
   onOpen,
   pending,
   weeklyDone,
+  weekStartDay,
+  onToggleDate,
 }: {
   habit: Task & { project: Project }
   dates: string[]
@@ -146,6 +156,8 @@ function HabitCard({
   onOpen: () => void
   pending: boolean
   weeklyDone: number
+  weekStartDay: number
+  onToggleDate: (dateStr: string, done: boolean) => void
 }) {
   const { current, longest, total } = computeStreak(dates)
   const freq = habit.rrule ? rruleToLabel(habit.rrule) : 'Anytime'
@@ -230,8 +242,11 @@ function HabitCard({
 
       {/* 16-week calendar */}
       <div>
-        <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide mb-2">Last 16 weeks</p>
-        <CompletionCalendar dates={dates} />
+        <div className="flex items-baseline justify-between mb-2">
+          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Last 16 weeks</p>
+          <p className="text-[10px] text-slate-300 dark:text-slate-600">click a day to log it</p>
+        </div>
+        <CompletionCalendar dates={dates} weekStartDay={weekStartDay} onToggle={onToggleDate} />
       </div>
     </div>
   )
@@ -246,15 +261,19 @@ interface Props {
   projects:         Project[]
   streaks:          Record<string, HabitStreak>
   gcalWriteEnabled: boolean
+  weekStartDay:     number
 }
 
 export default function HabitsView({
-  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled,
+  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled, weekStartDay,
 }: Props) {
   // Track which habits got completed this session (optimistic)
   const [sessionDone, setSessionDone] = useState<Set<string>>(new Set(serverDoneToday))
   const [pending,     setPending]     = useState<Set<string>>(new Set())
   const [localDates,  setLocalDates]  = useState<Record<string, string[]>>({})
+  // Dates un-logged this session, subtracted in getDates
+  const [removedDates, setRemovedDates] = useState<Record<string, string[]>>({})
+  const [toggleError, setToggleError]   = useState<string | null>(null)
   const [showAdd,     setShowAdd]     = useState(false)
   const [detailTask,  setDetailTask]  = useState<(Task & { project: Project }) | null>(null)
   const [, startTransition]          = useTransition()
@@ -264,7 +283,32 @@ export default function HabitsView({
   function getDates(habit: Task) {
     const base  = completionMap[habit.title] ?? []
     const extra = localDates[habit.title] ?? []
-    return [...new Set([...base, ...extra])]
+    const gone  = new Set(removedDates[habit.title] ?? [])
+    return [...new Set([...base, ...extra])].filter(d => !gone.has(d))
+  }
+
+  /**
+   * Log or un-log a habit on a past day, from the heatmap. Writes a completed
+   * occurrence rather than touching the pending row, so today's card stays
+   * actionable and the spawn chain is untouched.
+   */
+  function handleToggleDate(habit: Task & { project: Project }, dateStr: string, done: boolean) {
+    const add    = (m: Record<string, string[]>) => ({ ...m, [habit.title]: [...(m[habit.title] ?? []), dateStr] })
+    const remove = (m: Record<string, string[]>) => ({ ...m, [habit.title]: (m[habit.title] ?? []).filter(d => d !== dateStr) })
+
+    // Optimistic: the two maps are mirrors, so always set both
+    setLocalDates(done ? add : remove)
+    setRemovedDates(done ? remove : add)
+
+    startTransition(async () => {
+      const res = await setHabitCompletion(habit.title, dateStr, done)
+      if (res.error) {
+        setLocalDates(done ? remove : add)      // roll back
+        setRemovedDates(done ? add : remove)
+        setToggleError(res.error)
+        setTimeout(() => setToggleError(null), 4000)
+      }
+    })
   }
 
   function handleDone(habit: Task & { project: Project }) {
@@ -332,6 +376,10 @@ export default function HabitsView({
             </div>
           ) : (
             <>
+              {toggleError && (
+                <p className="text-xs text-red-500 mb-3">{toggleError}</p>
+              )}
+
               {/* Daily progress bar */}
               <div className="mb-5">
                 <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
@@ -359,6 +407,8 @@ export default function HabitsView({
                       onOpen={() => setDetailTask(habit)}
                       pending={pending.has(habit.id)}
                       weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
+                      weekStartDay={weekStartDay}
+                      onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
                     />
                   ))}
                 </div>
@@ -381,6 +431,8 @@ export default function HabitsView({
                         onOpen={() => setDetailTask(habit)}
                         pending={false}
                         weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
+                        weekStartDay={weekStartDay}
+                        onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
                       />
                     ))}
                   </div>

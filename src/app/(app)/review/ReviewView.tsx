@@ -329,7 +329,7 @@ function SavedScreen() {
       <div className="text-5xl">✅</div>
       <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">All done for this week</h2>
       <p className="text-sm text-slate-400 max-w-xs">
-        Your review is saved. Check back next Monday to run it again.
+        Your review is saved. Check back at the start of next week to run it again.
       </p>
     </div>
   )

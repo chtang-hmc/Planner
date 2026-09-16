@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, CalendarEvent, HabitStreak } from '@/types'
 import TaskList from './TaskList'
+import { fetchWeekStartDay } from '@/lib/week'
 import CalendarPanel from '@/components/CalendarPanel'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +19,7 @@ export default async function TasksPage() {
     // Habits live on /habits and are excluded here so they don't clutter the
     // task list with untimed, non-urgent recurring work.
     db.from('tasks')
-      .select('*, project:projects(id, name, color)')
+      .select('*, project:projects(id, name, color), parent:parent_id(id, title)')
       .in('status', ['inbox', 'active'])
       .neq('type', 'habit')
       .order('urgency_score', { ascending: false }),
@@ -49,6 +50,8 @@ export default async function TasksPage() {
 
   const calEvents = (events ?? []) as CalendarEvent[]
 
+  const weekStartDay = await fetchWeekStartDay(db)
+
   const gcalWriteEnabled = (integration?.scopes ?? []).includes(
     'https://www.googleapis.com/auth/calendar.events'
   )
@@ -62,6 +65,7 @@ export default async function TasksPage() {
           streaks={streaks}
           events={calEvents}
           gcalWriteEnabled={gcalWriteEnabled}
+          weekStartDay={weekStartDay}
         />
       </div>
       <CalendarPanel

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useTransition } from 'react'
 import { createProject, updateProject } from '@/app/actions/projects'
 import { Project } from '@/types'
 
-const PRESET_COLORS = [
+export const PRESET_COLORS = [
   '#6366f1', // indigo
   '#8b5cf6', // violet
   '#ec4899', // pink

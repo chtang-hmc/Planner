@@ -2,10 +2,11 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, duplicateTask, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
+import ProjectPicker from '@/components/ProjectPicker'
 import { rruleToLabel } from '@/lib/rrule-utils'
 
 // ── Subtask list ──────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     const optimistic: SubtaskRow = {
       id: crypto.randomUUID(), title: t, status: 'active',
       estimated_minutes: mins, energy_required: 'low',
-      gcal_event_id: null, scheduled_start: null, scheduled_end: null,
+      gcal_event_id: null, gap_after_minutes: null, scheduled_start: null, scheduled_end: null,
       created_at: new Date().toISOString(),
     }
     setItems(prev => [...prev, optimistic])
@@ -61,7 +62,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
     startTransition(() => deleteSubtask(sub.id))
   }
 
-  function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string }) {
+  function handleUpdateField(sub: SubtaskRow, patch: { estimated_minutes?: number | null; energy_required?: string; gap_after_minutes?: number | null }) {
     setItems(prev => prev.map(s => s.id === sub.id ? { ...s, ...patch } : s))
     startTransition(async () => { await updateSubtaskFields(sub.id, taskId, patch) })
   }
@@ -169,6 +170,24 @@ function SubtaskSection({ taskId }: { taskId: string }) {
                       placeholder="min"
                       className="w-16 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent-500 font-mono"
                     />
+                  </div>
+                  {/* Fixed wait before the next step — machine time, proving,
+                      drying. Free time for you, but the next step can't move. */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">then wait</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={sub.gap_after_minutes ?? ''}
+                      onChange={e => {
+                        const v = e.target.value ? parseInt(e.target.value) : null
+                        handleUpdateField(sub, { gap_after_minutes: v })
+                      }}
+                      placeholder="0"
+                      className="w-16 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent-500 font-mono"
+                    />
+                    <span className="text-[10px] text-slate-400">min</span>
                   </div>
                   <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                     {SUBTASK_ENERGY_OPTS.map(o => (
@@ -426,6 +445,7 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const [curve, setCurve]         = useState<UrgencyCurve>(task.urgency_curve)
   const [estimate, setEstimate]   = useState(String(task.estimated_minutes ?? ''))
   const [dueDate, setDueDate]     = useState(task.due_date ? task.due_date.slice(0, 10) : '')
+  const [startDate, setStartDate] = useState(task.start_date ? task.start_date.slice(0, 10) : '')
   const [rrule, setRrule]         = useState<string | null>(task.rrule ?? null)
   const [weeklyTarget, setWeeklyTarget] = useState<string>(String(task.weekly_target ?? ''))
   const [saved, setSaved]         = useState(false)
@@ -434,7 +454,101 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   // Tasks with no project_id come back from the join as project: null despite
   // the Props type. Resolved here rather than at each call site so any caller
   // can pass a raw row — habits in particular are always project-less.
-  const project = task.project ?? INBOX_PROJECT
+  // Tracked locally so the header badge follows a project change immediately;
+  // task.project is a joined snapshot and wouldn't update until reopened.
+  const [taskProject, setTaskProject] = useState<Project | null>(task.project ?? null)
+  const project = taskProject ?? INBOX_PROJECT
+  const isHabit = task.type === 'habit'
+
+  // Exclusivity — habits linked here are never scheduled on the same day
+  const [habitList,  setHabitList]  = useState<HabitExclusivity[]>([])
+  const [groupError, setGroupError] = useState<string | null>(null)
+
+  const refreshHabits = () => listHabitExclusivity().then(setHabitList).catch(() => {})
+  useEffect(() => { if (isHabit) refreshHabits() }, [isHabit])
+
+  const myGroup = habitList.find(h => h.title === task.title)?.group ?? null
+  const others  = habitList.filter(h => h.title !== task.title)
+
+  const avoidAfterBreaks = habitList.find(h => h.title === task.title)?.avoidAfterBreaks ?? false
+
+  function toggleAvoidAfterBreaks(next: boolean) {
+    setHabitList(prev => prev.map(h =>
+      h.title === task.title ? { ...h, avoidAfterBreaks: next } : h))
+    setGroupError(null)
+    startTransition(async () => {
+      const res = await setHabitAvoidAfterBreaks(task.title, next)
+      if (res.error) setGroupError(res.error)
+      refreshHabits()
+    })
+  }
+
+  function toggleLink(otherTitle: string, linked: boolean) {
+    // Optimistic: mirror what the action will do so the checkbox responds now
+    const group = linked
+      ? (others.find(h => h.title === otherTitle)?.group ?? myGroup ?? [task.title, otherTitle].sort().join(' + '))
+      : null
+    const members = myGroup ? habitList.filter(h => h.group === myGroup).length : 0
+    setHabitList(prev => prev.map(h => {
+      if (linked) return (h.title === task.title || h.title === otherTitle) ? { ...h, group } : h
+      if (h.title === otherTitle) return { ...h, group: null }
+      if (h.title === task.title && members <= 2) return { ...h, group: null }
+      return h
+    }))
+    setGroupError(null)
+
+    startTransition(async () => {
+      const res = await setHabitExclusiveLink(task.title, otherTitle, linked)
+      if (res.error) setGroupError(res.error)
+      refreshHabits()          // reconcile with the server either way
+    })
+  }
+
+  // Where it happens + how long it ties you up
+  const [location,  setLocation]  = useState<string>(task.location ?? 'anywhere')
+  const [span,      setSpan]      = useState<string>(String(task.span_minutes ?? ''))
+  const [buffer,    setBuffer]    = useState<number | null>(task.buffer_minutes ?? null)
+  const [placeErr,  setPlaceErr]  = useState<string | null>(null)
+
+  function savePlacement(patch: { location?: string; span_minutes?: number | null; buffer_minutes?: number | null }) {
+    setPlaceErr(null)
+    startTransition(async () => {
+      const res = await setTaskPlacement(task.id, patch)
+      if (res.error) setPlaceErr(res.error)
+    })
+  }
+
+  const [copying,  setCopying]  = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
+
+  function handleDuplicate() {
+    setCopying(true)
+    setCopyError(null)
+    startTransition(async () => {
+      const res = await duplicateTask(task.id)
+      setCopying(false)
+      if (res.error) { setCopyError(res.error); return }
+      onClose()          // the copy appears in the list behind the panel
+    })
+  }
+
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting,      setDeleting]      = useState(false)
+  const [deleteError,   setDeleteError]   = useState<string | null>(null)
+
+  function handleDeleteHabit() {
+    setDeleting(true)
+    setDeleteError(null)
+    startTransition(async () => {
+      const res = await deleteHabit(task.title)
+      if (res.error) {
+        setDeleting(false)
+        setDeleteError(res.error)
+        return
+      }
+      onClose()
+    })
+  }
 
   // Live urgency breakdown — recomputes as user changes fields
   const urgencyInput = {
@@ -464,6 +578,7 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   function onBlurDesc()     { if (description !== (task.description ?? '')) save({ description: description || null }) }
   function onBlurEstimate() { const v = parseInt(estimate); if (!isNaN(v) && v !== task.estimated_minutes) save({ estimated_minutes: v }) }
   function onBlurDue()      { save({ due_date: dueDate ? new Date(dueDate).toISOString() : null }) }
+  function onBlurStart()    { save({ start_date: startDate ? new Date(startDate).toISOString() : null }) }
 
   return (
     /* Backdrop */
@@ -566,8 +681,10 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             </div>
           </div>
 
-          {/* Time estimate + due date */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Time estimate + due date. Habits are recurring commitments with no
+              deadline — their due_date is an internal next-occurrence marker,
+              so no date control is offered. */}
+          <div className={isHabit ? '' : 'grid grid-cols-2 gap-3'}>
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
                 {task.type === 'habit' ? 'Session length (min)' : 'Estimate (min)'}
@@ -585,20 +702,138 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                 <p className="text-xs text-violet-500 mt-1">Adjusted: {task.adjusted_minutes}m</p>
               )}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Due date</label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                onBlur={onBlurDue}
-                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
-              />
-            </div>
+            {!isHabit && (
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Due date</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={e => setDueDate(e.target.value)}
+                  onBlur={onBlurDue}
+                  className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Urgency curve */}
+          {/* Not before — when the work becomes available, as opposed to due */}
+          {!isHabit && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                Not before
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                onBlur={onBlurStart}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Won't be scheduled before this, however much free time there is.
+                Recurring tasks set it themselves so the next one doesn't get
+                pulled forward.
+              </p>
+            </div>
+          )}
+
+          {/* Project — habits are deliberately project-less */}
+          {!isHabit && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                Project
+              </label>
+              <ProjectPicker
+                projects={projects}
+                value={task.project_id ?? ''}
+                onChange={(id, proj) => {
+                  setTaskProject(proj)
+                  save({ project_id: id || null })
+                }}
+              />
+            </div>
+          )}
+
+          {/* Where it happens + tie-up window */}
           <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+              Where
+            </label>
+            <div className="flex gap-1.5">
+              {[
+                { val: 'anywhere', label: 'Anywhere', icon: '◎' },
+                { val: 'home',     label: 'Home',     icon: '⌂' },
+                { val: 'away',     label: 'Out',      icon: '↗' },
+              ].map(o => (
+                <button
+                  key={o.val}
+                  onClick={() => { setLocation(o.val); savePlacement({ location: o.val }) }}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    location === o.val
+                      ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                  }`}
+                >
+                  {o.icon} {o.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs text-slate-400 shrink-0">Ties me up for</span>
+              <input
+                type="number"
+                min={1}
+                step={15}
+                value={span}
+                onChange={e => setSpan(e.target.value)}
+                onBlur={() => {
+                  const v = span ? parseInt(span) : null
+                  if (v !== (task.span_minutes ?? null)) savePlacement({ span_minutes: v })
+                }}
+                placeholder="—"
+                className="w-20 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+              />
+              <span className="text-xs text-slate-400">min total</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              For things like laundry: only the estimate is booked, but you stay put
+              for the full time and nothing that needs you elsewhere is scheduled into it.
+            </p>
+
+            {/* Transition buffer */}
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-xs text-slate-400 shrink-0">Buffer</span>
+              <div className="flex gap-1">
+                {[
+                  { val: null, label: 'Default' },
+                  { val: 0,    label: 'None' },
+                  { val: 5,    label: '5m' },
+                  { val: 30,   label: '30m' },
+                ].map(o => (
+                  <button
+                    key={String(o.val)}
+                    onClick={() => { setBuffer(o.val); savePlacement({ buffer_minutes: o.val }) }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                      buffer === o.val
+                        ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Transition time kept clear around this task. Set None for quick chores —
+              otherwise a 5-minute job needs half an hour of free space to fit.
+            </p>
+            {placeErr && <p className="text-xs text-amber-500 mt-1">{placeErr}</p>}
+          </div>
+
+          {/* Urgency curve — deadline pressure, so not shown for habits */}
+          <div className={isHabit ? 'hidden' : ''}>
             <label className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wide">Urgency curve</label>
             <div className="flex flex-col gap-1.5">
               {CURVE_OPTS.map(o => (
@@ -711,6 +946,56 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                     ) : (
                       <p className="text-xs text-violet-400 dark:text-violet-500">No weekly goal set.</p>
                     )}
+                    {/* Exclusivity — pick habits, not a group name */}
+                    {others.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
+                        <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-1">
+                          Never on the same day as
+                        </p>
+                        <p className="text-[11px] text-violet-400 dark:text-violet-500 mb-2">
+                          The scheduler keeps these on separate days. Ticking one links both sides.
+                        </p>
+                        <div className="flex flex-col gap-1">
+                          {others.map(h => {
+                            const linked = !!myGroup && h.group === myGroup
+                            return (
+                              <label
+                                key={h.title}
+                                className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 dark:text-slate-300"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={linked}
+                                  onChange={e => toggleLink(h.title, e.target.checked)}
+                                  className="w-3.5 h-3.5 rounded border-violet-300 dark:border-violet-700 accent-violet-600"
+                                />
+                                {h.title}
+                              </label>
+                            )
+                          })}
+                        </div>
+                        {groupError && <p className="text-xs text-amber-500 mt-1.5">{groupError}</p>}
+                      </div>
+                    )}
+
+                    {/* Post-meal cooldown */}
+                    <div className="mt-3 pt-3 border-t border-violet-100 dark:border-violet-900">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={avoidAfterBreaks}
+                          onChange={e => toggleAvoidAfterBreaks(e.target.checked)}
+                          className="mt-0.5 w-3.5 h-3.5 rounded border-violet-300 dark:border-violet-700 accent-violet-600"
+                        />
+                        <span className="text-xs text-slate-700 dark:text-slate-300">
+                          Not right after a meal
+                          <span className="block text-[11px] text-violet-400 dark:text-violet-500">
+                            Leaves the cooldown after lunch and dinner clear (Settings → Meal breaks).
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+
                     {/* Edit target */}
                     <div className="flex items-center gap-2 mt-2">
                       <span className="text-xs text-violet-400 dark:text-violet-500 shrink-0">Target</span>
@@ -767,8 +1052,8 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             </div>
           )}
 
-          {/* Urgency breakdown — live preview */}
-          <div className="bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 flex flex-col gap-3">
+          {/* Urgency breakdown — live preview. Deadline math, so not for habits. */}
+          <div className={`bg-slate-50 dark:bg-slate-800 rounded-xl px-4 py-3 flex-col gap-3 ${isHabit ? 'hidden' : 'flex'}`}>
             {/* Score + label row */}
             <div className="flex items-baseline justify-between">
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Urgency score</p>
@@ -816,18 +1101,27 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               </div>
             </div>
 
-            {/* Timeline progress (only when due date is set) */}
+            {/* How close the deadline is — not how old the task is */}
             {urgencyBreakdown.hasDueDate && (
               <div className="flex flex-col gap-1">
                 <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700">
                   <div
                     className="bg-slate-400 dark:bg-slate-500 transition-all duration-300"
-                    style={{ width: `${urgencyBreakdown.elapsed * 100}%` }}
+                    style={{ width: `${urgencyBreakdown.ramp * 100}%` }}
                   />
                 </div>
                 <p className="text-xs text-slate-400">
-                  {Math.round(urgencyBreakdown.elapsed * 100)}% through lifespan
-                  {urgencyBreakdown.elapsed >= 1 && <span className="text-red-500 ml-1 font-medium">· overdue</span>}
+                  {(() => {
+                    const d = urgencyBreakdown.daysLeft ?? 0
+                    if (d < 0) return `${Math.floor(-d)}d overdue`
+                    if (d < 1) return 'due today'
+                    if (d < 2) return 'due tomorrow'
+                    if (urgencyBreakdown.ramp === 0) return `due in ${Math.round(d)}d — no pressure yet`
+                    return `due in ${Math.round(d)}d`
+                  })()}
+                  {(urgencyBreakdown.daysLeft ?? 0) < 0 && (
+                    <span className="text-red-500 ml-1 font-medium">· overdue</span>
+                  )}
                 </p>
               </div>
             )}
@@ -836,6 +1130,57 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               <p className="text-xs text-slate-400">Set a due date to add time pressure</p>
             )}
           </div>
+
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex items-center gap-3">
+            <button
+              onClick={handleDuplicate}
+              disabled={copying}
+              className="text-xs text-slate-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors"
+            >
+              {copying ? 'Copying…' : '⧉ Duplicate'}
+            </button>
+            <span className="text-[11px] text-slate-300 dark:text-slate-600">
+              copies settings and subtasks, not the schedule
+            </span>
+          </div>
+          {copyError && <p className="text-xs text-amber-500 -mt-2">{copyError}</p>}
+
+          {isHabit && (
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+              {confirmDelete ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Delete <span className="font-medium">{task.title}</span> and its entire
+                    history? Every logged completion and its streak are removed. This can't be undone.
+                  </p>
+                  {deleteError && <p className="text-xs text-red-500">{deleteError}</p>}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleDeleteHabit}
+                      disabled={deleting}
+                      className="px-3 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors"
+                    >
+                      {deleting ? 'Deleting…' : 'Delete habit'}
+                    </button>
+                    <button
+                      onClick={() => { setConfirmDelete(false); setDeleteError(null) }}
+                      disabled={deleting}
+                      className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 text-xs font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="text-xs text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  Delete habit…
+                </button>
+              )}
+            </div>
+          )}
 
         </div>
       </div>

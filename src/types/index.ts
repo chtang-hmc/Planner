@@ -29,10 +29,15 @@ export interface Task {
   adjusted_minutes: number | null    // bias-corrected by system
   actual_minutes: number | null      // logged after completion
   due_date: string | null            // ISO timestamp
+  start_date: string | null          // earliest it may be scheduled; null = now
   urgency_score: number              // 0–100, recomputed nightly
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks
   weekly_target: number | null       // habits only: how many times per week to aim for
+  exclusive_group: string | null     // habits only: habits sharing a group are never scheduled on the same day
+  location: 'home' | 'away' | 'anywhere'   // where it happens; gates what can run during a tether
+  span_minutes: number | null        // total tie-up when longer than the work itself (laundry cycle)
+  buffer_minutes: number | null      // transition padding override; null = global default, 0 = none
   gcal_event_id: string | null       // GCal event id for scheduled focus block
   scheduled_start: string | null     // ISO timestamp — start of focus block
   scheduled_end: string | null       // ISO timestamp — end of focus block
@@ -105,71 +110,96 @@ export interface WeeklyReview {
 }
 
 // ── Urgency computation ─────────────────────────────────────────────────────
+//
+// Urgency = priority (10–40) + time pressure (0–60), capped at 100.
+//
+// Time pressure is a function of TIME REMAINING, not of how far the task is
+// through its own lifespan. The previous formula used
+// `elapsed / (due_date - created_at)`, which put the creation date in the
+// denominator: two tasks with identical priority and deadline scored
+// differently purely because one was written down earlier. A task added today
+// and due Friday is under exactly the same pressure as one added last Monday
+// and due Friday — the deadline is what's real, the creation date is an
+// accident of when it got typed in.
+//
+// Pressure ramps over a fixed lead-in window rather than the task's lifespan,
+// so the score is comparable across every task in the list.
+
+/** Days before the deadline at which pressure starts to build. */
+export const URGENCY_HORIZON_DAYS = 14
+
+/** Pressure available before the deadline; the rest is reserved for overdue. */
+const ON_TIME_PRESSURE = 50
+const OVERDUE_PRESSURE = 10
+/** Days overdue at which the overdue component maxes out. */
+const OVERDUE_RAMP_DAYS = 7
+
+/**
+ * Maps ramp position (0 = horizon away, 1 = deadline) to a 0–1 multiplier.
+ * Normalised so every curve starts at 0 and reaches exactly 1 at the deadline,
+ * which keeps the curves comparable to each other.
+ */
+function curveShape(r: number, curve: UrgencyCurve): number {
+  switch (curve) {
+    case 'linear':
+      return r
+    case 'exponential': {
+      // Sigmoid centred at 0.75 — flat for most of the window, then steep.
+      const s = (x: number) => 1 / (1 + Math.exp(-10 * (x - 0.75)))
+      return (s(r) - s(0)) / (s(1) - s(0))
+    }
+    case 'step':
+      return r > 0.85 ? 1 : r > 0.6 ? 0.4 : 0.08
+  }
+}
+
+function daysUntil(dueISO: string): number {
+  return (new Date(dueISO).getTime() - Date.now()) / 86_400_000
+}
 
 export function computeUrgency(task: Pick<Task, 'priority' | 'urgency_curve' | 'due_date' | 'created_at'>): number {
-  const priorityPts = task.priority * 10  // 10 | 20 | 30 | 40
-
-  if (!task.due_date) return Math.min(priorityPts, 100)
-
-  const total   = new Date(task.due_date).getTime() - new Date(task.created_at).getTime()
-  const elapsed = Date.now() - new Date(task.created_at).getTime()
-  const r       = Math.min(elapsed / total, 1)  // 0–1, capped at 1 past deadline
-
-  let pressure: number
-
-  switch (task.urgency_curve) {
-    case 'linear':
-      pressure = r * 60
-      break
-    case 'exponential':
-      // Sigmoid centered at 80% elapsed — calm until final stretch, then spikes
-      pressure = 60 / (1 + Math.exp(-10 * (r - 0.8)))
-      break
-    case 'step':
-      pressure = r > 0.85 ? 60 : r > 0.6 ? 25 : 5
-      break
-  }
-
-  return Math.min(priorityPts + pressure, 100)
+  return computeUrgencyBreakdown(task).score
 }
 
 export interface UrgencyBreakdown {
-  score: number
-  priorityPts: number   // 10–40
-  timePressure: number  // 0–60; 0 when no due date
-  elapsed: number       // 0–1 ratio through the task lifespan (null when no due date)
-  hasDueDate: boolean
+  score:        number
+  priorityPts:  number   // 10–40
+  timePressure: number   // 0–60; 0 when no due date
+  /** 0 = deadline is a horizon or more away, 1 = due now or overdue. */
+  ramp:         number
+  /** Negative once overdue. null when the task has no due date. */
+  daysLeft:     number | null
+  hasDueDate:   boolean
 }
 
-/** Same math as computeUrgency, but returns each component for display. */
+/** Same math as computeUrgency, with each component exposed for display. */
 export function computeUrgencyBreakdown(
   task: Pick<Task, 'priority' | 'urgency_curve' | 'due_date' | 'created_at'>
 ): UrgencyBreakdown {
   const priorityPts = task.priority * 10
 
   if (!task.due_date) {
-    return { score: Math.min(priorityPts, 100), priorityPts, timePressure: 0, elapsed: 0, hasDueDate: false }
+    return {
+      score: Math.min(priorityPts, 100),
+      priorityPts, timePressure: 0, ramp: 0, daysLeft: null, hasDueDate: false,
+    }
   }
 
-  const total    = new Date(task.due_date).getTime() - new Date(task.created_at).getTime()
-  const elapsedMs = Date.now() - new Date(task.created_at).getTime()
-  const r         = Math.min(elapsedMs / total, 1)
+  const daysLeft = daysUntil(task.due_date)
+  const ramp     = Math.max(0, Math.min(1 - daysLeft / URGENCY_HORIZON_DAYS, 1))
 
-  let pressure: number
-  switch (task.urgency_curve) {
-    case 'linear':
-      pressure = r * 60
-      break
-    case 'exponential':
-      pressure = 60 / (1 + Math.exp(-10 * (r - 0.8)))
-      break
-    case 'step':
-      pressure = r > 0.85 ? 60 : r > 0.6 ? 25 : 5
-      break
+  const onTime = curveShape(ramp, task.urgency_curve ?? 'linear') * ON_TIME_PRESSURE
+  // Past the deadline pressure keeps climbing, so a task three days late
+  // outranks one due this afternoon rather than tying with it.
+  const overdue = daysLeft < 0
+    ? Math.min(1, -daysLeft / OVERDUE_RAMP_DAYS) * OVERDUE_PRESSURE
+    : 0
+
+  const timePressure = onTime + overdue
+  return {
+    score: Math.min(priorityPts + timePressure, 100),
+    priorityPts, timePressure, ramp, daysLeft, hasDueDate: true,
   }
-
-  const score = Math.min(priorityPts + pressure, 100)
-  return { score, priorityPts, timePressure: pressure, elapsed: r, hasDueDate: true }
 }
 
 // ── Inbox / unassigned sentinel ─────────────────────────────────────────────

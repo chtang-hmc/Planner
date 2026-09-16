@@ -18,7 +18,10 @@
 10. [Inline Search](#inline-search)
 11. [Drag-to-Reschedule](#drag-to-reschedule)
 12. [Priority-Colored Circles](#priority-colored-circles)
-13. [Server / Client Component Split](#server--client-component-split)
+13. [Projects](#projects)
+14. [Color Themes](#color-themes)
+15. [Week Start](#week-start)
+16. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -99,6 +102,16 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0001_initial_schema.sql` — full schema + `recompute_urgency_scores()` + `recompute_energy_patterns()` PL/pgSQL functions + RLS policies
 - `0002_nullable_project_id.sql` — made `tasks.project_id` nullable so tasks can live in an "Inbox" (no project assigned)
 - `0003_scheduling_columns.sql` — added `gcal_event_id`, `scheduled_start`, `scheduled_end` to `tasks`
+- `0004_scheduling.sql` — `user_working_hours`, `user_energy_schedule`, `user_scheduling_config`; `scheduled_by` on `tasks`
+- `0005_habit_weekly_target.sql` — `tasks.weekly_target`; `completions_this_week` + `week_start` on `habit_streaks`
+- `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
+- `0007_habit_exclusive_group.sql` — `tasks.exclusive_group`; habits sharing a group are never scheduled on the same day
+- `0008_daily_breaks.sql` — `user_daily_breaks` (meal windows + cooldown), seeded with Lunch and Dinner; `tasks.avoid_after_breaks`
+- `0009_task_location_and_span.sql` — `tasks.span_minutes` + `tasks.location`; tethering work (laundry) and where a task happens
+- `0010_task_buffer_override.sql` — `tasks.buffer_minutes`; per-task transition padding (null = global default, 0 = none)
+- `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
+- `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
+- `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -147,30 +160,44 @@ Urgency is also recomputed immediately in `updateTask()` when a urgency-affectin
 ### Formula
 
 ```
-urgency_score = min(priority_pts + time_pressure, 100)
-
-priority_pts  = priority × 10          →  10 | 20 | 30 | 40
-time_pressure = 0–60, based on curve   →  see below
+urgency = priority points (10–40) + time pressure (0–60), capped at 100
 ```
 
-Tasks without a due date get `urgency_score = priority_pts` (no time pressure).
+Time pressure is a function of **time remaining**, ramping over a fixed 14-day lead-in:
 
-### Curves
-
-| Curve | Behavior | Use case |
-|---|---|---|
-| `linear` | pressure = `elapsed_ratio × 60` | Default; steady ramp |
-| `exponential` | sigmoid centred at 80% elapsed: `60 / (1 + e^{-10(r-0.8)})` | Calm until final stretch, then spikes hard |
-| `step` | 5 pts below 60%, 25 pts at 60–85%, 60 pts above 85% | Hard deadlines with a clear cliff |
-
-### Implementation
-
-`computeUrgency()` in `src/types/index.ts` is shared between the frontend (live preview in TaskDetail) and the server (immediate recompute in `updateTask`, initial score in `createTask`). The PL/pgSQL function in migration 0001 replicates the same logic for the nightly pg_cron job — keep them in sync if the formula changes.
-
-**Fields that trigger an immediate recompute in `updateTask()`:**
-```typescript
-const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
 ```
+ramp    = clamp(1 − daysLeft / 14, 0, 1)     0 = a fortnight out, 1 = due now
+onTime  = shape(ramp) × 50                    shape ∈ {linear, exponential, step}
+overdue = min(1, daysOverdue / 7) × 10        keeps climbing after the deadline
+```
+
+### Why not fraction-of-lifespan
+
+The original formula used `elapsed / (due_date − created_at)` — the task's own lifespan. That puts the **creation date in the denominator**, so two tasks with identical priority and identical deadlines scored differently purely because one was written down earlier. A task added today and due Friday is under exactly the same pressure as one added last Monday and due Friday; the deadline is real, the creation date is an accident of when it got typed in.
+
+It also failed in the direction that matters most: a task added the day before it's due had a tiny lifespan, so its elapsed ratio was near zero and it read as **not urgent** right when it was most urgent. Rescoring live data moved "Review OS Processes", due the next day, from 30 to 81.
+
+Scores are now comparable across the whole list, which is the point — they're used to sort a queue and to rank scheduler candidates.
+
+### Curve shapes
+
+Curves are normalised to start at 0 and reach exactly 1 at the deadline, so they are comparable to each other rather than each having its own range:
+
+| Curve | Behaviour |
+|---|---|
+| `linear` | Pressure rises steadily across the fortnight |
+| `exponential` | Sigmoid centred at 0.75 — flat for most of the window, then steep |
+| `step` | Three plateaus: 8% → 40% → 100% at the 60% and 85% marks |
+
+### Overdue
+
+The deadline is not the ceiling. On-time pressure tops out at 50 and overdue adds up to 10 more over the following week, so a task three days late outranks one due this afternoon instead of tying with it.
+
+### Keeping the two implementations in sync
+
+`computeUrgency()` in `src/types/index.ts` is the source of truth, and the PL/pgSQL `recompute_urgency_scores()` (rewritten in migration `0011`) must match it — the nightly `pg_cron` job overwrites every active task's score, so a stale function silently reverts the app's work every night. **This is the one migration whose absence is actively harmful rather than merely inert.** The two were verified equal to 1e-10 across 216 combinations of priority, curve and deadline.
+
+Habits keep `urgency_score = 0`: they aren't deadline work. The scheduler gives them a `priority × 10` baseline at scheduling time instead (see [Scheduling habits](#scheduling-habits)).
 
 ---
 
@@ -254,6 +281,50 @@ Three functions in `src/lib/google-calendar.ts`:
 | `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
 | `listAutoScheduledEventIds()` | `GET /calendars/primary/events?privateExtendedProperty=plannerAuto=true` | Lists auto-scheduled blocks in a window, for cleanup |
 
+### Reviewing a week: whole horizon, partial approval
+
+`proposeSchedule` returns an `existing` list — calendar events and already-booked task blocks across the horizon — alongside the new proposals. The review merges both into one chronological week: you can't judge a proposal without seeing what it's fitting around, and the old modal showed only the new blocks in isolation.
+
+Existing rows are read-only context (dashed, dimmed). Proposals carry a checkbox and start approved; unticking rejects that block. Confirm sends only the approved ones.
+
+Partial approval changes what cleanup may touch. The sweep used to clear **every** auto block in the window and rewrite the lot, which is wrong once approval is partial — rejecting one block would delete the schedule for everything else. Cleanup is now scoped to the **approved tasks**: their older blocks are removed and replaced, and everything else is left alone. The `plannerTaskId` written into each event makes a task's blocks identifiable even though the row only remembers one id.
+
+The trade-off: a block belonging to a task that is no longer proposed at all (completed, deleted) is no longer swept, because "not approved" and "not proposed" are indistinguishable here. Leaving it is the safer error — deleting calendar entries the user never agreed to remove is worse than one that lingers.
+
+### proposeSchedule fans out
+
+The action was a chain of sequential awaits — config, tasks, subtasks, habits, freeBusy, then the existing-week queries — for work with almost no ordering between it. Measured against the live database, the same set of queries took **2043 ms one after another and 272 ms in parallel**.
+
+Everything independent now runs in one `Promise.all`: token, config, top-level tasks, habit candidates, and the two existing-week queries. Only two things genuinely have to follow — the subtask query (needs the parent ids) and freeBusy (needs the token). The time window is pure arithmetic, so it's computed before the first await and lets the calendar queries start with the rest. `buildHabitCandidates` fans out internally too.
+
+### Waiting for a proposal
+
+The preview modal opens **immediately** in a loading state rather than after the round trip: a button that sits dead for a couple of seconds reads as broken, and the work is one server call with no natural checkpoints.
+
+The progress bar is **indeterminate** — a sweep animation, not a percentage. There is no real progress to report from a single round trip, and a fake percentage that jumps to 90% and waits is worse than an honest "working". A skeleton week sits underneath so the shape of what's coming is visible.
+
+### "Didn't fit" is grouped, not itemised
+
+Habit sessions are expanded one candidate per session, so a 7×/week habit with six days left in the week produces leftovers *every* run. Listing each as its own failure row made a working schedule look broken.
+
+The list is collapsed per title and reports what was achieved: "Piano — 6 of 7 scheduled" reads as information, in neutral styling, while something that got nothing at all stays amber and says so. The distinction the user cares about is "did any of it happen", not "how many candidate objects failed".
+
+### The week review is a calendar grid
+
+`ScheduleWeekCalendar` renders the horizon as day columns against an hour gutter, positioned absolutely by time — the shape people already read schedules in. The list view is kept behind a toggle for scanning.
+
+- **Visible range is derived**, not fixed at 24h: one hour either side of the earliest and latest item, with a 10-hour minimum so a light day doesn't collapse to a sliver.
+- **Lane widths are per overlapping cluster, not per day.** A day-wide lane count makes every block on the day narrow just because two of them collide at 1pm. Items are grouped into clusters separated by gaps where nothing is running, and each cluster sizes itself.
+- **Existing items are dashed and dimmed**, and not draggable — they're context, not proposals.
+
+### Dragging blocks
+
+Pointer events rather than the HTML5 drag-and-drop used in `UpcomingView`. DnD gives no usable coordinate during the drag, and a calendar needs continuous Y→time and X→day mapping to place the block precisely; `setPointerCapture` also keeps the drag alive when the cursor leaves the block.
+
+Dropping snaps to 15 minutes and clamps so a block can't be dragged out of the visible range. Moving across columns changes the day. Duration is preserved — the drag moves a block, it doesn't resize it.
+
+Moves are **local state** (`moved`, keyed by the block's *original* start so the key survives repeated drags) and are only persisted on Confirm, which sends the effective times. Nothing touches the calendar until the user approves.
+
 ### Auto-scheduled blocks are tagged in GCal, not tracked in the DB
 
 A task row has **one** `gcal_event_id` column, but a task can occupy **several** blocks — a long task split into segments, or a habit scheduled 4× a week. The column can only hold the last one, so `confirmSchedule` used to delete one event per task and orphan the rest. With habits this went from a rare edge case to a guaranteed weekly leak (3 stranded gym blocks per re-run).
@@ -280,6 +351,73 @@ If a task already has a `gcal_event_id`, `scheduleTask` patches the existing eve
 
 - Days already used by the group are skipped when collecting slot candidates.
 - Slot choice sorts by **start time** rather than tightest-fit, so sessions walk forward through the week instead of clustering wherever the snuggest gaps happen to be.
+
+### Daily breaks (meals)
+
+`user_daily_breaks` (migration `0008`) — a label, a duration, a **window** it must fall inside, and a cooldown. Seeded with Lunch (60 min between 11:00 and 13:15) and Dinner (60 min between 17:00 and 19:30), both with a 60-minute cooldown.
+
+A break is not a calendar event: it's "an hour, somewhere in here", and the scheduler picks the actual time per day. Breaks are reserved **before any task is placed**, so a meal gets first claim on its window rather than losing it to whatever work happened to sort first. Each takes the earliest free slot in its window; if the window is fully booked by real calendar events that day, the break is skipped rather than forced.
+
+**Planner-only.** Breaks reserve time inside the scheduler but are never written to Google Calendar — they produce no `ProposedBlock`, so `confirmSchedule` has nothing to create. Chosen deliberately: the point is protecting the time from *this* app, not filling the calendar with a recurring daily event.
+
+`cooldown_minutes` blocks the period *after* a break for tasks with `avoidAfterBreaks` — "no gym or running for an hour after eating". Cooldowns are deliberately **not** buffered by `bufferMinutes`: the window is already an explicit "not for this long", and padding it would quietly extend the rule beyond what was asked. Reserved break intervals *are* buffered, like any other busy time.
+
+`tasks.avoid_after_breaks` carries the flag, set per habit from the detail panel.
+
+Degrades on a pre-0008 database: the breaks query resolves to null instead of throwing, so the scheduler runs with no breaks, and the flag reads false through `select('*')`.
+
+### Tethering work: location + span
+
+Some tasks take little effort but hold you in place. Washing sheets is ~10 minutes of attention across a two-hour cycle: you're free to do other things, but not to leave. An exclusive block models this badly — reserving two hours wastes them, reserving ten minutes lets the scheduler send you to the gym mid-cycle.
+
+Two columns (migration `0009`):
+
+- `tasks.span_minutes` — total tie-up, when longer than the work itself. The scheduled block stays `estimated_minutes` (the attention); the span only pins location.
+- `tasks.location` — `home` / `away` / `anywhere` (default). `anywhere` is compatible with everything; `home` and `away` clash.
+
+While a span runs, the scheduler records a **tether**: a window where your location is fixed. Unlike a placed block a tether does *not* consume time — compatible work is welcome inside it, which is the entire point. Incompatible work is not: mark Gym as `away` and it won't be scheduled during laundry.
+
+The check runs both ways. A task that would tether can't start when work needing you elsewhere is already booked inside its span, so ordering doesn't matter: laundry-then-gym and gym-then-laundry both produce a legal day.
+
+**Tethers are subtracted from free time, not rejected per-slot.** The slot search only considers the *start* of each free interval, so testing "does this slot overlap a tether" and skipping made a task unschedulable for the whole day whenever its one free interval happened to begin mid-tether — a gym session vanished rather than sliding to just after the laundry. Carving incompatible tethers out of the free intervals makes the next slot start at the tether's end naturally.
+
+Per the chosen behaviour only the active minutes appear as a block; the tie-up is enforced but not drawn, so the calendar shows "Wash sheets, 10 min" rather than a two-hour bar.
+
+Degrades on a pre-0009 database: task rows load with `select('*')`, so a missing `location` reads as undefined and falls back to `anywhere`, and no span means no tether. Writes go through `setTaskPlacement`, which returns a message rather than throwing.
+
+### Plan Day: what the ranked list contains
+
+The day's blocks and the ranked list beside them are built from different queries, and they used to disagree. The list filtered `due_date <= day`, which dropped two whole categories: anything **undated** — which is every habit — and anything the scheduler **pulled forward** from later to fill the day. With no task due today the list came out empty while the plan beside it was full.
+
+It now takes tasks that are due today or earlier, undated, or scheduled today. Far-future work stays out unless it actually earned a block, so the list reflects the plan rather than a separate idea of the day.
+
+Habits are given the same `priority * 10` baseline the scheduler uses; their stored `urgency_score` of 0 would otherwise bury them at the bottom of a list they belong near the top of.
+
+### Habits without a weekly target
+
+`buildHabitCandidates` used to require `weekly_target`, which made untargeted habits **invisible to the scheduler** — never proposed, never reported, no indication why. "I keep doing this, no fixed count" is a normal way to hold a habit, not a reason to exclude it.
+
+An untargeted habit now yields **one session per run**, skipped if it was already done this week. Once a count exists the target governs as before. One a week is a deliberately modest floor: without a number there's nothing to infer a frequency from, and over-scheduling something the user never committed to a count for is the worse error.
+
+### Per-task transition buffer
+
+`tasks.buffer_minutes` (migration `0010`): null = the global default, 0 = none.
+
+The global 15-minute buffer suits work that needs settling-in time but makes small chores absurdly expensive — taking out the trash is 5 minutes of work that needed **35 minutes of clear space** to be scheduled, so it lost to anything else whenever the day was busy.
+
+The buffer applied is the **placing task's own**, not the maximum of it and its neighbour's. Taking the max would be defensible as "the neighbour still wants breathing room", but it defeats the purpose: the chore would still inherit 15 minutes from whatever sits next to it and still wouldn't fit. Blocks placed later apply their own buffer against it as usual.
+
+### Working hours past midnight
+
+A day's window is `[start, end]`, and an end **at or before** the start means it runs into the next day: "10:00 to 01:30" is a fifteen-and-a-half hour day, not a negative one. `workWindow()` is the single definition, used by both free-slot scanning and the fixed-sequence check.
+
+The interval check can't just look up the day containing a block's start — 00:30 belongs to the *previous* day's hours — so it tests the block against every day's window instead.
+
+### Scheduler: atomic work
+
+`SchedulerTask.atomic` marks work that can't be split across sittings — it takes one unbroken block instead of being chunked by `maxSessionMinutes`. Habit sessions set it (see [Scheduling habits](#scheduling-habits)); ordinary tasks don't, and still segment as before.
+
+The large-task sort bonus is computed from how many max-sessions the duration *spans* rather than from its segment count, so an atomic task (always one segment) still earns the anti-fragmentation protection a long split task gets.
 
 ### Scheduler: unschedulable is per-candidate, not per-task
 
@@ -310,6 +448,18 @@ When `completeTask()` is called on a task with an `rrule` or `type === 'habit'`:
 4. For **anytime habits** (`rrule` is null, `type === 'habit'`): next occurrence spawns for tomorrow so the card reappears daily.
 5. A new task row is inserted with the same title/project/priority/energy/estimate/rrule, `status: 'inbox'`, and `due_date` set to the next occurrence.
 6. `habit_streaks` is upserted: consecutive completion (last_completed === yesterday) increments the streak; otherwise resets to 1.
+
+### "Not before" (defer date)
+
+`tasks.start_date` (migration `0013`) — the earliest a task may be scheduled. The deadline says when work must be *finished*; this says when it may *begin*.
+
+Without it every pending task is available the instant it exists, so the scheduler fills spare capacity with work that can't actually be done yet: a weekly grading task completed on Monday immediately gets next week's occurrence booked, even though next week's homework doesn't exist. That's not a priority problem — no amount of deprioritising makes it correct — it's a availability problem, which is why it needs its own field rather than a nudge to the urgency formula.
+
+It deliberately does **not** stop the scheduler pulling *other* future work forward to fill space, which is wanted behaviour. Only work that is genuinely not yet doable opts out.
+
+**Recurring occurrences set it themselves.** When completing a recurring task spawns the next one, `start_date` defaults to the day after the occurrence just closed — a Thursday-weekly task completed this week becomes available Friday, not immediately. It's clamped to never exceed the new deadline, which would make the task unschedulable. Editable per task under "Not before".
+
+Subtasks take the parent's: a step can't begin before the work as a whole is available.
 
 ### Why anchor from `due_date`, not `today`?
 
@@ -362,17 +512,57 @@ The page runs **two** queries: pending habits (`status in (inbox, active)`, due 
 
 ### Weekly targets
 
-`tasks.weekly_target` (integer, nullable) holds "how many times per week", and `habit_streaks` carries `completions_this_week` + `week_start` (Monday, UTC) to track progress. `week_start` is compared on every completion; a mismatch resets the counter rather than relying on a scheduled job.
+`tasks.weekly_target` (integer, nullable) holds "how many times per week".
+
+**Progress is derived, not stored.** `habit_streaks` has `completions_this_week` / `week_start` columns, but they are **not** the source of truth: that table is keyed by `task_id` while every occurrence is a *new row with a new id*, so the counter for the pending row on screen has never been incremented and always reads 0. Both the scheduler and the habits page instead count **distinct completion days this week, grouped by title** — title being the habit's real identity here, as it already is for the streak calendar. The habits page patches the real count into the `HabitStreak` object it hands to `TaskDetail`.
+
+Counting *days* rather than completions is deliberate: "gym 4× a week" means four days, so two sessions on one day count once.
 
 Habits are excluded from the `/tasks` query (`neq('type','habit')`) — they live on `/habits` and would otherwise clutter the task list with untimed, non-urgent work.
+
+### One pending occurrence per habit
+
+`completeTask` refuses to spawn a next occurrence when another pending row with the same title already exists. Without the guard, completing a habit twice in one day spawned two rows for tomorrow — the habit then showed and scheduled twice on the same day.
+
+Same-day completion is also a no-op for the streak. The consecutive-day check is `last_completed === yesterday`; on a second completion today `last_completed` is already *today*, which read as "not consecutive" and reset a long streak to 1.
+
+### Habits have no deadlines
+
+The detail panel hides the due-date picker, urgency curve, and urgency breakdown for habits — all deadline machinery, and habits are stored with `urgency_score` 0 regardless. `due_date` remains internally as the next-occurrence marker the habits page filters on, but it is no longer user-editable, so it can't be set by hand in a way that breaks the occurrence chain.
+
+### Deleting and back-filling
+
+Both act on the **title**, since a habit is a chain of rows rather than one row:
+
+- `deleteHabit(title)` removes every occurrence, its streak rows, and any Google Calendar blocks. Calendar events are deleted *first* — once the rows are gone their event ids are unrecoverable and the blocks would linger forever. This deletes history, which is what delete means here.
+- `setHabitCompletion(title, date, done)` logs or un-logs a past day from the heatmap. It inserts a *completed* occurrence rather than touching the pending row, so today's card stays actionable and the spawn chain is untouched. `completed_at` is noon UTC so slicing the date back out can't drift, the write is idempotent (one completion per day), and future dates are rejected.
 
 ### Scheduling habits
 
 A habit with both a `weekly_target` and an `estimated_minutes` session length is expanded by `buildHabitCandidates()` into one scheduler candidate per session still owed this week (target minus `completions_this_week`). Notable choices:
 
-- **Candidates carry `due_date: null`.** The habit row's own `due_date` is just a "next occurrence" marker; passing it through would trip the scheduler's `dayMs > dueMs` guard and pin every session to a single day.
+- **Candidates carry the end of the current week as `due_date`.** Not the habit row's own `due_date` — that's a "next occurrence" marker and would trip the scheduler's `dayMs > dueMs` guard, pinning every session to one day. The week end is needed because "Schedule week" runs a *rolling* 7 days from today, which straddles the week boundary whenever today isn't the first day; without the bound, sessions owed for this week could be placed into next week, which would then begin with its allowance already spent.
 - **`urgency_score` is overridden to `priority * 10`.** Habits are stored with score 0 since they aren't deadline work, which would sort them last and leave them only whatever space is left over. The override gives them the same baseline an undated task of that priority gets. Raising a habit's priority is the lever if it keeps losing to deadline work.
-- **Sessions share a `spreadGroup`** so they land on distinct days (see [Scheduler](#scheduler)).
+- **Sessions are `atomic`.** A session occupies one unbroken block however long it is, instead of being chunked by `maxSessionMinutes`. You don't do 90 minutes of gym on Monday and the remaining 30 on Tuesday. This is load-bearing for the target: a 120-minute session against a 90-minute cap splits into two segments, and since segments can't share a day either, "2× a week" silently produced **four** scheduled blocks across four days. A session longer than the largest free window is reported unschedulable, which is the honest answer.
+- **Placed by widest gap, not earliest free day.** Taking the earliest slot each time packs a 2×/week habit into Monday and Tuesday and leaves the weekend permanently empty. For `spreadGroup` candidates the pool is sorted by distance from the days the group already occupies (ties → earliest), which distributes sessions over the whole horizon. Gym 2× + Run 2× in one group lands Mon, Tue, Thu, Sun instead of Mon–Thu.
+- **Emitted round-robin** across habits, not habit-by-habit. `runScheduler`'s sort is stable, so habits on equal footing keep this order and grouped ones alternate (Gym, Run, Gym, Run) instead of running in blocks (Gym, Gym, Run, Run). A genuinely higher-priority habit still sorts ahead of the rotation.
+- **Sessions share a `spreadGroup`**, keyed by `exclusive_group` when set and by title so they land on distinct days (see [Scheduler](#scheduler)). otherwise. Keyed by title rather than row id: if a habit ever ends up with two pending rows they are still one habit and must not both land on the same day.
+
+### Mutually exclusive habits
+
+`tasks.exclusive_group` (text, nullable — migration `0007`). Habits sharing a group are never scheduled on the same day: set Gym and Run both to `Exercise`.
+
+This needed **no new scheduler logic** — `spreadGroup` already means "these candidates must land on distinct days", so mutual exclusion is just two habits sharing the key. A pairwise `habit_conflicts` table was considered and rejected: it expresses arbitrary conflict graphs (A–B, B–C, A fine with C) but would require real graph colouring in the scheduler, for a case that named groups cover.
+
+**The UI takes the other habit, not a group name.** The first version asked for a group name under the label "Not on the same day as", which reads as a blank to fill with the *other habit's* title — doing that creates two groups of one, named after each other, that exclude nothing. It looks configured and does nothing. The picker is now a checkbox list of the other habits; ticking one writes the shared group to both sides. `setHabitExclusiveLink(title, other, linked)` joins whichever group already exists, else names a new one for the pair. Unticking clears both when the group is a pair (a group of one excludes nothing) and otherwise drops just the habit being unticked.
+
+The constraint is **scheduling-only**. If you actually did both in one day you can still log both — the app records what happened rather than refusing data it knows is real.
+
+The group is stored on *every* row of the habit chain and copied by both the completion spawn and the back-fill insert, so it survives the next completion.
+
+Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seven days, so seven are placed on distinct days and two are reported unschedulable rather than silently dropped.
+
+**Writes omit the column when unset.** The spawn and back-fill inserts spread `exclusive_group` in conditionally, so a database without 0007 still creates habits normally — sending the key unconditionally is precisely how `weekly_target` broke habit creation before 0005 was applied. Reads use `select('*')` and fall back to per-habit grouping; only assigning a group needs the column, and the setter returns a message naming the migration.
 
 ---
 
@@ -381,6 +571,36 @@ A habit with both a `weekly_target` and an `estimated_minutes` session length is
 ### Data model
 
 `tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
+
+### Subtasks inherit from their parent
+
+A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **priority** and **urgency**.
+
+Priority and urgency are read from the parent at scheduling time rather than copied. Subtasks are created at priority 1 with urgency 0, so a chain under a task marked P4 used to sort to the very bottom and get whatever slots were left — the exact opposite of what marking the parent critical is for. Project, deadline and location are set at creation and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
+
+The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
+
+Subtasks appear in the main list like any other task, so each shows `↳ Parent title` — "Dahl" on its own is a mystery once it's out of the parent's checklist. The row carries a `parent:parent_id(id, title)` embed. Note the syntax: `tasks!parent_id` resolves to the *children* of a row (an array); `parent_id(...)` is the many-to-one direction.
+
+### Chained scheduling
+
+Subtasks of one parent share a `chainGroup` and are placed as a run: **no buffer between them, one buffer around the whole run**. Reading Dahl then Rawls needs no transition; the run as a whole does.
+
+Each sitting takes the slot that fits the **most** members, not the tightest-fitting one — the goal is to group the chain as tightly as the week allows rather than scatter it one subtask at a time. Members still get their own block each, so each keeps its own calendar event and row; they are merely adjacent.
+
+The run is constrained by its strictest member: widest buffer, earliest deadline, any location that isn't `anywhere`. A run is capped at `maxSessionMinutes`, so five 20-minute readings against a 90-minute cap become 4 + 1 rather than one 100-minute block — raising the max session length groups more per sitting.
+
+### Multi-stage work (fixed waits)
+
+`tasks.gap_after_minutes` (migration `0012`) — the wait between one subtask and the next. Washing sheets is 5 min loading, an hour of machine time, 5 min to the dryer, another hour, 15 min making the bed. The waits are unavoidable, fixed, and *yours to use*.
+
+A chain with any non-zero gap is placed as a **fixed-offset sequence** rather than packed. The offsets aren't negotiable — if loading is at 10:00 then the dryer is at 11:05, wherever that lands — so instead of choosing a slot per stage, the scheduler looks for a single start time that makes *every* stage land on free time, stepping forward in 15-minute increments until one does.
+
+The waits themselves are **not reserved**: each active stage is a block, the gaps between are left free, and other work can be scheduled into them. What the sequence does reserve is your *location* — the whole cycle, waits included, becomes a tether at the chain's location, so nothing marked `away` is scheduled inside it. That's what distinguishes a laundry cycle from three unrelated errands.
+
+A sequence is all-or-nothing: if no start time fits every stage, the whole cycle is reported unschedulable rather than half-placed. A half-done laundry cycle isn't a useful plan.
+
+How much of a wait is reusable depends on buffers — a 60-minute wait between two default-buffered stages leaves 30 usable minutes. Setting the filler task's buffer to None reclaims nearly all of it.
 
 ### Why not a separate table?
 
@@ -434,6 +654,68 @@ The done/complete button circle in every task list view is colored by priority:
 | 1 — Low | Slate/white border (neutral) |
 
 `priorityCircleClass(priority)` is a local helper in each view file (`TaskList`, `UpcomingView`, `ProjectDetailView`). It's intentionally co-located rather than shared via a utility, because the exact class set is tightly coupled to each component's hover states.
+
+---
+
+## Color Themes
+
+Choosing a color in Settings re-tints the **entire** UI — background, borders, muted labels — not just accented controls.
+
+### Redefining `slate` instead of rewriting components
+
+The app is written in ~1200 `slate-*` utilities across 26 files. Rather than replace them with semantic tokens, the **`slate` palette itself** is redefined in `globals.css` and remapped in `@theme`, so every existing `bg-slate-900` / `border-slate-200` / `text-slate-400` resolves through the theme. Picking a color re-tints everything with **zero component changes**; the whole feature is one CSS file plus the accent registry.
+
+Each shade is `hsl()` built from a per-preset `--tint-h` (hue) and `--tint-s` (saturation), with **lightness values lifted verbatim from Tailwind's slate** — only the hue moves, so contrast ratios that already worked keep working. Per-shade saturation multipliers follow slate's own curve (stronger at the extremes, calmer through the midtones) so the result reads as a designed neutral rather than a colored wash.
+
+`white` is deliberately **not** redefined: `text-white` sits on accent buttons and must stay pure. In light mode this means cards stay white on a faintly tinted ground; dark mode tints fully.
+
+### One control, not two
+
+The tint is driven by the **existing** `data-accent` attribute rather than a second setting. An independent theme control would allow clashing combinations (teal accent on a rose-tinted UI) and forces the user to make two decisions where they wanted one.
+
+Verified in-browser, since the load-bearing assumption was whether Tailwind v4 honours overriding a built-in palette: it does — `bg-slate-200` resolves to `rgb(228,237,238)` under teal and `rgb(238,228,234)` under pink.
+
+---
+
+## Week Start
+
+`user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat) — migration `0006`. Settable in Settings → Smart scheduling.
+
+### Reads degrade, writes don't
+
+Every read goes through `fetchWeekStartDay()`, which uses `select('*')` and **falls back to Monday when the column is absent**, so the app works unchanged on a database where 0006 hasn't been applied. Only *saving* needs the column; the UI rolls the selection back and names the migration if the write fails. This is a deliberate response to the `weekly_target` rollout, where a missing column silently broke habit creation.
+
+### One helper, five call sites
+
+The week-start arithmetic was hand-rolled and hardcoded to Monday in `completeTask`, the scheduler, the habits page, the weekly review, and the Upcoming strip. It now lives in `src/lib/week.ts`:
+
+- `weekStartOf(date, startDay)` — UTC `YYYY-MM-DD` of the week start
+- `daysSinceWeekStart(dayOfWeek, startDay)` — the timezone-free half, for views working in local time
+- `weekDayOrder(startDay)` — day indices in display order, for seven-across grids
+
+Having one implementation matters beyond tidiness: if the boundary used when *recording* a completion ever drifted from the one used when *counting* it, weekly progress would be quietly wrong.
+
+Everything follows the setting: the Upcoming week strip (and its prev/next nav), the 16-week habit heatmap (columns and row labels), the weekly review period, the analytics energy heatmap, and the working-hours / energy grids in Settings.
+
+The **scheduling horizon stays rolling** 7 days from today. Aligning it to the week start would spend the already-elapsed days of the current week on the past, and the scheduler clamps slots to `now` — less planning, not more. Habit sessions are bounded to the current week via their `due_date` instead (see [Scheduling habits](#scheduling-habits)).
+
+---
+
+## Projects
+
+### Creating and changing from where you are
+
+`ProjectPicker` is a dropdown with inline creation, shared by the add-task modal and the task detail panel. Choosing "+ New project…" swaps the select for a name field and a colour row; creating selects the new project immediately.
+
+Shared rather than written twice: both places need to pick a project *and* make one without losing what you're typing, and two copies of a create-then-select flow is two places for it to drift.
+
+`createProject` returns the inserted row (it previously returned void) so the caller can select it without a refetch. The picker also keeps locally-created projects in state — the list arrives as a server prop and wouldn't include a new one until the page revalidates.
+
+`onChange` hands back the `Project` object alongside the id, so a caller can update its own display at once. The detail panel's header badge reads from `task.project`, a joined snapshot that would otherwise show the old project until the panel was reopened.
+
+The detail panel previously accepted a `projects` prop and never used it: a task's project was fixed at creation with no way to change it afterwards.
+
+Habits don't get a project picker — they're deliberately project-less.
 
 ---
 

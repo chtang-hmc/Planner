@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
-import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEventIds } from '@/lib/google-calendar'
+import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
 import {
   runScheduler,
   buildAttackList,
@@ -12,9 +12,12 @@ import {
   type TimeBlockId,
   type SchedulerConfig,
   type SchedulerTask,
+  type BreakWindow,
+  blockLabel,
   type ProposedBlock,
   type AttackItem,
 } from '@/lib/scheduler'
+import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
 
 // ── GCal freeBusy ─────────────────────────────────────────────────────────────
 
@@ -53,10 +56,17 @@ async function fetchSchedulingInputs() {
     { data: whRows },
     { data: esRows },
     { data: configRow },
+    { data: breakRows },
   ] = await Promise.all([
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
     db.from('user_scheduling_config').select('*').limit(1).single(),
+    // Missing table (pre-0008) resolves to null rather than throwing, so the
+    // scheduler just runs without breaks.
+    db.from('user_daily_breaks').select('*').order('start_hour').then(
+      r => r,
+      () => ({ data: null }),
+    ),
   ])
 
   const workingHours: WorkingHours[] = (whRows ?? []).map(r => ({
@@ -74,10 +84,23 @@ async function fetchSchedulingInputs() {
     energy_level: r.energy_level as 'low' | 'medium' | 'high',
   }))
 
+  const breaks: BreakWindow[] = (breakRows ?? [])
+    .filter(r => r.enabled)
+    .map(r => ({
+      label:           r.label,
+      durationMinutes: r.duration_minutes,
+      startHour:       r.start_hour,
+      startMinute:     r.start_minute,
+      endHour:         r.end_hour,
+      endMinute:       r.end_minute,
+      cooldownMinutes: r.cooldown_minutes,
+    }))
+
   const schedulerConfig: SchedulerConfig = {
     maxSessionMinutes: configRow?.max_session_minutes ?? 90,
     bufferMinutes:     configRow?.buffer_minutes ?? 15,
     timezone:          'UTC',  // overridden per-call via { ...schedulerConfig, timezone }
+    breaks,
   }
 
   return { workingHours, energySchedule, schedulerConfig }
@@ -111,14 +134,6 @@ export interface SerializedAttackItem {
 
 // ── Habit sessions ────────────────────────────────────────────────────────────
 
-/** Monday of the current UTC week, as YYYY-MM-DD. Mirrors completeTask. */
-function currentWeekStart(): string {
-  const d   = new Date()
-  const dow = d.getUTCDay()                        // 0=Sun … 6=Sat
-  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1))
-  return d.toISOString().slice(0, 10)
-}
-
 /**
  * Expand each habit with a weekly target into one candidate per session still
  * owed this week (target minus sessions already completed). Sessions share a
@@ -132,45 +147,111 @@ function currentWeekStart(): string {
 async function buildHabitCandidates(
   db: ReturnType<typeof createServiceClient>
 ): Promise<SchedulerTask[]> {
-  const { data: habits } = await db
-    .from('tasks')
-    .select('id, title, priority, energy_required, estimated_minutes, adjusted_minutes, weekly_target')
-    .eq('type', 'habit')
-    .in('status', ['inbox', 'active'])
-    .is('parent_id', null)
-    .not('weekly_target', 'is', null)
-    .or('scheduled_by.is.null,scheduled_by.eq.auto')
+  // Independent of each other — one round trip instead of two
+  const [{ data: habits }, weekStartDay] = await Promise.all([
+    db.from('tasks')
+      .select('*')        // '*' so a pre-0007 database (no exclusive_group) still works
+      .eq('type', 'habit')
+      .in('status', ['inbox', 'active'])
+      .is('parent_id', null)
+      .or('scheduled_by.is.null,scheduled_by.eq.auto'),
+    fetchWeekStartDay(db),
+  ])
 
   if (!habits || habits.length === 0) return []
 
-  const { data: streakRows } = await db
-    .from('habit_streaks')
-    .select('task_id, completions_this_week, week_start')
-    .in('task_id', habits.map(h => h.id))
+  const weekStart = weekStartOf(new Date(), weekStartDay)
 
-  const streaks  = new Map((streakRows ?? []).map(s => [s.task_id, s]))
-  const weekStart = currentWeekStart()
-  const out: SchedulerTask[] = []
+  // Last day of the current week. Sessions are owed *this* week, so they must
+  // not spill past it — "Schedule week" runs a rolling 7 days from today, which
+  // straddles the week boundary whenever today isn't the first day.
+  const weekEndDate = new Date(`${weekStart}T00:00:00Z`)
+  weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6)
+  const weekEnd = weekEndDate.toISOString()
+
+  // Progress is counted from the completions themselves, as DISTINCT DAYS per
+  // habit title. Two sessions on one day count once — a weekly target means
+  // that many days, not that many completions.
+  //
+  // Not read from habit_streaks.completions_this_week: that table is keyed by
+  // task_id, but every occurrence is a new row with a new id, so the counter
+  // for the current pending row is always 0 and the target would never shrink.
+  // Title is the habit's real identity here, as it is for the streak calendar.
+  const { data: doneRows } = await db
+    .from('tasks')
+    .select('title, completed_at')
+    .eq('type', 'habit')
+    .eq('status', 'done')
+    .gte('completed_at', `${weekStart}T00:00:00Z`)
+    .not('completed_at', 'is', null)
+
+  const daysByTitle = new Map<string, Set<string>>()
+  for (const r of doneRows ?? []) {
+    if (!r.completed_at) continue
+    const set = daysByTitle.get(r.title) ?? new Set<string>()
+    set.add(r.completed_at.slice(0, 10))
+    daysByTitle.set(r.title, set)
+  }
+
+  // One list per habit, interleaved below
+  const perHabit: SchedulerTask[][] = []
 
   for (const h of habits) {
     const duration = h.adjusted_minutes ?? h.estimated_minutes
     if (!duration) continue          // no session length set — can't schedule it
 
-    const streak = streaks.get(h.id)
-    const done   = streak && streak.week_start === weekStart ? streak.completions_this_week : 0
-    const owed   = Math.max(0, (h.weekly_target ?? 0) - done)
+    // No weekly target means "I keep doing this, no fixed count" — still worth
+    // one slot a week rather than never being scheduled at all. Requiring a
+    // target meant these habits were silently invisible to the scheduler.
+    const done = daysByTitle.get(h.title)?.size ?? 0
+    const owed = h.weekly_target == null
+      ? (done > 0 ? 0 : 1)
+      : Math.max(0, h.weekly_target - done)
+    const sessions: SchedulerTask[] = []
 
     for (let i = 0; i < owed; i++) {
-      out.push({
+      sessions.push({
         id:               h.id,
         title:            h.title,
         priority:         h.priority,
         urgency_score:    h.priority * 10,
         energy_required:  h.energy_required,
         duration_minutes: duration,
-        due_date:         null,
-        spreadGroup:      h.id,
+        // Not the habit row's own due_date (a next-occurrence marker that would
+        // pin every session to one day) — the end of the week the sessions are
+        // owed for, which the scheduler already honours as a deadline.
+        due_date:         weekEnd,
+        // Habits in a shared exclusive group (e.g. Gym + Run as 'Exercise')
+        // never land on the same day. Falling back to the title keys the group
+        // per habit, which still keeps that habit's own sessions apart — and by
+        // title rather than row id, so two pending rows of one habit can't
+        // share a day either.
+        spreadGroup:      h.exclusive_group
+          ? `group:${h.exclusive_group}`
+          : `habit:${h.title}`,
+        avoidAfterBreaks: !!h.avoid_after_breaks,
+        location:         h.location ?? 'anywhere',
+        spanMinutes:      h.span_minutes ?? undefined,
+        bufferMinutes:    h.buffer_minutes ?? undefined,
+        // A session is one unbroken block. Without this a 120-minute session
+        // against a 90-minute cap is split into two, so "2× a week" quietly
+        // becomes four scheduled blocks on four days.
+        atomic:           true,
       })
+    }
+
+    perHabit.push(sessions)
+  }
+
+  // Round-robin rather than habit-by-habit. runScheduler's sort is stable, so
+  // habits on equal footing keep this order and grouped ones alternate
+  // (Gym, Run, Gym, Run) instead of running in blocks (Gym, Gym, Run, Run).
+  // A genuinely higher-priority habit still sorts ahead of the rotation.
+  const out: SchedulerTask[] = []
+  const longest = Math.max(0, ...perHabit.map(l => l.length))
+  for (let i = 0; i < longest; i++) {
+    for (const sessions of perHabit) {
+      if (sessions[i]) out.push(sessions[i])
     }
   }
 
@@ -179,9 +260,21 @@ async function buildHabitCandidates(
 
 // ── proposeSchedule ───────────────────────────────────────────────────────────
 
+/** Something already on the week — context for reviewing a proposal. */
+export interface ExistingItem {
+  id:        string
+  title:     string
+  startISO:  string
+  endISO:    string
+  /** 'event' = calendar commitment; 'scheduled' = a task block already booked. */
+  kind:      'event' | 'scheduled'
+}
+
 export interface ProposeResult {
   scheduled:     SerializedBlock[]
   unschedulable: SchedulerTask[]
+  /** Everything already occupying the horizon, so the whole week is reviewable. */
+  existing:      ExistingItem[]
   error?:        string
 }
 
@@ -194,32 +287,57 @@ export interface ProposeResult {
 export async function proposeSchedule(horizonDays: number, timezone: string = 'UTC', startDateStr?: string): Promise<ProposeResult> {
   const db = createServiceClient()
 
-  // ── 1. Auth ────────────────────────────────────────────────────────────────
-  const token = await getValidToken()
-  if (!token) return { scheduled: [], unschedulable: [], error: 'Google Calendar not connected' }
+  // The window is pure arithmetic, so it can be computed before any await and
+  // let the calendar queries start alongside everything else.
+  const dayStr  = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+  const timeMin = new Date(localMidnight(dayStr, timezone))
+  const timeMax = new Date(timeMin)
+  timeMax.setDate(timeMax.getDate() + horizonDays + 1)
 
-  // ── 2. User config ─────────────────────────────────────────────────────────
-  const { workingHours, energySchedule, schedulerConfig } = await fetchSchedulingInputs()
-
-  // ── 3. Candidate tasks ─────────────────────────────────────────────────────
-  // Include: active tasks (not yet scheduled or auto-scheduled, not manually locked)
-  // If a task has subtasks, include the subtasks instead of the parent.
-  const { data: taskRows } = await db
-    .from('tasks')
-    .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
+  // ── 1. Everything independent, at once ─────────────────────────────────────
+  // These were sequential awaits: ~2s of round trips for work that has no
+  // ordering between it. Only the subtask query (needs parent ids) and freeBusy
+  // (needs the token) have to follow.
+  const [
+    token,
+    { workingHours, energySchedule, schedulerConfig },
+    { data: taskRows },
+    habitCandidates,
+    { data: eventRows },
+    { data: bookedRows },
+  ] = await Promise.all([
+    getValidToken(),
+    fetchSchedulingInputs(),
+    db.from('tasks')
+    .select('*')                        // '*' so pre-0009 rows (no location/span) still load
     .in('status', ['inbox', 'active'])
     .is('parent_id', null)              // top-level tasks only here
     .neq('type', 'habit')               // habits are expanded per weekly target below
     .or('scheduled_by.is.null,scheduled_by.eq.auto')  // exclude manual locks; neq would drop NULLs
-    .order('urgency_score', { ascending: false })
+    .order('urgency_score', { ascending: false }),
+    buildHabitCandidates(db),
+    db.from('calendar_events')
+      .select('id, title, start_time, end_time')
+      .gte('start_time', timeMin.toISOString())
+      .lte('start_time', timeMax.toISOString()),
+    db.from('tasks')
+      .select('id, title, scheduled_start, scheduled_end')
+      .not('scheduled_start', 'is', null)
+      .gte('scheduled_start', timeMin.toISOString())
+      .lte('scheduled_start', timeMax.toISOString()),
+  ])
+
+  if (!token) return { scheduled: [], unschedulable: [], existing: [], error: 'Google Calendar not connected' }
 
   // Fetch subtasks for tasks that have them
   const parentIds = (taskRows ?? []).map(t => t.id)
   const { data: subtaskRows } = parentIds.length > 0
     ? await db
         .from('tasks')
-        .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date, parent_id, scheduled_by')
+        .select('*')
         .in('parent_id', parentIds)
+        // Creation order is the running order for a staged chain
+        .order('created_at', { ascending: true })
         .in('status', ['inbox', 'active'])
         .or('scheduled_by.is.null,scheduled_by.eq.auto')
     : { data: [] }
@@ -241,40 +359,59 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       energy_required:  t.energy_required,
       duration_minutes: duration,
       due_date:         t.due_date,
+      location:         t.location ?? 'anywhere',
+      spanMinutes:      t.span_minutes ?? undefined,
+      bufferMinutes:    t.buffer_minutes ?? undefined,
+      notBefore:        t.start_date ?? undefined,
     })
   }
+
+  const parents = new Map((taskRows ?? []).map(t => [t.id, t]))
+
+  // Running order within each parent, taken from the created_at order above
+  const chainIndex = new Map<string, number>()
 
   for (const s of subtaskRows ?? []) {
+    chainIndex.set(s.parent_id, (chainIndex.get(s.parent_id) ?? -1) + 1)
     const duration = s.adjusted_minutes ?? s.estimated_minutes
     if (!duration) continue
+    const parent = parents.get(s.parent_id)
     candidates.push({
       id:               s.id,
-      title:            s.title,
-      priority:         s.priority,
-      urgency_score:    s.urgency_score,
+      title:            blockLabel(s.title, parent?.title),
+      // Importance belongs to the parent. Subtasks are created at priority 1
+      // with urgency 0, so a chain under a critical task used to sort to the
+      // very bottom and get whatever slots were left — the opposite of what
+      // marking the parent P4 is supposed to do.
+      priority:         parent?.priority ?? s.priority,
+      urgency_score:    parent?.urgency_score ?? s.urgency_score,
       energy_required:  s.energy_required,
       duration_minutes: duration,
-      due_date:         s.due_date,
+      // Read from the parent every run rather than trusting the copy made at
+      // creation: a subtask can never be due later than the work it's part of.
+      due_date:         parent?.due_date ?? s.due_date,
+      // Subtasks of one parent chain together — no buffer between them, one
+      // buffer around the run.
+      chainGroup:       s.parent_id,
+      gapAfterMinutes:  s.gap_after_minutes ?? undefined,
+      chainIndex:       chainIndex.get(s.parent_id)!,
+      // Location follows the parent unless the subtask sets its own: the steps
+      // of a laundry cycle happen wherever the laundry is.
+      location:         s.location && s.location !== 'anywhere'
+                          ? s.location
+                          : (parent?.location ?? 'anywhere'),
+      spanMinutes:      s.span_minutes ?? undefined,
+      bufferMinutes:    s.buffer_minutes ?? undefined,
+      // A step can't begin before the work as a whole is available
+      notBefore:        parent?.start_date ?? s.start_date ?? undefined,
     })
   }
 
-  // ── 3b. Habit sessions ─────────────────────────────────────────────────────
-  // A habit with a weekly target and a session length becomes N candidates —
-  // one per session still owed this week. They share a spreadGroup so the
-  // scheduler puts them on different days, and carry no due_date so they can
-  // land anywhere in the horizon (the habit row's own due_date is just the
-  // next occurrence marker and would otherwise pin every session to one day).
-  const habitCandidates = await buildHabitCandidates(db)
+  // Habit sessions — one candidate per session still owed this week (fetched
+  // above, alongside everything else).
   candidates.push(...habitCandidates)
 
   // ── 4. Busy intervals from GCal ────────────────────────────────────────────
-  const now      = new Date()
-  const dayStr   = startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(now)
-  // Use local midnight so UTC+ users don't miss morning busy events
-  const timeMin  = new Date(localMidnight(dayStr, timezone))
-  const timeMax  = new Date(timeMin)
-  timeMax.setDate(timeMax.getDate() + horizonDays + 1)
-
   const busyIntervals = await fetchFreeBusy(token.access_token, timeMin, timeMax)
 
   // ── 5. Run algorithm ───────────────────────────────────────────────────────
@@ -298,7 +435,21 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
     energyMatch:   b.energyMatch,
   }))
 
-  return { scheduled: serialized, unschedulable }
+  // ── 6. What's already on the week ──────────────────────────────────────────
+  // Fetched up front; shaped here. Returned so the review shows the whole
+  // horizon, not only the new blocks.
+  const existing: ExistingItem[] = [
+    ...(eventRows ?? []).map(e => ({
+      id: e.id, title: e.title,
+      startISO: e.start_time, endISO: e.end_time, kind: 'event' as const,
+    })),
+    ...(bookedRows ?? []).map(t => ({
+      id: t.id, title: t.title,
+      startISO: t.scheduled_start!, endISO: t.scheduled_end!, kind: 'scheduled' as const,
+    })),
+  ].sort((a, b) => a.startISO.localeCompare(b.startISO))
+
+  return { scheduled: serialized, unschedulable, existing }
 }
 
 // ── confirmSchedule ───────────────────────────────────────────────────────────
@@ -343,9 +494,9 @@ export async function confirmSchedule(
   )
   const sweepEnd = new Date(new Date(lastEnd).getTime() + 90 * 24 * 60 * 60 * 1000).toISOString()
 
-  let staleEventIds: string[] = []
+  let staleEvents: { id: string; taskId: string | null }[] = []
   try {
-    staleEventIds = await listAutoScheduledEventIds(token.access_token, nowISO, sweepEnd)
+    staleEvents = await listAutoScheduledEvents(token.access_token, nowISO, sweepEnd)
   } catch (err) {
     // A failed sweep must not block scheduling — worst case some old blocks
     // linger, which is what the previous behaviour did anyway.
@@ -356,10 +507,21 @@ export async function confirmSchedule(
   const taskIds = [...new Set(blocks.map(b => b.taskId))]
   const { data: taskRows } = await db
     .from('tasks')
-    .select('id, title, description, priority')
+    .select('id, title, description, priority, parent_id')
     .in('id', taskIds)
 
-  const taskMap = new Map((taskRows ?? []).map(t => [t.id, t]))
+  // Parent titles for any subtasks in this batch, so the calendar event carries
+  // the same "Parent - Subtask" label the preview showed.
+  const parentIds = [...new Set((taskRows ?? []).map(t => t.parent_id).filter(Boolean))] as string[]
+  const { data: parentRows } = parentIds.length > 0
+    ? await db.from('tasks').select('id, title').in('id', parentIds)
+    : { data: [] }
+  const parentTitles = new Map((parentRows ?? []).map(p => [p.id, p.title as string]))
+
+  const taskMap = new Map((taskRows ?? []).map(t => [
+    t.id,
+    { ...t, title: blockLabel(t.title, t.parent_id ? parentTitles.get(t.parent_id) : null) },
+  ]))
 
   // ── 3. Create new GCal events + update DB ────────────────────────────────
   let confirmed = 0
@@ -404,25 +566,44 @@ export async function confirmSchedule(
     }).eq('id', taskId)
   }
 
-  // ── 4. Delete the previous auto-schedule ──────────────────────────────────
-  // Only once the new events exist. Skipped when creates were attempted and all
-  // of them failed, so a total GCal outage leaves the old schedule intact — but
-  // an empty proposal is a deliberate "clear everything" and still sweeps.
-  if (staleEventIds.length > 0 && (confirmed > 0 || blocks.length === 0)) {
+  // ── 4. Replace the previous blocks for the tasks we just rescheduled ──────
+  // Scoped to the approved tasks, not the whole horizon: the user can approve
+  // part of a proposal, and blocks for work they didn't approve must survive
+  // untouched rather than being swept because they weren't in this batch.
+  // Events carry plannerTaskId, so a task's older blocks are identifiable even
+  // though the row only remembers one id.
+  //
+  // An empty `blocks` is still a deliberate "clear the auto-schedule".
+  const approvedTaskIds = new Set(blocks.map(b => b.taskId))
+  const justCreated     = new Set([...rowWrites.values()].map(w => w.eventId))
+
+  const toDelete = blocks.length === 0
+    ? staleEvents
+    : staleEvents.filter(e =>
+        e.taskId && approvedTaskIds.has(e.taskId) && !justCreated.has(e.id))
+
+  if (toDelete.length > 0 && (confirmed > 0 || blocks.length === 0)) {
     await Promise.allSettled(
-      staleEventIds.map(id => deleteTaskBlock(token.access_token, id).catch(() => {}))
+      toDelete.map(e => deleteTaskBlock(token.access_token, e.id).catch(() => {}))
     )
   }
 
-  // Clear DB fields for tasks that were auto-scheduled before but aren't now
-  const stillScheduled = [...rowWrites.keys()]
-  const clearQuery = db
-    .from('tasks')
-    .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
-    .eq('scheduled_by', 'auto')
-  await (stillScheduled.length > 0
-    ? clearQuery.not('id', 'in', `(${stillScheduled.join(',')})`)
-    : clearQuery)
+  // Clear DB fields only for tasks whose blocks we actually removed
+  const clearedIds = blocks.length === 0
+    ? null                                   // clearing everything
+    : [...new Set(toDelete.map(e => e.taskId!))].filter(id => !rowWrites.has(id))
+
+  if (clearedIds === null) {
+    await db
+      .from('tasks')
+      .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
+      .eq('scheduled_by', 'auto')
+  } else if (clearedIds.length > 0) {
+    await db
+      .from('tasks')
+      .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null, scheduled_by: null })
+      .in('id', clearedIds)
+  }
 
   revalidatePath('/tasks')
   revalidatePath('/projects')
@@ -443,6 +624,8 @@ export async function markScheduleManual(taskId: string): Promise<void> {
 // ── planDay ───────────────────────────────────────────────────────────────────
 
 export interface DayPlan {
+  /** Already on the day — context for the calendar view. */
+  existing:       ExistingItem[]
   proposedBlocks: SerializedBlock[]
   attackList:     SerializedAttackItem[]
   unschedulable:  SchedulerTask[]
@@ -459,8 +642,8 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
   const dayStr = dateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
 
   // Propose blocks for the chosen day (internally fetches scheduling inputs)
-  const { scheduled, unschedulable, error } = await proposeSchedule(1, timezone, dayStr)
-  if (error) return { proposedBlocks: [], attackList: [], unschedulable: [], error }
+  const { scheduled, unschedulable, existing, error } = await proposeSchedule(1, timezone, dayStr)
+  if (error) return { existing: [], proposedBlocks: [], attackList: [], unschedulable: [], error }
 
   // Fetch only the energy schedule for buildAttackList — avoids double-fetching
   // working hours and config that proposeSchedule already consumed above.
@@ -471,26 +654,38 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
     energy_level: r.energy_level as 'low' | 'medium' | 'high',
   }))
 
-  // Fetch tasks due on or before the chosen day.
-  // due_dates are stored as YYYY-MM-DDT00:00:00Z (UTC midnight of the local date).
-  // Use `lte(dayStr + 'T00:00:00Z')` — tasks stored exactly at that midnight ARE included
-  // (e.g. "2026-09-15T00:00:00Z" <= "2026-09-15T00:00:00Z" → true).
-  const { data: todayTasks } = await db
+  // Candidates for the day's ranked list.
+  //
+  // This used to filter `due_date <= day`, which silently dropped two whole
+  // categories: anything with no due date — every habit — and anything the
+  // scheduler pulled forward from later to fill the day. The blocks above
+  // already include both, so the list disagreed with the plan beside it.
+  //
+  // Now: due today or earlier, or undated, or scheduled today. Far-future work
+  // stays out unless it actually earned a block.
+  const { data: allTasks } = await db
     .from('tasks')
-    .select('id, title, priority, urgency_score, energy_required, estimated_minutes, adjusted_minutes, due_date')
+    .select('*')
     .in('status', ['inbox', 'active'])
-    .lte('due_date', dayStr + 'T00:00:00Z')
+    .is('parent_id', null)
     .order('urgency_score', { ascending: false })
 
-  const schedulerTasks: SchedulerTask[] = (todayTasks ?? []).map(t => ({
-    id:               t.id,
-    title:            t.title,
-    priority:         t.priority,
-    urgency_score:    t.urgency_score,
-    energy_required:  t.energy_required,
-    duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
-    due_date:         t.due_date,
-  }))
+  const dayCutoff   = dayStr + 'T00:00:00Z'
+  const blockedToday = new Set(scheduled.map(b => b.taskId))
+
+  const schedulerTasks: SchedulerTask[] = (allTasks ?? [])
+    .filter(t => !t.due_date || t.due_date <= dayCutoff || blockedToday.has(t.id))
+    .map(t => ({
+      id:               t.id,
+      title:            t.title,
+      priority:         t.priority,
+      // Habits store 0 — they aren't deadline work — which would bury them at
+      // the bottom of the list. Same baseline the scheduler gives them.
+      urgency_score:    t.type === 'habit' ? t.priority * 10 : t.urgency_score,
+      energy_required:  t.energy_required,
+      duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
+      due_date:         t.due_date,
+    }))
 
   // All scheduled blocks for today (already in DB + newly proposed)
   const { data: existingScheduled } = await db
@@ -525,7 +720,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
     rank:              item.rank,
   }))
 
-  return { proposedBlocks: scheduled, attackList, unschedulable, error: undefined }
+  return { existing, proposedBlocks: scheduled, attackList, unschedulable, error: undefined }
 }
 
 // ── Settings actions ──────────────────────────────────────────────────────────
@@ -574,6 +769,76 @@ export async function saveSchedulingConfig(
     await db.from('user_scheduling_config').insert({ max_session_minutes, buffer_minutes })
   }
   revalidatePath('/settings')
+}
+
+export interface DailyBreak {
+  id:               number
+  label:            string
+  duration_minutes: number
+  start_hour:       number
+  start_minute:     number
+  end_hour:         number
+  end_minute:       number
+  cooldown_minutes: number
+  enabled:          boolean
+}
+
+export async function listDailyBreaks(): Promise<DailyBreak[]> {
+  const db = createServiceClient()
+  const { data } = await db
+    .from('user_daily_breaks')
+    .select('*')
+    .order('start_hour')
+    .then(r => r, () => ({ data: null }))   // pre-0008: no table yet
+  return (data ?? []) as DailyBreak[]
+}
+
+export async function saveDailyBreak(
+  id: number,
+  patch: Partial<Omit<DailyBreak, 'id'>>,
+): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const { error } = await db.from('user_daily_breaks').update(patch).eq('id', id)
+  if (error) {
+    console.error('saveDailyBreak:', error.message)
+    return { error: 'Could not save — run migration 0008_daily_breaks.sql first.' }
+  }
+  revalidatePath('/settings')
+  return {}
+}
+
+/** Read the configured first day of the week (Monday until 0006 is applied). */
+export async function getWeekStartDay(): Promise<number> {
+  return fetchWeekStartDay(createServiceClient())
+}
+
+/**
+ * Save the preferred first day of the week. Habit weekly targets count from
+ * this day, so changing it re-derives "this week" everywhere at once.
+ */
+export async function saveWeekStartDay(day: number): Promise<{ error?: string }> {
+  if (!isWeekStartDay(day)) return { error: 'Unsupported day' }
+
+  const db = createServiceClient()
+  const { data } = await db.from('user_scheduling_config').select('id').limit(1).single()
+
+  const { error } = data
+    ? await db.from('user_scheduling_config').update({ week_start_day: day }).eq('id', data.id)
+    : await db.from('user_scheduling_config').insert({
+        max_session_minutes: 90, buffer_minutes: 15, week_start_day: day,
+      })
+
+  if (error) {
+    // The column is missing until migration 0006 runs. Reading falls back to
+    // Monday, so the app still works — only the preference can't be stored.
+    console.error('saveWeekStartDay:', error.message)
+    return { error: 'Could not save — run migration 0006_week_start_day.sql first.' }
+  }
+
+  revalidatePath('/settings')
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  return {}
 }
 
 // ── Subtask helpers ───────────────────────────────────────────────────────────

@@ -5,8 +5,12 @@ import {
   saveWorkingHours,
   saveEnergyLevel,
   saveSchedulingConfig,
+  saveWeekStartDay,
+  saveDailyBreak,
+  type DailyBreak,
 } from '@/app/actions/scheduling'
 import { TIME_BLOCK_DEFS, type TimeBlockId, type WorkingHours, type EnergyScheduleEntry } from '@/lib/scheduler'
+import { WEEK_START_OPTIONS, weekDayOrder } from '@/lib/week'
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const ENERGY_LEVELS = ['low', 'medium', 'high'] as const
@@ -34,7 +38,7 @@ function parseTime(s: string): [number, number] {
 
 // ── Working hours ─────────────────────────────────────────────────────────────
 
-function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
+function WorkingHoursSection({ initial, weekStartDay }: { initial: WorkingHours[]; weekStartDay: number }) {
   const initRows = (() => {
     const map = new Map(initial.map(r => [r.day_of_week, r]))
     return Array.from({ length: 7 }, (_, i) => map.get(i) ?? {
@@ -77,7 +81,12 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">Working hours</label>
+        <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+          Working hours
+          <span className="ml-1.5 normal-case font-normal text-slate-300 dark:text-slate-600">
+            end before start = past midnight
+          </span>
+        </label>
         <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
           {(['simple', 'custom'] as const).map(m => (
             <button
@@ -159,7 +168,9 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {rows.map(row => (
+          {weekDayOrder(weekStartDay).map(dow => {
+            const row = rows.find(r => r.day_of_week === dow)!
+            return (
             <div key={row.day_of_week} className="flex items-center gap-3 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
               <span className="text-xs font-medium text-slate-600 dark:text-slate-400 w-8 shrink-0">{DAYS[row.day_of_week]}</span>
               <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
@@ -191,8 +202,13 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
                 }}
                 className="flex-1 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 disabled:opacity-40"
               />
+              {/* An end at or before the start means the day runs past midnight */}
+              {(row.end_hour * 60 + row.end_minute) <= (row.start_hour * 60 + row.start_minute) && (
+                <span className="text-[10px] text-accent-500 shrink-0 font-medium">next day</span>
+              )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
@@ -201,7 +217,7 @@ function WorkingHoursSection({ initial }: { initial: WorkingHours[] }) {
 
 // ── Energy grid ───────────────────────────────────────────────────────────────
 
-function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
+function EnergyGrid({ initial, weekStartDay }: { initial: EnergyScheduleEntry[]; weekStartDay: number }) {
   // energy[dow][timeBlockId] → level
   const [energy, setEnergy] = useState<Record<number, Record<TimeBlockId, EnergyLevel>>>(() => {
     const map: Record<number, Record<TimeBlockId, EnergyLevel>> = {}
@@ -242,8 +258,8 @@ function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
           <thead>
             <tr>
               <th className="text-left py-1 pr-3 text-slate-400 font-medium w-28">Time</th>
-              {DAYS.map(d => (
-                <th key={d} className="text-center py-1 px-1 text-slate-400 font-medium">{d}</th>
+              {weekDayOrder(weekStartDay).map(dow => (
+                <th key={dow} className="text-center py-1 px-1 text-slate-400 font-medium">{DAYS[dow]}</th>
               ))}
             </tr>
           </thead>
@@ -251,7 +267,7 @@ function EnergyGrid({ initial }: { initial: EnergyScheduleEntry[] }) {
             {TIME_BLOCK_DEFS.map(block => (
               <tr key={block.id}>
                 <td className="py-0.5 pr-3 text-slate-500 font-medium whitespace-nowrap">{block.label}</td>
-                {DAYS.map((_, dow) => {
+                {weekDayOrder(weekStartDay).map(dow => {
                   const level = energy[dow]?.[block.id] ?? 'medium'
                   return (
                     <td key={dow} className="py-0.5 px-0.5 text-center">
@@ -340,11 +356,157 @@ function SessionConfig({
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// ── Meal breaks ───────────────────────────────────────────────────────────────
+
+function BreaksConfig({ initial }: { initial: DailyBreak[] }) {
+  const [rows,  setRows]  = useState(initial)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [, startTransition] = useTransition()
+
+  function patch(id: number, p: Partial<DailyBreak>) {
+    const previous = rows
+    const next = rows.map(r => (r.id === id ? { ...r, ...p } : r))
+    setRows(next)
+    setError(null)
+    startTransition(async () => {
+      const res = await saveDailyBreak(id, p)
+      if (res.error) { setRows(previous); setError(res.error); return }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  if (rows.length === 0) return null
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+          Meal breaks
+        </h3>
+        {saved && <span className="text-xs text-accent-500 font-medium">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Protected time the scheduler keeps free. Each break is placed anywhere inside
+        its window. The cooldown blocks habits marked “not right after a meal”.
+      </p>
+
+      <div className="flex flex-col gap-2">
+        {rows.map(b => (
+          <div
+            key={b.id}
+            className="flex items-center gap-2 flex-wrap p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+          >
+            <label className="flex items-center gap-2 cursor-pointer shrink-0 w-24">
+              <input
+                type="checkbox"
+                checked={b.enabled}
+                onChange={e => patch(b.id, { enabled: e.target.checked })}
+                className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 accent-accent-500"
+              />
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{b.label}</span>
+            </label>
+
+            <input
+              type="number" min={5} step={5} value={b.duration_minutes}
+              onChange={e => patch(b.id, { duration_minutes: parseInt(e.target.value) || 0 })}
+              className="w-14 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+            />
+            <span className="text-xs text-slate-400">min, between</span>
+
+            <input
+              type="time" value={toTimeStr(b.start_hour, b.start_minute)}
+              onChange={e => { const [h, m] = parseTime(e.target.value); patch(b.id, { start_hour: h, start_minute: m }) }}
+              className="border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+            <span className="text-xs text-slate-400">and</span>
+            <input
+              type="time" value={toTimeStr(b.end_hour, b.end_minute)}
+              onChange={e => { const [h, m] = parseTime(e.target.value); patch(b.id, { end_hour: h, end_minute: m }) }}
+              className="border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+
+            <span className="text-xs text-slate-400 ml-auto">cooldown</span>
+            <input
+              type="number" min={0} step={15} value={b.cooldown_minutes}
+              onChange={e => patch(b.id, { cooldown_minutes: parseInt(e.target.value) || 0 })}
+              className="w-14 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 font-mono"
+            />
+            <span className="text-xs text-slate-400">min</span>
+          </div>
+        ))}
+      </div>
+
+      {error && <p className="text-xs text-amber-500 mt-2">{error}</p>}
+    </div>
+  )
+}
+
+// ── Week start ────────────────────────────────────────────────────────────────
+
+function WeekStartConfig({ initial }: { initial: number }) {
+  const [day,   setDay]   = useState(initial)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [, startTransition] = useTransition()
+
+  function handleSelect(next: number) {
+    const previous = day
+    setDay(next)
+    setError(null)
+    startTransition(async () => {
+      const res = await saveWeekStartDay(next)
+      if (res.error) {
+        setDay(previous)          // roll back so the UI never claims a save that failed
+        setError(res.error)
+        return
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    })
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-1">
+        <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+          Week starts on
+        </h3>
+        {saved && <span className="text-xs text-accent-500 font-medium">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-slate-400 mb-3">
+        Habit weekly targets count from this day — “4× a week” resets here.
+      </p>
+
+      <div className="flex gap-2">
+        {WEEK_START_OPTIONS.map(opt => (
+          <button
+            key={opt.id}
+            onClick={() => handleSelect(opt.id)}
+            className={`px-4 py-2 rounded-xl border text-xs font-medium transition-colors ${
+              day === opt.id
+                ? 'border-accent-500 bg-accent-50 dark:bg-accent-950 text-accent-700 dark:text-accent-300'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="text-xs text-amber-500 mt-2">{error}</p>}
+    </div>
+  )
+}
+
 interface Props {
   workingHours:   WorkingHours[]
   energySchedule: EnergyScheduleEntry[]
   maxSession:     number
   bufferMinutes:  number
+  weekStartDay:   number
+  breaks:         DailyBreak[]
 }
 
 export default function SchedulingSettings({
@@ -352,6 +514,8 @@ export default function SchedulingSettings({
   energySchedule,
   maxSession,
   bufferMinutes,
+  weekStartDay,
+  breaks,
 }: Props) {
   return (
     <section>
@@ -361,9 +525,11 @@ export default function SchedulingSettings({
       </p>
 
       <div className="flex flex-col gap-8">
-        <WorkingHoursSection initial={workingHours} />
-        <EnergyGrid initial={energySchedule} />
+        <WorkingHoursSection initial={workingHours} weekStartDay={weekStartDay} />
+        <EnergyGrid initial={energySchedule} weekStartDay={weekStartDay} />
         <SessionConfig initialMax={maxSession} initialBuffer={bufferMinutes} />
+        <BreaksConfig initial={breaks} />
+        <WeekStartConfig initial={weekStartDay} />
       </div>
     </section>
   )

@@ -212,12 +212,12 @@ export async function updateTaskBlock(
  * queries by tag rather than by stored id, it also sweeps up blocks orphaned by
  * earlier runs that could not record every event they created.
  */
-export async function listAutoScheduledEventIds(
+export async function listAutoScheduledEvents(
   accessToken: string,
   timeMinISO:  string,
   timeMaxISO:  string,
-): Promise<string[]> {
-  const ids: string[] = []
+): Promise<{ id: string; taskId: string | null }[]> {
+  const out: { id: string; taskId: string | null }[] = []
   let pageToken: string | undefined
 
   do {
@@ -237,11 +237,17 @@ export async function listAutoScheduledEventIds(
     if (!res.ok) throw new Error(`GCal listEvents ${res.status}: ${await res.text()}`)
 
     const data = await res.json()
-    for (const item of data.items ?? []) if (item.id) ids.push(item.id as string)
+    for (const item of data.items ?? []) {
+      if (!item.id) continue
+      out.push({
+        id: item.id as string,
+        taskId: item.extendedProperties?.private?.plannerTaskId ?? null,
+      })
+    }
     pageToken = data.nextPageToken
   } while (pageToken)
 
-  return ids
+  return out
 }
 
 /**

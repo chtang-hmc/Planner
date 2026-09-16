@@ -6,6 +6,7 @@ import { ACCENTS, AccentId, applyAccent, getStoredAccent } from '@/components/Pr
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
+import type { DailyBreak } from '@/app/actions/scheduling'
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 
@@ -80,9 +81,10 @@ function AccentSection() {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Accent color</h2>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Color theme</h2>
       <p className="text-xs text-slate-400 mb-4">
-        Tints navigation, focus rings, and interactive elements.
+        Sets the accent for buttons and navigation, and tints every surface,
+        border and label to match. Works with both light and dark.
       </p>
 
       <div className="flex gap-3 flex-wrap">
@@ -349,11 +351,13 @@ interface SettingsViewProps {
   energySchedule:   EnergyScheduleEntry[]
   maxSession:       number
   bufferMinutes:    number
+  weekStartDay:     number
+  breaks:           DailyBreak[]
 }
 
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
-  workingHours, energySchedule, maxSession, bufferMinutes,
+  workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
 }: SettingsViewProps) {
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
@@ -382,6 +386,8 @@ export default function SettingsView({
           energySchedule={energySchedule}
           maxSession={maxSession}
           bufferMinutes={bufferMinutes}
+          weekStartDay={weekStartDay}
+          breaks={breaks}
         />
       </div>
     </div>
