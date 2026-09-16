@@ -19,18 +19,14 @@ export default async function HabitsPage() {
 
   // When does tomorrow's occurrence stop being hidden?
   //
-  // A spawned habit's due_date is written at *local* midnight now, but rows
-  // spawned before that change sit at *UTC* midnight — the same calendar day
-  // meaning a different instant. Reading an old row as a local one shows
-  // tomorrow's habit today; reading a new one as UTC does the same east of the
-  // meridian. So a habit becomes available only once its day has begun under
-  // both readings: the earlier threshold of the two, which is what this min is.
-  // No backfill needed, and it stays correct once every row is local.
-  const tomorrow  = addDays(today, 1)
-  const available = [
-    startOfLocalDay(tomorrow, tz).toISOString(),
-    `${tomorrow}T00:00:00.000Z`,
-  ].sort()[0]
+  // A pending habit is available once its day has begun locally. Requiring the
+  // *UTC* day to have begun as well — an earlier attempt at tolerating rows
+  // spawned before the timezone change — hid working habits for most of the
+  // day: a row due `2026-09-17T00:00:00Z` is 17:00 on the 16th in Los Angeles,
+  // so Gym and Piano disappeared from the page every morning and only returned
+  // at 5pm. Costing a whole day is far worse than the thing it guarded against,
+  // which is a UTC-midnight row surfacing a few hours early on its eve.
+  const available = startOfLocalDay(addDays(today, 1), tz).toISOString()
 
   const [
     { data: activeHabits },

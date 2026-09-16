@@ -84,15 +84,22 @@ export default function LogHabitModal({
     if (!start || inFuture) return
     setError(null)
     startTransition(async () => {
-      const res = await logHabitSession(habit.id, {
-        startISO: start!.toISOString(),
-        minutes,
-        addToCalendar: toCalendar && gcalWriteEnabled,
-      })
-      // No dateStr back means nothing was written at all.
-      if (!res.dateStr) { setError(res.error ?? 'Could not log that session'); return }
-      if (res.error)    { setPartial({ dateStr: res.dateStr, message: res.error }); return }
-      onLogged(res.dateStr)
+      try {
+        const res = await logHabitSession(habit.id, {
+          startISO: start!.toISOString(),
+          minutes,
+          addToCalendar: toCalendar && gcalWriteEnabled,
+        })
+        // No dateStr back means nothing was written at all.
+        if (!res.dateStr) { setError(res.error ?? 'Could not log that session'); return }
+        if (res.error)    { setPartial({ dateStr: res.dateStr, message: res.error }); return }
+        onLogged(res.dateStr)
+      } catch (err) {
+        // logHabitSession delegates to completeTask, which throws on a DB
+        // error rather than returning one. Uncaught, that leaves the button
+        // stuck on "Logging…" with nothing said.
+        setError(err instanceof Error ? err.message : 'Could not log that session')
+      }
     })
   }
 

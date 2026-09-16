@@ -110,7 +110,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
-  const [relevantOnly, setRelevantOnly]   = useState(false)
+  const [relevantOnly, setRelevantOnly]   = useState(true)
   // Parents whose subtasks are showing. Tracking what's OPEN rather than what's
   // shut means the default — an empty set — is everything tucked away.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -273,10 +273,14 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     return ordered.map(g => ({
       ...g,
       key:     g.project.id || 'inbox',
+      // A parent that has subtasks is replaced by them when scheduling, so its
+      // own estimate is the same work described twice — counting both made a
+      // 135-minute reading list read as 270.
       minutes: g.rows.reduce((s, t) => {
         const kids = childrenOf.get(t.id) ?? []
-        return s + [t, ...kids].reduce(
-          (n, r) => n + (r.adjusted_minutes ?? r.estimated_minutes ?? 0), 0)
+        return s + (kids.length > 0
+          ? kids.reduce((n, r) => n + (r.adjusted_minutes ?? r.estimated_minutes ?? 0), 0)
+          : (t.adjusted_minutes ?? t.estimated_minutes ?? 0))
       }, 0),
     }))
   })()
