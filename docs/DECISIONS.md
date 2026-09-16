@@ -639,9 +639,13 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 ### Subtasks inherit from their parent
 
-A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **priority** and **urgency**.
+A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **energy**, **priority** and **urgency curve**. All of them are set at creation and cascaded by `updateTask` when the parent changes; without the cascade they keep whatever was copied on day one and drift.
 
-Priority and urgency are read from the parent at scheduling time rather than copied. Subtasks are created at priority 1 with urgency 0, so a chain under a task marked P4 used to sort to the very bottom and get whatever slots were left — the exact opposite of what marking the parent critical is for. Project, deadline and location are set at creation and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
+**Urgency is derived, not copied.** With the parent's priority, deadline and curve in place a subtask computes to the same score, and stays right when either input moves — `computeUrgency` ignores `created_at` entirely, which is what makes this safe. Copying the score itself is how it would drift.
+
+Priority was the last input to join that list, and the delay was expensive. Subtasks were born at priority 1 with urgency 0, so a row could claim it did not matter while the thing it belonged to was due today: five Public Policy readings sat at urgency 10 under a parent at 80. Three separate readers grew a workaround for it — the scheduler resolving upward, `UpcomingView.dueDay()` falling back to the parent, the relevance filter checking the parent — and a fourth would have been needed for the Home page. Fixing the data removed the need for any of them.
+
+The scheduler still reads importance from the parent on every run as belt and braces. It costs nothing and it is what kept this from being a visible bug.
 
 The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
 
