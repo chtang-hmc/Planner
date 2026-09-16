@@ -128,6 +128,20 @@ export async function completeTask(
       alreadyPending = (pending?.length ?? 0) > 0
     }
 
+    // A recurring occurrence isn't available the moment the last one is done.
+    // Grading due each Friday can't start again until the week it covers has
+    // begun, so the new occurrence defers to the day after the one just closed.
+    // Without this the scheduler sees a pending task with free time and books
+    // next week's grading today.
+    let nextStart: string | null = null
+    if (nextDue && taskRow.rrule && taskRow.due_date) {
+      const prevDue = new Date(taskRow.due_date)
+      prevDue.setUTCDate(prevDue.getUTCDate() + 1)
+      prevDue.setUTCHours(0, 0, 0, 0)
+      // Never defer past the new deadline — that would make it unschedulable
+      nextStart = prevDue.toISOString() < nextDue ? prevDue.toISOString() : null
+    }
+
     if (nextDue && !alreadyPending) {
       const urgency_score = (isHabit && !taskRow.rrule) ? 0 : computeUrgency({
         priority:      taskRow.priority as Task['priority'],
@@ -150,6 +164,7 @@ export async function completeTask(
         rrule:              taskRow.rrule,
         weekly_target:      taskRow.weekly_target ?? null,
         due_date:           nextDue,
+        ...(nextStart ? { start_date: nextStart } : {}),
         created_at:         now,
         // Only when set: sending the key unconditionally would fail every
         // insert on a pre-0007 database, which is how weekly_target once broke

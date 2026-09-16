@@ -151,6 +151,12 @@ export interface SchedulerTask {
    * everything else would scramble them.
    */
   chainIndex?:       number
+  /**
+   * Earliest this may be scheduled. The deadline says when work must be
+   * finished; this says when it may begin — next week's grading can't start
+   * before next week's homework exists, however much free time today has.
+   */
+  notBefore?:        string   // ISO
 }
 
 /** Where a task happens. 'anywhere' is compatible with everything. */
@@ -499,9 +505,9 @@ export function runScheduler(
    */
   function placeFixedSequence(
     members: SchedulerTask[],
-    opts: { bufferMs: number; loc: TaskLocation; avoidAfterBreaks: boolean; dueMs: number },
+    opts: { bufferMs: number; loc: TaskLocation; avoidAfterBreaks: boolean; dueMs: number; notBeforeMs: number },
   ): boolean {
-    const { bufferMs, loc, avoidAfterBreaks, dueMs } = opts
+    const { bufferMs, loc, avoidAfterBreaks, dueMs, notBeforeMs } = opts
 
     // Offset of each stage from the start of the sequence
     const offsets: number[] = []
@@ -516,7 +522,7 @@ export function runScheduler(
     for (const { fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks, dueMs })) {
       // Only the FIRST stage has to start inside this slot; later stages are
       // checked wherever their offset puts them, which may be hours later.
-      for (let t = Math.max(fS, nowMs); t + members[0].duration_minutes * 60_000 <= fE; t += STEP) {
+      for (let t = Math.max(fS, nowMs, notBeforeMs); t + members[0].duration_minutes * 60_000 <= fE; t += STEP) {
         if (t > dueMs) break
         const startAligned = Math.ceil(t / STEP) * STEP
         const ok = members.every((m, i) => intervalFree(
@@ -558,11 +564,12 @@ export function runScheduler(
     const loc      = members.find(m => (m.location ?? 'anywhere') !== 'anywhere')?.location ?? 'anywhere'
     const dueMs    = Math.min(...members.map(m => m.due_date ? endOfDayMs(m.due_date, tz) : Infinity))
     const avoidAfterBreaks = members.some(m => m.avoidAfterBreaks)
+    const notBeforeMs = Math.max(0, ...members.map(m => m.notBefore ? new Date(m.notBefore).getTime() : 0))
     const maxRunMs = config.maxSessionMinutes * 60_000
 
     // Fixed waits between stages make this a sequence, not a packing problem.
     if (members.some(m => (m.gapAfterMinutes ?? 0) > 0)) {
-      if (!placeFixedSequence(members, { bufferMs, loc, avoidAfterBreaks, dueMs })) {
+      if (!placeFixedSequence(members, { bufferMs, loc, avoidAfterBreaks, dueMs, notBeforeMs })) {
         unschedulable.push(...members)   // the whole cycle has to fit or none of it does
       }
       return
@@ -574,8 +581,9 @@ export function runScheduler(
       let best: { start: number; count: number; energyMatch: boolean } | null = null
 
       for (const { fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks, dueMs })) {
-        const start = Math.max(fS, nowMs)
+        const start = Math.max(fS, nowMs, notBeforeMs)
         if (start > dueMs) continue
+        if (start >= fE) continue
 
         // How many consecutive members fit here, capped by the sitting length?
         const room = Math.min(fE - start, maxRunMs)
@@ -643,6 +651,7 @@ export function runScheduler(
     // a zero-buffer chore can sit flush against its neighbours. Blocks placed
     // later still apply their own buffer against it.
     const bufferMs     = (task.bufferMinutes ?? config.bufferMinutes) * 60_000
+    const notBeforeMs  = task.notBefore ? new Date(task.notBefore).getTime() : 0
     const loc          = task.location ?? 'anywhere'
     const spanMs       = (task.spanMinutes ?? 0) * 60_000
     const totalSegs    = task.atomic ? 1 : Math.ceil(task.duration_minutes / config.maxSessionMinutes)
@@ -665,7 +674,7 @@ export function runScheduler(
       for (const { dayMs, fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks: task.avoidAfterBreaks, dueMs })) {
         if (usedDays?.has(dayMs)) continue   // one session per day per habit
 
-        const slotStart = Math.max(fS, nowMs)
+        const slotStart = Math.max(fS, nowMs, notBeforeMs)
         if (slotStart + segMs > fE) continue  // slot too small
         if (slotStart > dueMs) continue        // past deadline
 

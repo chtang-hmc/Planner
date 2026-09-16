@@ -111,6 +111,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0010_task_buffer_override.sql` — `tasks.buffer_minutes`; per-task transition padding (null = global default, 0 = none)
 - `0011_urgency_from_time_remaining.sql` — rewrites `recompute_urgency_scores()` to match the new urgency formula. **Must be applied** — the old function overwrites correct scores nightly.
 - `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
+- `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -447,6 +448,18 @@ When `completeTask()` is called on a task with an `rrule` or `type === 'habit'`:
 4. For **anytime habits** (`rrule` is null, `type === 'habit'`): next occurrence spawns for tomorrow so the card reappears daily.
 5. A new task row is inserted with the same title/project/priority/energy/estimate/rrule, `status: 'inbox'`, and `due_date` set to the next occurrence.
 6. `habit_streaks` is upserted: consecutive completion (last_completed === yesterday) increments the streak; otherwise resets to 1.
+
+### "Not before" (defer date)
+
+`tasks.start_date` (migration `0013`) — the earliest a task may be scheduled. The deadline says when work must be *finished*; this says when it may *begin*.
+
+Without it every pending task is available the instant it exists, so the scheduler fills spare capacity with work that can't actually be done yet: a weekly grading task completed on Monday immediately gets next week's occurrence booked, even though next week's homework doesn't exist. That's not a priority problem — no amount of deprioritising makes it correct — it's a availability problem, which is why it needs its own field rather than a nudge to the urgency formula.
+
+It deliberately does **not** stop the scheduler pulling *other* future work forward to fill space, which is wanted behaviour. Only work that is genuinely not yet doable opts out.
+
+**Recurring occurrences set it themselves.** When completing a recurring task spawns the next one, `start_date` defaults to the day after the occurrence just closed — a Thursday-weekly task completed this week becomes available Friday, not immediately. It's clamped to never exceed the new deadline, which would make the task unschedulable. Editable per task under "Not before".
+
+Subtasks take the parent's: a step can't begin before the work as a whole is available.
 
 ### Why anchor from `due_date`, not `today`?
 

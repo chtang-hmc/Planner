@@ -362,6 +362,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       location:         t.location ?? 'anywhere',
       spanMinutes:      t.span_minutes ?? undefined,
       bufferMinutes:    t.buffer_minutes ?? undefined,
+      notBefore:        t.start_date ?? undefined,
     })
   }
 
@@ -401,6 +402,8 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
                           : (parent?.location ?? 'anywhere'),
       spanMinutes:      s.span_minutes ?? undefined,
       bufferMinutes:    s.buffer_minutes ?? undefined,
+      // A step can't begin before the work as a whole is available
+      notBefore:        parent?.start_date ?? s.start_date ?? undefined,
     })
   }
 

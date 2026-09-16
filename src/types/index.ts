@@ -29,6 +29,7 @@ export interface Task {
   adjusted_minutes: number | null    // bias-corrected by system
   actual_minutes: number | null      // logged after completion
   due_date: string | null            // ISO timestamp
+  start_date: string | null          // earliest it may be scheduled; null = now
   urgency_score: number              // 0–100, recomputed nightly
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks

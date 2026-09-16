@@ -445,6 +445,7 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const [curve, setCurve]         = useState<UrgencyCurve>(task.urgency_curve)
   const [estimate, setEstimate]   = useState(String(task.estimated_minutes ?? ''))
   const [dueDate, setDueDate]     = useState(task.due_date ? task.due_date.slice(0, 10) : '')
+  const [startDate, setStartDate] = useState(task.start_date ? task.start_date.slice(0, 10) : '')
   const [rrule, setRrule]         = useState<string | null>(task.rrule ?? null)
   const [weeklyTarget, setWeeklyTarget] = useState<string>(String(task.weekly_target ?? ''))
   const [saved, setSaved]         = useState(false)
@@ -577,6 +578,7 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   function onBlurDesc()     { if (description !== (task.description ?? '')) save({ description: description || null }) }
   function onBlurEstimate() { const v = parseInt(estimate); if (!isNaN(v) && v !== task.estimated_minutes) save({ estimated_minutes: v }) }
   function onBlurDue()      { save({ due_date: dueDate ? new Date(dueDate).toISOString() : null }) }
+  function onBlurStart()    { save({ start_date: startDate ? new Date(startDate).toISOString() : null }) }
 
   return (
     /* Backdrop */
@@ -713,6 +715,27 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               </div>
             )}
           </div>
+
+          {/* Not before — when the work becomes available, as opposed to due */}
+          {!isHabit && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">
+                Not before
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                onBlur={onBlurStart}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Won't be scheduled before this, however much free time there is.
+                Recurring tasks set it themselves so the next one doesn't get
+                pulled forward.
+              </p>
+            </div>
+          )}
 
           {/* Project — habits are deliberately project-less */}
           {!isHabit && (
