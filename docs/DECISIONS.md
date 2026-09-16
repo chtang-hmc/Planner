@@ -758,6 +758,21 @@ Upcoming had its own `TaskRow`, so switching between List and Upcoming changed w
 
 **Dragging wraps the row rather than living inside it.** It is specific to this view, and putting it in `TaskRowProps` would mean building a drag handle four times for one caller. The row-level drag handle is gone; the whole row is the grip.
 
+### Sidebar: collapse and resize
+
+Width and collapsed state live in `localStorage` (`src/lib/sidebar-prefs.ts`), read the same way as the task layout — the server renders the defaults, `useSyncExternalStore` swaps in the stored values on hydrate, and anything changed since load is held in an override.
+
+- **Collapsed** is an icon-only rail (56px), not a hidden sidebar: nav glyphs, project colour dots and settings stay reachable, each carrying its label as a `title`. The project heading and the energy logger have no useful rail form and are dropped.
+- **Resize** drags a 6px grip on the right edge, clamped 168–400px. 168 is where project names stop being readable. Double-click resets to 208, the width it always had; arrow keys move it 16px at a time, so the grip is not mouse-only.
+- Pointer events, not mouse events, so a trackpad or pen drags too. The listeners are on the window because the pointer leaves a 6px grip almost immediately and a handler bound to the grip would stop receiving moves. Cursor and `user-select` are set on `<body>` for the duration so they survive the pointer crossing other elements.
+- The drag measures from the sidebar's **own left edge**, not from `clientX` alone. They are identical in the app, but assuming x=0 makes the component work in exactly one position and misbehave anywhere it is previewed or embedded — which is how the bug showed up.
+
+### Calendar panel
+
+Restyled to the row language: hairline-separated events on one surface instead of a filled, bordered box per event; 13px titles with 11px muted times; the same uppercase micro-label and day dividers as the Habits section. The `📅` prompt and the `↺` / `✕` glyph buttons became words.
+
+**Disconnect hides until the header is hovered.** Spelling it out made a destructive, rarely-wanted action louder than Sync, which is the opposite of what the glyph version achieved by accident.
+
 ### What all four dropped
 
 - **The urgency score and curve glyph** (`67`, `╱ ⌒ ⌐`). An internal model leaking into the UI — nobody acts on "67". It stays on the task detail panel.
