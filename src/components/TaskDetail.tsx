@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
-import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
+import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, duplicateTask, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
 import RecurrencePicker from '@/components/RecurrencePicker'
@@ -514,6 +514,20 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
     startTransition(async () => {
       const res = await setTaskPlacement(task.id, patch)
       if (res.error) setPlaceErr(res.error)
+    })
+  }
+
+  const [copying,  setCopying]  = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
+
+  function handleDuplicate() {
+    setCopying(true)
+    setCopyError(null)
+    startTransition(async () => {
+      const res = await duplicateTask(task.id)
+      setCopying(false)
+      if (res.error) { setCopyError(res.error); return }
+      onClose()          // the copy appears in the list behind the panel
     })
   }
 
@@ -1093,6 +1107,20 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               <p className="text-xs text-slate-400">Set a due date to add time pressure</p>
             )}
           </div>
+
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex items-center gap-3">
+            <button
+              onClick={handleDuplicate}
+              disabled={copying}
+              className="text-xs text-slate-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40 transition-colors"
+            >
+              {copying ? 'Copying…' : '⧉ Duplicate'}
+            </button>
+            <span className="text-[11px] text-slate-300 dark:text-slate-600">
+              copies settings and subtasks, not the schedule
+            </span>
+          </div>
+          {copyError && <p className="text-xs text-amber-500 -mt-2">{copyError}</p>}
 
           {isHabit && (
             <div className="border-t border-slate-100 dark:border-slate-800 pt-4">

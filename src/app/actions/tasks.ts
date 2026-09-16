@@ -210,6 +210,75 @@ export async function completeTask(
   revalidatePath('/habits')
 }
 
+/**
+ * Duplicate a task, with its subtasks.
+ *
+ * Copies by spreading the source row and stripping the fields that belong to
+ * *that* instance rather than to the shape of the work — id, timestamps,
+ * completion, and anything about where it was scheduled. Spreading rather than
+ * listing fields means a column added later is carried over automatically;
+ * listing them is how weekly_target got missed when habits gained targets.
+ */
+export async function duplicateTask(taskId: string): Promise<{ id?: string; error?: string }> {
+  const db = createServiceClient()
+
+  const { data: src, error: readErr } = await db
+    .from('tasks').select('*').eq('id', taskId).single()
+  if (readErr || !src) return { error: 'Task not found' }
+
+  const now = new Date().toISOString()
+
+  /** Strip the per-instance fields; keep everything describing the work. */
+  const shapeOf = (row: Record<string, unknown>) => {
+    const {
+      id: _id, created_at: _c, completed_at: _done, actual_minutes: _actual,
+      gcal_event_id: _ev, scheduled_start: _ss, scheduled_end: _se, scheduled_by: _sb,
+      ...shape
+    } = row
+    return shape
+  }
+
+  const urgency_score = src.type === 'habit' ? 0 : computeUrgency({
+    priority:      src.priority as Task['priority'],
+    urgency_curve: (src.urgency_curve ?? 'linear') as Task['urgency_curve'],
+    due_date:      src.due_date,
+    created_at:    now,
+  })
+
+  const { data: copy, error } = await db.from('tasks').insert({
+    ...shapeOf(src),
+    title:      `${src.title} (copy)`,
+    status:     'inbox',
+    urgency_score,
+    created_at: now,
+  }).select('id').single()
+
+  if (error || !copy) return { error: error?.message ?? 'Could not copy task' }
+
+  // Subtasks come along, in order — a checklist without its items is not a copy
+  const { data: subs } = await db
+    .from('tasks').select('*').eq('parent_id', taskId).order('created_at', { ascending: true })
+
+  if (subs && subs.length > 0) {
+    const { error: subErr } = await db.from('tasks').insert(
+      subs.map((sub, i) => ({
+        ...shapeOf(sub),
+        parent_id: copy.id,
+        status:    'active',
+        // Spaced so created_at ordering — which is the running order for a
+        // staged chain — survives the copy.
+        created_at: new Date(Date.now() + i).toISOString(),
+      })),
+    )
+    if (subErr) console.error('duplicateTask: subtasks failed:', subErr.message)
+  }
+
+  revalidatePath('/tasks')
+  revalidatePath('/projects')
+  revalidatePath('/habits')
+  return { id: copy.id }
+}
+
 // ── Habit maintenance ────────────────────────────────────────────────────────
 // A habit is a chain of task rows sharing a title (each completion closes one
 // row and spawns the next), so both of these operate on the title rather than a
