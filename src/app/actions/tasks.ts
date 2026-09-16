@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
 import { weekStartOf, fetchWeekStartDay } from '@/lib/week'
-import { getValidToken, deleteTaskBlock } from '@/lib/google-calendar'
+import { getValidToken, deleteTaskBlock, createTaskBlock } from '@/lib/google-calendar'
 
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
@@ -17,9 +17,16 @@ export async function completeTask(
   estimateAccurate: boolean | null,
   blockerNote: string | null,
   /** When true, recurring tasks are NOT given a next occurrence (permanently done). */
-  permanent = false
+  permanent = false,
+  /**
+   * When the work actually happened. Defaults to now; passed explicitly when
+   * logging a habit session after the fact ("I ran at 7am", logged at noon) so
+   * the record and its calendar event sit at the real time.
+   */
+  opts?: { completedAtISO?: string },
 ) {
   const db = createServiceClient()
+  const completedAt = opts?.completedAtISO ?? new Date().toISOString()
 
   // Fetch the task so we know its rrule and template fields before marking done
   const { data: taskRow } = await db
@@ -31,7 +38,7 @@ export async function completeTask(
   // Mark task done
   const { error: taskErr } = await db
     .from('tasks')
-    .update({ status: 'done', completed_at: new Date().toISOString(), actual_minutes: actualMinutes })
+    .update({ status: 'done', completed_at: completedAt, actual_minutes: actualMinutes })
     .eq('id', taskId)
 
   if (taskErr) throw new Error(taskErr.message)
@@ -474,6 +481,30 @@ export async function setHabitCompletion(
   const dayEnd   = `${dateStr}T23:59:59.999Z`
 
   if (!done) {
+    // Un-logging has to take the calendar event with it. The row is about to
+    // disappear, and with it the only record of the event id — leaving an
+    // orphan on the calendar that nothing can ever clean up.
+    const { data: doomed } = await db
+      .from('tasks')
+      .select('id, gcal_event_id')
+      .eq('type', 'habit')
+      .eq('title', title)
+      .eq('status', 'done')
+      .gte('completed_at', dayStart)
+      .lte('completed_at', dayEnd)
+
+    const eventIds = (doomed ?? []).map(r => r.gcal_event_id).filter(Boolean) as string[]
+    if (eventIds.length > 0) {
+      const token = await getValidToken()
+      if (token) {
+        // Best-effort: a calendar that won't delete shouldn't block un-logging.
+        await Promise.all(eventIds.map(id =>
+          deleteTaskBlock(token.access_token, id).catch(e =>
+            console.error('setHabitCompletion: could not delete event', id, e))
+        ))
+      }
+    }
+
     const { error } = await db
       .from('tasks')
       .delete()
@@ -534,6 +565,132 @@ export async function setHabitCompletion(
   revalidatePath('/habits')
   revalidatePath('/analytics')
   return {}
+}
+
+/**
+ * Log a habit session at a specific time, optionally putting it on the calendar.
+ *
+ * The one-tap "+" records that a habit happened *today*, which is all most logs
+ * need. This is for when the time matters: you ran at 7am and are logging it at
+ * noon, or you're filling in Tuesday's gym session — and you want the session on
+ * your calendar as a record of where the hour actually went.
+ *
+ * The day it counts for is the **UTC** day of `startISO`, not the local one.
+ * That's the boundary the rest of the habits page uses — spawned occurrences,
+ * the completion heatmap, the weekly count — and the day a completion lands on
+ * has to be the day the heatmap will draw it on. It's returned so the caller's
+ * optimistic update marks the same cell.
+ */
+export async function logHabitSession(
+  habitId: string,
+  opts: {
+    startISO:      string    // the instant it started
+    minutes:       number
+    addToCalendar: boolean
+  },
+): Promise<{ error?: string; dateStr?: string; onCalendar?: boolean }> {
+  if (!(opts.minutes > 0)) return { error: 'Session needs a length' }
+
+  const start = new Date(opts.startISO)
+  if (isNaN(start.getTime()))       return { error: 'Bad start time' }
+  if (start.getTime() > Date.now()) return { error: "Can't log a session that hasn't happened yet" }
+
+  const dateStr = start.toISOString().slice(0, 10)
+  const db = createServiceClient()
+
+  const { data: habit } = await db
+    .from('tasks')
+    .select('*')
+    .eq('id', habitId)
+    .maybeSingle()
+  if (!habit) return { error: 'Habit not found' }
+
+  const dayStart = `${dateStr}T00:00:00Z`
+  const dayEnd   = `${dateStr}T23:59:59.999Z`
+
+  // One completion per day, the same rule the heatmap enforces.
+  const { data: already } = await db
+    .from('tasks')
+    .select('id')
+    .eq('type', 'habit')
+    .eq('title', habit.title)
+    .eq('status', 'done')
+    .gte('completed_at', dayStart)
+    .lte('completed_at', dayEnd)
+    .limit(1)
+  if (already && already.length > 0) return { error: 'Already logged for that day' }
+
+  const endISO = new Date(start.getTime() + opts.minutes * 60_000).toISOString()
+  const todayUTC = new Date().toISOString().slice(0, 10)
+
+  // Logging today against the pending row completes it properly — streak,
+  // weekly count and the next occurrence all follow. Inserting a second row
+  // instead would leave today's card still asking to be done.
+  let rowId: string
+  if (dateStr === todayUTC && (habit.status === 'inbox' || habit.status === 'active')) {
+    await completeTask(habitId, opts.minutes, null, null, false, { completedAtISO: opts.startISO })
+    rowId = habitId
+  } else {
+    const { data: inserted, error } = await db.from('tasks').insert({
+      title:             habit.title,
+      description:       habit.description,
+      project_id:        habit.project_id,
+      type:              'habit',
+      status:            'done',
+      priority:          habit.priority,
+      energy_required:   habit.energy_required,
+      urgency_curve:     habit.urgency_curve,
+      urgency_score:     0,
+      estimated_minutes: habit.estimated_minutes,
+      actual_minutes:    opts.minutes,
+      rrule:             habit.rrule,
+      weekly_target:     habit.weekly_target ?? null,
+      due_date:          null,
+      created_at:        opts.startISO,
+      completed_at:      opts.startISO,
+      ...(habit.exclusive_group ? { exclusive_group: habit.exclusive_group } : {}),
+    }).select('id').single()
+    if (error) return { error: error.message }
+    rowId = inserted.id
+  }
+
+  // The session's real place in the day, whether or not it reaches Google.
+  await db.from('tasks')
+    .update({ scheduled_start: opts.startISO, scheduled_end: endISO })
+    .eq('id', rowId)
+
+  let onCalendar = false
+  if (opts.addToCalendar) {
+    const token = await getValidToken()
+    if (!token) {
+      revalidatePath('/habits')
+      revalidatePath('/tasks')
+      return { dateStr, error: "Logged, but Google Calendar isn't connected" }
+    }
+    try {
+      // auto = false: this is a record of something that happened, not a
+      // proposal. Tagging it would put it in the auto-schedule sweep's path
+      // and the next "Schedule my week" would delete your own history.
+      const eventId = await createTaskBlock(
+        token.access_token,
+        { title: habit.title, description: habit.description, priority: habit.priority, id: rowId },
+        opts.startISO, endISO, false, '✓',
+      )
+      await db.from('tasks').update({ gcal_event_id: eventId }).eq('id', rowId)
+      onCalendar = true
+    } catch (e) {
+      console.error('logHabitSession: calendar write failed', e)
+      // The log itself succeeded — say what didn't rather than failing it all.
+      revalidatePath('/habits')
+      revalidatePath('/tasks')
+      return { dateStr, onCalendar: false, error: 'Logged, but could not add it to your calendar' }
+    }
+  }
+
+  revalidatePath('/habits')
+  revalidatePath('/tasks')
+  revalidatePath('/analytics')
+  return { dateStr, onCalendar }
 }
 
 /**

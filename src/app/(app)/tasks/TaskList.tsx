@@ -13,6 +13,7 @@ import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
 import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
 import DayPlanModal from '@/components/DayPlanModal'
+import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
 
 const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
@@ -125,6 +126,8 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
 
   // Completing a habit (instant — no reflection)
   const [pendingHabitIds, setPendingHabitIds] = useState<Set<string>>(new Set())
+  // Habit whose "log at a time" sheet is open
+  const [loggingHabit, setLoggingHabit] = useState<TaskRow | null>(null)
 
   // Task detail
   const [detailTask, setDetailTask] = useState<(Task & { project: Project }) | null>(null)
@@ -647,6 +650,15 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                       onClick={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                       className="group bg-white dark:bg-slate-900 border border-violet-100 dark:border-violet-900/50 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-violet-200 dark:hover:border-violet-800 hover:shadow-sm transition-all cursor-pointer"
                     >
+                      {/* Log with a time — same sheet as the habits page */}
+                      <button
+                        onClick={e => { e.stopPropagation(); setLoggingHabit(task) }}
+                        title="Log with a time, and optionally put it on your calendar"
+                        className="w-5 h-5 rounded-full border-2 border-slate-200 dark:border-slate-700 shrink-0 mt-0.5 flex items-center justify-center text-[10px] text-slate-400 hover:border-violet-400 hover:text-violet-500 transition-colors"
+                      >
+                        🕐
+                      </button>
+
                       {/* One-tap done button */}
                       <button
                         onClick={e => handleHabitDone(task, e)}
@@ -746,6 +758,21 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           streak={streaks[detailTask.id] ?? null}
           gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => setDetailTask(null)}
+        />
+      )}
+
+      {/* Log a habit at a specific time */}
+      {loggingHabit && (
+        <LogHabitModal
+          habit={loggingHabit}
+          gcalWriteEnabled={gcalWriteEnabled}
+          onClose={() => setLoggingHabit(null)}
+          onLogged={dateStr => {
+            // Only a session logged for today closes out the pending row; a
+            // back-filled day leaves it standing, so the card must stay.
+            if (dateStr === todayStr) setDoneIds(prev => new Set([...prev, loggingHabit.id]))
+            setLoggingHabit(null)
+          }}
         />
       )}
 

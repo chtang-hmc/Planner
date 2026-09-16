@@ -5,6 +5,7 @@ import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
 import { completeTask, setHabitCompletion } from '@/app/actions/tasks'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import AddTaskModal from '@/components/AddTaskModal'
+import LogHabitModal from '@/components/LogHabitModal'
 import TaskDetail from '@/components/TaskDetail'
 import { daysSinceWeekStart, weekDayOrder } from '@/lib/week'
 
@@ -148,6 +149,7 @@ function HabitCard({
   weeklyDone,
   weekStartDay,
   onToggleDate,
+  onLogAtTime,
 }: {
   habit: Task & { project: Project }
   dates: string[]
@@ -158,6 +160,7 @@ function HabitCard({
   weeklyDone: number
   weekStartDay: number
   onToggleDate: (dateStr: string, done: boolean) => void
+  onLogAtTime: () => void
 }) {
   const { current, longest, total } = computeStreak(dates)
   const freq = habit.rrule ? rruleToLabel(habit.rrule) : 'Anytime'
@@ -207,11 +210,20 @@ function HabitCard({
           </div>
         </div>
 
+        {/* Log at a time — for when the hour matters, or it happened earlier */}
+        <button
+          onClick={onLogAtTime}
+          title="Log with a time, and optionally put it on your calendar"
+          className="shrink-0 w-9 h-9 rounded-full border-2 border-slate-200 dark:border-slate-700 flex items-center justify-center text-sm text-slate-400 hover:border-violet-400 hover:text-violet-500 transition-colors"
+        >
+          🕐
+        </button>
+
         {/* Complete button */}
         <button
           onClick={onDone}
           disabled={doneToday || pending}
-          title={doneToday ? 'Done for today' : 'Mark done'}
+          title={doneToday ? 'Done for today' : 'Mark done now'}
           className={`shrink-0 w-9 h-9 rounded-full border-2 flex items-center justify-center text-sm font-bold transition-all ${
             doneToday
               ? 'bg-accent-500 border-accent-500 text-white cursor-default'
@@ -276,6 +288,8 @@ export default function HabitsView({
   const [toggleError, setToggleError]   = useState<string | null>(null)
   const [showAdd,     setShowAdd]     = useState(false)
   const [detailTask,  setDetailTask]  = useState<(Task & { project: Project }) | null>(null)
+  // Habit whose "log at a time" sheet is open
+  const [logging,     setLogging]     = useState<(Task & { project: Project }) | null>(null)
   const [, startTransition]          = useTransition()
 
   const todayStr = toDateStr(new Date())
@@ -312,7 +326,7 @@ export default function HabitsView({
   }
 
   function handleDone(habit: Task & { project: Project }) {
-    if (pending.has(habit.id) || sessionDone.has(habit.id)) return
+    if (pending.has(habit.id) || isDoneToday(habit)) return
     setPending(prev => new Set([...prev, habit.id]))
     // Optimistically add today to dates and mark done
     setLocalDates(prev => ({
@@ -329,11 +343,17 @@ export default function HabitsView({
     })
   }
 
-  // Split: pending/done-today (greyed) vs active (need to do)
-  const active  = habits.filter(h => !sessionDone.has(h.id))
-  const doneList = habits.filter(h => sessionDone.has(h.id))
+  // Split: pending/done-today (greyed) vs active (need to do).
+  //
+  // A completion recorded for today counts however it got there — the "+", the
+  // heatmap, or the log sheet. Keying only on `sessionDone` left a habit already
+  // logged today sitting in the active list with a live "+", which would record
+  // it a second time.
+  const isDoneToday = (h: Task) => sessionDone.has(h.id) || getDates(h).includes(todayStr)
+  const active   = habits.filter(h => !isDoneToday(h))
+  const doneList = habits.filter(isDoneToday)
 
-  const doneCountToday = habits.filter(h => sessionDone.has(h.id) || getDates(h).includes(todayStr)).length
+  const doneCountToday = doneList.length
 
   return (
     <>
@@ -409,6 +429,7 @@ export default function HabitsView({
                       weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
                       weekStartDay={weekStartDay}
                       onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
+                      onLogAtTime={() => setLogging(habit)}
                     />
                   ))}
                 </div>
@@ -433,6 +454,7 @@ export default function HabitsView({
                         weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
                         weekStartDay={weekStartDay}
                         onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
+                        onLogAtTime={() => setLogging(habit)}
                       />
                     ))}
                   </div>
@@ -442,6 +464,29 @@ export default function HabitsView({
           )}
         </div>
       </div>
+
+      {logging && (
+        <LogHabitModal
+          habit={logging}
+          gcalWriteEnabled={gcalWriteEnabled}
+          onClose={() => setLogging(null)}
+          onLogged={dateStr => {
+            const habit = logging
+            setLocalDates(prev => ({
+              ...prev,
+              [habit.title]: [...(prev[habit.title] ?? []), dateStr],
+            }))
+            setRemovedDates(prev => ({
+              ...prev,
+              [habit.title]: (prev[habit.title] ?? []).filter(d => d !== dateStr),
+            }))
+            // Logging today closes out the pending row server-side, so the card
+            // has to move to "done today" with it.
+            if (dateStr === todayStr) setSessionDone(prev => new Set([...prev, habit.id]))
+            setLogging(null)
+          }}
+        />
+      )}
 
       {showAdd && (
         <AddTaskModal

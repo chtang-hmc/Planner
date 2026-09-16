@@ -135,6 +135,22 @@ const PRIORITY_COLOR_ID: Record<number, string> = {
  */
 export const AUTO_BLOCK_TAG = 'plannerAuto'
 
+/**
+ * Footer on every event Planner writes.
+ *
+ * The extended-property tag is invisible in Google Calendar, so from inside
+ * Calendar there's no way to tell one of these blocks from an event you made
+ * yourself — which matters most when you're deciding whether it's safe to
+ * delete something. The description is the one field Calendar shows everywhere.
+ */
+export const PLANNER_SIGNATURE = '— Created by Planner'
+
+/** Task note plus the signature, or the signature alone when there's no note. */
+function describeBlock(note?: string | null): string {
+  const body = note?.trim()
+  return body ? `${body}\n\n${PLANNER_SIGNATURE}` : PLANNER_SIGNATURE
+}
+
 export async function createTaskBlock(
   accessToken: string,
   task: { title: string; description?: string | null; priority: number; id?: string },
@@ -146,10 +162,12 @@ export async function createTaskBlock(
    * auto-schedule sweep would delete them.
    */
   auto = false,
+  /** Leading glyph. '🎯' is work planned ahead; '✓' is a session already done. */
+  prefix = '🎯',
 ): Promise<string> {
   const body = {
-    summary:     `🎯 ${task.title}`,
-    description: task.description ?? undefined,
+    summary:     `${prefix} ${task.title}`,
+    description: describeBlock(task.description),
     colorId:     PRIORITY_COLOR_ID[task.priority] ?? '8',
     start: { dateTime: startISO },
     end:   { dateTime: endISO },

@@ -277,10 +277,18 @@ Three functions in `src/lib/google-calendar.ts`:
 
 | Function | GCal API call | Notes |
 |---|---|---|
-| `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low) |
+| `createTaskBlock()` | `POST /calendars/primary/events` | Creates `🎯 <task title>` event; color-coded by priority (red=critical, orange=high, blue=medium, grey=low). Takes a `prefix` — `✓` marks a session already done rather than work planned ahead |
 | `updateTaskBlock()` | `PATCH /calendars/primary/events/:id` | Updates start/end only |
 | `deleteTaskBlock()` | `DELETE /calendars/primary/events/:id` | Silently ignores 404/410 (already deleted) |
 | `listAutoScheduledEventIds()` | `GET /calendars/primary/events?privateExtendedProperty=plannerAuto=true` | Lists auto-scheduled blocks in a window, for cleanup |
+
+### Every event Planner writes says so
+
+`PLANNER_SIGNATURE` (`— Created by Planner`) is appended to the description of every event `createTaskBlock` writes, below the task's own notes when it has any.
+
+The `plannerAuto` extended property already marks auto-scheduled blocks, but extended properties are invisible inside Google Calendar — from there, a focus block is indistinguishable from an event you made yourself, which matters most when you're deciding whether something is safe to delete or move. Description is the one field Calendar shows in every view, on every client.
+
+It goes on *all* Planner-written events, not just tagged ones, because the question it answers ("did I make this or did the app?") is the same either way.
 
 ### Reviewing a week: whole horizon, partial approval
 
@@ -530,6 +538,18 @@ Same-day completion is also a no-op for the streak. The consecutive-day check is
 ### Habits have no deadlines
 
 The detail panel hides the due-date picker, urgency curve, and urgency breakdown for habits — all deadline machinery, and habits are stored with `urgency_score` 0 regardless. `due_date` remains internally as the next-occurrence marker the habits page filters on, but it is no longer user-editable, so it can't be set by hand in a way that breaks the occurrence chain.
+
+### Logging a session at a time
+
+The one-tap "+" records that a habit happened, which is all most logs need. `logHabitSession` is for when the hour matters — you ran at 7am and are logging it at noon — and optionally writes the session to Google Calendar as a record of where the time went.
+
+**Today goes through `completeTask`, not a second row.** Logging today against the pending occurrence completes it properly: streak, weekly count and the next occurrence all follow. Inserting a done row alongside it (what `setHabitCompletion` does for past days) would leave today's card still asking to be done, and the "+" button would then create a duplicate. `completeTask` took an optional `completedAtISO` so the record sits at the real time rather than at the moment you pressed the button.
+
+**Logged events are never tagged `plannerAuto`.** The tag is what the auto-schedule sweep deletes; a logged session is history, and the next "Schedule my week" would erase it. The event id is stored on the completion row instead, and un-logging deletes the event through it — without that, the row disappears along with the only record of the event, orphaning it on the calendar forever.
+
+**The day it counts for is the UTC day of the start instant**, derived server-side and returned to the caller. Everything else about habits buckets on UTC day edges (see *Day boundaries are UTC*), and the day a completion lands on has to be the day the heatmap draws it on. The consequence is real and visible: an evening session west of UTC counts toward the next day. The log sheet says so when it happens rather than letting the streak move somewhere unexpected.
+
+**A failed calendar write doesn't fail the log.** The action returns `dateStr` whenever a row was written, with `error` describing only what didn't happen; the sheet shows the warning and still closes out the log. Reporting total failure for a session that *was* recorded would be a lie, and re-logging would then hit the one-per-day guard.
 
 ### Deleting and back-filling
 
