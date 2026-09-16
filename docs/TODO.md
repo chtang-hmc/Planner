@@ -104,11 +104,17 @@ than error — see the CI section of `DECISIONS.md`. Worth revisiting if
 
 ### A Home / Today page
 
-`/` redirects straight to `/tasks` and there is no Home in the sidebar. The idea
-was a landing view answering "what now" — today's tasks, habits still to do, the
-next calendar block, streaks — drawing on tasks, habits and calendar rather than
-being another list. Deferred once in favour of finishing the tasks page, which is
-now done.
+Specified and agreed, not built — see [`HOME.md`](./HOME.md).
+
+It answers "what should I do now", by fitting work to the gaps your calendar
+actually leaves. It replaces the Plan Day modal rather than joining it, so the
+app does not end up with four surfaces showing time.
+
+Two things from the spec worth knowing before starting: gap arithmetic has to
+work from the running maximum end time or overlapping events will offer free
+time that does not exist, and the page must not call Google on load — the wait
+that made "Schedule my week" unpleasant belongs behind a button, not on the
+landing path.
 
 ---
 
