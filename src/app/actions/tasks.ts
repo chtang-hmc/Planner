@@ -788,7 +788,7 @@ export async function createSubtask(
   // later than the thing it's a part of.
   const { data: parent } = await db
     .from('tasks')
-    .select('project_id, due_date, location')
+    .select('project_id, due_date, location, energy_required')
     .eq('id', parentId)
     .maybeSingle()
 
@@ -798,7 +798,11 @@ export async function createSubtask(
     status:            'active',
     type:              'task',
     priority:          1,
-    energy_required:   'low',
+    // Steps of one piece of work take the same energy by default — reading is
+    // reading. Not cascaded on parent change, unlike project and deadline,
+    // because a per-subtask override is meaningful here (one dense paper among
+    // easy ones) and cascading would silently overwrite it.
+    energy_required:   parent?.energy_required ?? 'low',
     urgency_score:     0,
     urgency_curve:     'linear',
     estimated_minutes: estimatedMinutes ?? null,

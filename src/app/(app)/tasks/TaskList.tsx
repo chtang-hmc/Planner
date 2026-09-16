@@ -90,6 +90,9 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // shut means the default — an empty set — is everything tucked away.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [groupByProject, setGroupByProject] = useState(false)
+  // Project sections start open — unlike subtasks, a project is where you look
+  // for things, so hiding them by default would hide the list itself.
+  const [shutProjects, setShutProjects] = useState<Set<string>>(new Set())
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -526,7 +529,18 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             {groupByProject && projectGroups
               ? projectGroups.map(g => (
                   <div key={g.project.id || "inbox"} className="flex flex-col gap-1.5">
-                    <div className="flex items-center gap-2 mt-2 first:mt-0">
+                    <button
+                      onClick={() => setShutProjects(prev => {
+                        const next = new Set(prev)
+                        const key = g.project.id || 'inbox'
+                        if (next.has(key)) next.delete(key); else next.add(key)
+                        return next
+                      })}
+                      className="flex items-center gap-2 mt-2 first:mt-0 group/proj"
+                    >
+                      <span className="text-[10px] text-slate-400 group-hover/proj:text-slate-600 dark:group-hover/proj:text-slate-300 w-3 text-left transition-colors">
+                        {shutProjects.has(g.project.id || 'inbox') ? '▶' : '▼'}
+                      </span>
                       <span
                         className="text-xs font-semibold px-1.5 py-0.5 rounded"
                         style={{ background: g.project.color + '18', color: g.project.color }}
@@ -535,8 +549,8 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                       </span>
                       <span className="text-xs text-slate-400">{g.rows.length}</span>
                       <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
-                    </div>
-                    {renderTaskRows(g.rows)}
+                    </button>
+                    {!shutProjects.has(g.project.id || 'inbox') && renderTaskRows(g.rows)}
                   </div>
                 ))
               : renderTaskRows(topLevel)}
