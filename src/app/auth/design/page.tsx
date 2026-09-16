@@ -20,6 +20,7 @@
  */
 
 import { useState, useSyncExternalStore } from 'react'
+import { notFound } from 'next/navigation'
 import { Project } from '@/types'
 import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
@@ -224,6 +225,12 @@ function LayoutPreview({ id, expanded, onToggle }: {
 }
 
 export default function DesignPreview() {
+  // A development tool, not a feature. It lives under /auth so the proxy lets
+  // it through without a session — the only way to look at these components in
+  // a browser that is not logged in — and that same exemption would leave it
+  // reachable by anyone in a deployed build.
+  if (process.env.NODE_ENV === 'production') notFound()
+
   // ?layout= can only be read in the browser. Reading it in a useState
   // initialiser rendered one thing on the server and another on the client,
   // which is a hydration failure; useSyncExternalStore renders the server value
