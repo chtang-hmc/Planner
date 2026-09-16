@@ -90,10 +90,26 @@ For a given gap, a task is a **candidate** when:
 
 Candidates order by:
 
-1. **urgency** — `urgency_score`, already deadline-and-priority aware
+1. **urgency** — `urgency_score`, already deadline-and-priority aware, but
+   **resolved from the parent for a subtask** (see below)
 2. **energy match** for that time block, from the configured energy schedule
    (not from energy logs — there are two of those, ever)
 3. **fit** — prefer a task that uses the gap well over one that leaves 80% idle
+
+### Subtask importance comes from the parent
+
+A subtask is created at priority 1 with urgency 0 and no deadline of its own, so
+its row says it does not matter. Real example, today:
+
+| | own | parent |
+|---|---|---|
+| Rosner | P1 · urgency 10 · no due date | P3 · urgency 80 · due today |
+
+Ranked on its own row, the five Public Policy readings — the most urgent work on
+the list — sort to the very bottom. The scheduler already avoids this by reading
+`parent?.priority ?? s.priority`, `parent?.urgency_score ?? s.urgency_score` and
+`parent?.due_date ?? s.due_date` fresh on every run rather than trusting the copy
+made at creation. **Home must resolve the same way.**
 
 Subtasks are offered as a run where a chain fits, the same way the scheduler
 groups them: "2 readings" rather than one at a time.
@@ -140,10 +156,12 @@ trophies, a second task list, energy check-in prompts.
 
 ## Risks
 
-**Suggestions are only as good as the priorities behind them.** Six of 21
-pending tasks have no due date, so ranking leans on priority — and if most sit
-at P2 the page will look confident while guessing. Showing the reason for each
-pick is what keeps that honest.
+**Suggestions are only as good as the priorities behind them**, though the data
+is better than it first looked: exactly one pending task has no deadline at all
+("Buy stuff from Amazon", P1, 30m). The other five that appeared undated are
+subtasks inheriting a deadline from their parent — which is precisely why the
+resolution rule above is not optional. Showing the reason for each pick is what
+keeps a wrong guess visible rather than authoritative.
 
 **It will be the slowest thing on the critical path** simply by being first.
 Keep the Google call off it.
