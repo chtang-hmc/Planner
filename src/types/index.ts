@@ -136,8 +136,12 @@ const OVERDUE_RAMP_DAYS = 7
 
 /**
  * Maps ramp position (0 = horizon away, 1 = deadline) to a 0–1 multiplier.
- * Normalised so every curve starts at 0 and reaches exactly 1 at the deadline,
- * which keeps the curves comparable to each other.
+ * Every curve reaches exactly 1 at the deadline, which keeps them comparable.
+ *
+ * They do not all start at 0: `step` floors at 0.08, so a step task carries a
+ * few points of pressure even beyond the horizon. Migration 0011 does the same,
+ * so the nightly recompute agrees — changing it would move every existing score
+ * and need a new migration. Pinned by a test in src/types/urgency.test.ts.
  */
 function curveShape(r: number, curve: UrgencyCurve): number {
   switch (curve) {
