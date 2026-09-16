@@ -15,13 +15,14 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Inline Search](#inline-search)
-11. [Drag-to-Reschedule](#drag-to-reschedule)
-12. [Priority-Colored Circles](#priority-colored-circles)
-13. [Projects](#projects)
-14. [Color Themes](#color-themes)
-15. [Week Start](#week-start)
-16. [Server / Client Component Split](#server--client-component-split)
+10. [Task List Views](#task-list-views)
+11. [Inline Search](#inline-search)
+12. [Drag-to-Reschedule](#drag-to-reschedule)
+13. [Priority-Colored Circles](#priority-colored-circles)
+14. [Projects](#projects)
+15. [Color Themes](#color-themes)
+16. [Week Start](#week-start)
+17. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -609,6 +610,36 @@ How much of a wait is reusable depends on buffers — a 60-minute wait between t
 ### Server actions
 
 `getSubtasks(taskId)`, `createSubtask(taskId, title)`, `toggleSubtask(id, done)`, `deleteSubtask(id)` — all in `src/app/actions/tasks.ts`. The SubtaskSection component in TaskDetail handles optimistic updates locally and refreshes from the server after each write.
+
+---
+
+## Task List Views
+
+### Folding is the default, everywhere
+
+Both the list and Upcoming track which parents are **open** (`expanded`), not which are shut, so the default — an empty set — is everything tucked away. Same for project groups (`openProjects`). Inverting the state was the whole fix: a "collapsed" set defaults to nothing collapsed, which is the opposite of what these features are for.
+
+Project grouping in particular exists to compress a long list into something you can survey. Opening it expanded shows the same wall of rows with headers added, so it starts compact and each header carries the numbers you'd otherwise expand to find — task count and total estimated time, including the group's subtasks.
+
+Upcoming needed the same fold for a sharper reason: subtasks inherit their parent's deadline, so an unfolded reading list dumps every chapter into a single day section.
+
+A subtask whose parent isn't in the same bucket — different due date, or filtered out — stays a top-level row rather than disappearing. Nothing is ever hidden by having a parent somewhere else.
+
+### The "Relevant" filter
+
+One filter for "what am I doing now", as opposed to the full list's "what do I owe anyone, ever". A task is relevant when:
+
+- it isn't `someday` (a parking lot, never current)
+- it isn't gated by a future `start_date` — you can't start it yet, however urgent it scores
+- **and** it's already blocked on the calendar (that's the plan), or due within `RELEVANT_WINDOW_DAYS` (7), or — with no deadline at all — priority ≥ 3
+
+The no-deadline fallback to priority is the one judgement call. Without a date, priority is the only signal separating "matters" from "eventually", and dropping undated tasks entirely would hide most of the Inbox.
+
+Subtasks ride on their parent's relevance, checked against the unfiltered task list. Parents pass their deadline down, but a chain member without one of its own would otherwise vanish out from under a parent that's still showing.
+
+Deliberately **not** a filter on `urgency_score`. Urgency blends priority and deadline into one number, so a threshold can't distinguish "critical but not due for a month" from "trivial and due tomorrow" — and both answers are wrong for a filter whose whole job is "can I act on this now".
+
+Dates compare as local `YYYY-MM-DD` strings, the same way `formatDue` does, for the same reason: a UTC comparison makes a task due today read as overdue after local midnight UTC.
 
 ---
 

@@ -89,6 +89,37 @@ export default function UpcomingView({
   // ── Drag state ─────────────────────────────────────────────────────────────
 
   // taskId currently being dragged
+  // Parents whose subtasks are showing. Subtasks inherit their parent's
+  // deadline, so an unfolded reading list dumps every chapter into one day —
+  // tracking what's OPEN keeps the default tidy, matching the list view.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(id: string) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  /**
+   * Fold a flat, urgency-sorted day list into parents followed by their own
+   * subtasks. A subtask whose parent isn't in this bucket — a different due
+   * date, or filtered out — stays a top-level row rather than disappearing.
+   */
+  function nest(list: (Task & { project: Project })[]) {
+    const present = new Set(list.map(t => t.id))
+    const kidsOf  = new Map<string, (Task & { project: Project })[]>()
+    for (const t of list) {
+      if (t.parent_id && present.has(t.parent_id)) {
+        kidsOf.set(t.parent_id, [...(kidsOf.get(t.parent_id) ?? []), t])
+      }
+    }
+    return list
+      .filter(t => !(t.parent_id && present.has(t.parent_id)))
+      .map(t => ({ task: t, kids: kidsOf.get(t.id) ?? [] }))
+  }
+
   const [draggingId, setDraggingId] = useState<string | null>(null)
   // date section being hovered over during drag
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -256,6 +287,29 @@ export default function UpcomingView({
     return 'bg-slate-200 dark:bg-slate-700'
   }
 
+  /** A day's rows: each parent, followed by its subtasks when unfolded. */
+  function renderRows(list: (Task & { project: Project })[]) {
+    return nest(list).flatMap(({ task, kids }) => {
+      const open = expanded.has(task.id)
+      return (open ? [task, ...kids] : [task]).map(t => (
+        <TaskRow
+          key={t.id}
+          task={t}
+          isChild={t.id !== task.id}
+          kidCount={t.id === task.id ? kids.length : 0}
+          collapsed={!open}
+          onToggle={() => toggleExpanded(task.id)}
+          onDone={e => onTaskDone(t, e)}
+          onClick={() => onTaskClick(t)}
+          urgencyDotClass={urgencyDot(t.urgency_score)}
+          isDragging={draggingId === t.id}
+          onDragStart={e => handleDragStart(t.id, e)}
+          onDragEnd={handleDragEnd}
+        />
+      ))
+    })
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -360,18 +414,7 @@ export default function UpcomingView({
                 ? 'border-accent-400 dark:border-accent-500 ring-1 ring-accent-300 dark:ring-accent-600'
                 : 'border-red-100 dark:border-red-900/40'
             }`}>
-              {overdueTasks.map(task => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  onDone={e => onTaskDone(task, e)}
-                  onClick={() => onTaskClick(task)}
-                  urgencyDotClass={urgencyDot(task.urgency_score)}
-                  isDragging={draggingId === task.id}
-                  onDragStart={e => handleDragStart(task.id, e)}
-                  onDragEnd={handleDragEnd}
-                />
-              ))}
+              {renderRows(overdueTasks)}
             </div>
           </section>
         )}
@@ -435,18 +478,7 @@ export default function UpcomingView({
                 {/* Tasks */}
                 {dtasks.length > 0 && (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {dtasks.map(task => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        onDone={e => onTaskDone(task, e)}
-                        onClick={() => onTaskClick(task)}
-                        urgencyDotClass={urgencyDot(task.urgency_score)}
-                        isDragging={draggingId === task.id}
-                        onDragStart={e => handleDragStart(task.id, e)}
-                        onDragEnd={handleDragEnd}
-                      />
-                    ))}
+                    {renderRows(dtasks)}
                   </div>
                 )}
 
@@ -487,6 +519,7 @@ export default function UpcomingView({
 
 function TaskRow({
   task, onDone, onClick, urgencyDotClass, isDragging, onDragStart, onDragEnd,
+  isChild = false, kidCount = 0, collapsed = true, onToggle,
 }: {
   task: Task & { project: Project }
   onDone: (e: React.MouseEvent) => void
@@ -495,6 +528,10 @@ function TaskRow({
   isDragging: boolean
   onDragStart: (e: React.DragEvent) => void
   onDragEnd: () => void
+  isChild?: boolean
+  kidCount?: number
+  collapsed?: boolean
+  onToggle?: () => void
 }) {
   const proj = task.project ?? INBOX_PROJECT
   return (
@@ -503,9 +540,9 @@ function TaskRow({
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      className={`group flex items-center gap-2 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-all ${
-        isDragging ? 'opacity-40 bg-slate-50 dark:bg-slate-800/50' : ''
-      }`}
+      className={`group flex items-center gap-2 py-2.5 pr-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-all ${
+        isChild ? 'pl-10' : 'pl-4'
+      } ${isDragging ? 'opacity-40 bg-slate-50 dark:bg-slate-800/50' : ''}`}
     >
       {/* Drag handle — visible on group hover */}
       <span
@@ -514,6 +551,19 @@ function TaskRow({
       >
         ⠿
       </span>
+
+      {/* Fold toggle on a parent; bullet on a child; nothing otherwise */}
+      {isChild ? (
+        <span className="text-slate-300 dark:text-slate-600 text-xs shrink-0 select-none">•</span>
+      ) : kidCount > 0 ? (
+        <button
+          onClick={e => { e.stopPropagation(); onToggle?.() }}
+          title={collapsed ? `Show ${kidCount} subtask${kidCount !== 1 ? 's' : ''}` : 'Hide subtasks'}
+          className="w-3 shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-[10px] transition-colors"
+        >
+          {collapsed ? '▶' : '▼'}
+        </button>
+      ) : null}
 
       <button
         onClick={e => { e.stopPropagation(); onDone(e) }}
@@ -531,6 +581,11 @@ function TaskRow({
           >
             {proj.name}
           </span>
+          {kidCount > 0 && collapsed && (
+            <span className="text-xs text-slate-400">
+              {kidCount} subtask{kidCount !== 1 ? 's' : ''}
+            </span>
+          )}
           {task.estimated_minutes && (
             <span className="text-xs text-slate-400 font-mono">
               {task.estimated_minutes < 60 ? `${task.estimated_minutes}m` : `${Math.floor(task.estimated_minutes/60)}h`}

@@ -66,6 +66,29 @@ function formatDue(iso: string | null): { label: string; urgent: boolean } {
   return { label: `${Math.round(ms / 86400000)}d`, urgent: false }
 }
 
+/** How far ahead a deadline still counts as something to think about today. */
+const RELEVANT_WINDOW_DAYS = 7
+
+/**
+ * "Relevant" = work you could pick up in the next week.
+ *
+ * The full list answers "what do I owe anyone, ever"; this answers "what am I
+ * doing now". Four rules, each dropping a different kind of noise:
+ *   - someday is a parking lot, never current
+ *   - a task gated by "not before" can't be started yet, however urgent it looks
+ *   - anything already blocked on the calendar is by definition the plan
+ *   - a deadline inside the window is live; one beyond it isn't yet
+ * Tasks with no deadline at all fall back to priority — without a date, P3+ is
+ * the only signal that it matters more than "eventually".
+ */
+function isRelevant(t: Task, todayStr: string, horizonStr: string): boolean {
+  if (t.type === 'someday') return false
+  if (t.start_date && t.start_date.slice(0, 10) > todayStr) return false
+  if (t.scheduled_start) return true
+  if (t.due_date) return t.due_date.slice(0, 10) <= horizonStr
+  return t.priority >= 3
+}
+
 /** Rows carry a `parent` embed so a subtask can show what it belongs to. */
 export type TaskRow = Task & { project: Project; parent?: { id: string; title: string } | null }
 
@@ -86,13 +109,15 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
+  const [relevantOnly, setRelevantOnly]   = useState(false)
   // Parents whose subtasks are showing. Tracking what's OPEN rather than what's
   // shut means the default — an empty set — is everything tucked away.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [groupByProject, setGroupByProject] = useState(false)
-  // Project sections start open — unlike subtasks, a project is where you look
-  // for things, so hiding them by default would hide the list itself.
-  const [shutProjects, setShutProjects] = useState<Set<string>>(new Set())
+  // Same trick for project sections: grouping exists to compress a long list
+  // into something you can survey, so it opens compact and you expand the one
+  // project you came for.
+  const [openProjects, setOpenProjects] = useState<Set<string>>(new Set())
 
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
@@ -189,6 +214,13 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     )
   }
 
+  // Date bounds for the relevance filter, in local time — the same local-date
+  // string comparison formatDue uses, for the same reason.
+  const todayStr   = localDateStr(new Date())
+  const horizonStr = (() => {
+    const d = new Date(); d.setDate(d.getDate() + RELEVANT_WINDOW_DAYS); return localDateStr(d)
+  })()
+
   // Split habits from regular tasks
   const habits  = tasks.filter(t => t.type === 'habit' && !doneIds.has(t.id) && matchesSearch(t))
   const filtered = tasks.filter(t => {
@@ -198,6 +230,13 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     if (energyFilter !== 'all' && t.energy_required !== energyFilter) return false
     if (projectFilter !== 'all' && t.project_id !== projectFilter) return false
     if (!matchesSearch(t)) return false
+    // A subtask rides on its parent's relevance: parents pass their deadline
+    // down, but a chain member with no date of its own would otherwise vanish
+    // out from under a parent that's still showing.
+    if (relevantOnly && !isRelevant(t, todayStr, horizonStr)) {
+      const parent = t.parent_id ? tasks.find(p => p.id === t.parent_id) : null
+      if (!parent || !isRelevant(parent, todayStr, horizonStr)) return false
+    }
     return true
   })
 
@@ -226,7 +265,17 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
       .filter(p => byId.has(p.id))
       .map(p => ({ project: p, rows: byId.get(p.id)! }))
     if (byId.has('')) ordered.push({ project: INBOX_PROJECT, rows: byId.get('')! })
-    return ordered
+    // Collapsed, a header is all you see of the project — so it carries the
+    // numbers you'd otherwise have to expand to find.
+    return ordered.map(g => ({
+      ...g,
+      key:     g.project.id || 'inbox',
+      minutes: g.rows.reduce((s, t) => {
+        const kids = childrenOf.get(t.id) ?? []
+        return s + [t, ...kids].reduce(
+          (n, r) => n + (r.adjusted_minutes ?? r.estimated_minutes ?? 0), 0)
+      }, 0),
+    }))
   })()
 
   const totalMinutes = filtered.reduce((s, t) => s + (t.adjusted_minutes ?? t.estimated_minutes ?? 0), 0)
@@ -501,6 +550,18 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
             </select>
 
             <button
+              onClick={() => setRelevantOnly(v => !v)}
+              title={`Only what you can act on now — due in the next ${RELEVANT_WINDOW_DAYS} days, already on the calendar, or high priority with no deadline. Hides someday and anything gated by "not before".`}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
+                relevantOnly
+                  ? 'bg-accent-50 dark:bg-accent-950 border-accent-200 dark:border-accent-800 text-accent-700 dark:text-accent-300'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500'
+              }`}
+            >
+              ◎ Relevant
+            </button>
+
+            <button
               onClick={() => setGroupByProject(v => !v)}
               title="Group the list by project"
               className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
@@ -527,19 +588,21 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
           {/* Task rows */}
           <div className="flex flex-col gap-1.5">
             {groupByProject && projectGroups
-              ? projectGroups.map(g => (
-                  <div key={g.project.id || "inbox"} className="flex flex-col gap-1.5">
+              ? projectGroups.map(g => {
+                  const open = openProjects.has(g.key)
+                  return (
+                  <div key={g.key} className="flex flex-col gap-1.5">
                     <button
-                      onClick={() => setShutProjects(prev => {
+                      onClick={() => setOpenProjects(prev => {
                         const next = new Set(prev)
-                        const key = g.project.id || 'inbox'
-                        if (next.has(key)) next.delete(key); else next.add(key)
+                        if (next.has(g.key)) next.delete(g.key); else next.add(g.key)
                         return next
                       })}
+                      title={open ? 'Collapse' : `Show ${g.rows.length} tasks`}
                       className="flex items-center gap-2 mt-2 first:mt-0 group/proj"
                     >
                       <span className="text-[10px] text-slate-400 group-hover/proj:text-slate-600 dark:group-hover/proj:text-slate-300 w-3 text-left transition-colors">
-                        {shutProjects.has(g.project.id || 'inbox') ? '▶' : '▼'}
+                        {open ? '▼' : '▶'}
                       </span>
                       <span
                         className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -547,12 +610,18 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                       >
                         {g.project.name}
                       </span>
-                      <span className="text-xs text-slate-400">{g.rows.length}</span>
+                      <span className="text-xs text-slate-400 tabular-nums">{g.rows.length}</span>
+                      {g.minutes > 0 && (
+                        <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">
+                          {formatMinutes(g.minutes)}
+                        </span>
+                      )}
                       <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                     </button>
-                    {!shutProjects.has(g.project.id || 'inbox') && renderTaskRows(g.rows)}
+                    {open && renderTaskRows(g.rows)}
                   </div>
-                ))
+                  )
+                })
               : renderTaskRows(topLevel)}
 
             {filtered.length === 0 && (
