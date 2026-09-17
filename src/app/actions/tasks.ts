@@ -176,7 +176,20 @@ export async function completeTask(
     // For anytime habits (no rrule): spawn for tomorrow so the card reappears.
     let nextDue: string | null = null
     if (taskRow.rrule) {
-      const anchor = taskRow.due_date ? new Date(taskRow.due_date) : today
+      /**
+       * `every!` (migration 0015) counts from when the work actually happened.
+       *
+       * Watering the plants every three days means three days after you last
+       * watered them. Anchoring on `due_date` there would treat a fortnight
+       * away as four missed waterings and hand back a backlog, rather than
+       * simply restarting the clock.
+       *
+       * The anchor is UTC midnight of the *local* completion day, matching how
+       * due_date is stored, so the arithmetic stays on calendar days.
+       */
+      const anchor = taskRow.rrule_from_completion
+        ? new Date(completedDay + 'T00:00:00Z')
+        : (taskRow.due_date ? new Date(taskRow.due_date) : today)
       const nextDate = getNextOccurrence(taskRow.rrule, anchor)
       if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
     } else if (isHabit) {
@@ -253,6 +266,12 @@ export async function completeTask(
         // insert on a pre-0007 database, which is how weekly_target once broke
         // habit creation outright.
         ...(taskRow.exclusive_group ? { exclusive_group: taskRow.exclusive_group } : {}),
+        // Carried forward, or the chain forgets them after one cycle: the
+        // second occurrence of an `every!` task would silently revert to
+        // due-date anchoring, and a 7am standup would lose its hour.
+        ...(taskRow.due_time_minutes != null
+              ? { due_time_minutes: taskRow.due_time_minutes } : {}),
+        ...(taskRow.rrule_from_completion ? { rrule_from_completion: true } : {}),
       })
     }
 
@@ -1124,6 +1143,10 @@ export async function createTask(data: {
   span_minutes?:       number | null
   buffer_minutes?:     number | null
   avoid_after_breaks?: boolean
+  /** Minutes from local midnight. A wall-clock time, not an instant. */
+  due_time_minutes?:   number | null
+  /** `every!` — advance the chain from completion rather than from due_date. */
+  rrule_from_completion?: boolean
 }) {
   const db = createServiceClient()
   const now = new Date().toISOString()
@@ -1160,6 +1183,8 @@ export async function createTask(data: {
       ...(data.span_minutes       ? { span_minutes:       data.span_minutes }       : {}),
       ...(data.buffer_minutes != null ? { buffer_minutes: data.buffer_minutes }     : {}),
       ...(data.avoid_after_breaks ? { avoid_after_breaks: true }                    : {}),
+      ...(data.due_time_minutes != null ? { due_time_minutes: data.due_time_minutes } : {}),
+      ...(data.rrule_from_completion ? { rrule_from_completion: true }               : {}),
     })
     .select()
     .single()

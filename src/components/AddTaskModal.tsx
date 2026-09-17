@@ -7,7 +7,7 @@ import ProjectPicker from '@/components/ProjectPicker'
 import RecurrencePicker from '@/components/RecurrencePicker'
 import QuickAddInput from '@/components/QuickAddInput'
 import { rruleToLabel } from '@/lib/rrule-utils'
-import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
+import { parseQuickAdd } from '@/lib/quick-add'
 import { DEFAULT_TZ, isValidTimezone } from '@/lib/day'
 
 interface ParsedResult {
@@ -83,6 +83,10 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [energy, setEnergy]     = useState<EnergyLevel>('medium')
   const [estimate, setEstimate] = useState('')
   const [dueDate, setDueDate]   = useState('')
+  /** "HH:MM" wall-clock, or '' for all-day. Stored as minutes from midnight. */
+  const [dueTime, setDueTime]   = useState('')
+  /** `every!` — advance the chain from completion rather than from the due date. */
+  const [fromCompletion, setFromCompletion] = useState(false)
 
   const [rrule, setRrule] = useState<string | null>(null)
 
@@ -132,6 +136,11 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
     // A repeat typed in the text wins over one left behind by a previous add:
     // "every monday" is an instruction, not a suggestion.
     if (quick.rrule)  setRrule(quick.rrule)
+    if (quick.timeMinutes !== null) {
+      const h = Math.floor(quick.timeMinutes / 60), m = quick.timeMinutes % 60
+      setDueTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+    }
+    if (quick.recurrenceFromCompletion) setFromCompletion(true)
     setParsed(null)
     setParseError(null)
     inputRef.current?.focus()
@@ -185,6 +194,8 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
     if (mode === 'task') {
       if (energy !== 'medium') out.push(`${ENERGY_ICON[energy]} ${energy} energy`)
       if (rrule)               out.push(`↻ ${rruleToLabel(rrule)}`)
+      if (rrule && fromCompletion) out.push('repeats from completion')
+      if (dueTime)             out.push(`at ${dueTime}`)
       if (startDate)           out.push(`not before ${startDate}`)
       if (curve !== 'linear')  out.push(`${curve} urgency`)
     } else {
@@ -221,6 +232,10 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
           span_minutes: span ? parseInt(span) : null,
           buffer_minutes: buffer,
           avoid_after_breaks: mode === 'habit' && avoidBreaks,
+          due_time_minutes: mode === 'habit' || !dueDate || !dueTime
+            ? null
+            : Number(dueTime.slice(0, 2)) * 60 + Number(dueTime.slice(3, 5)),
+          rrule_from_completion: !!rrule && fromCompletion,
         })
         onCreated()
       } catch (err) {
@@ -395,22 +410,6 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                 </div>
               )}
 
-              {/* Recognised but with nowhere to be kept. Saying so beats
-                  reading it and dropping it silently — the user typed it for a
-                  reason and would otherwise never learn it was ignored. */}
-              {quick.timeMinutes !== null && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
-                  {formatTimeLabel(quick.timeMinutes)} understood, but not stored yet —
-                  the task will be due that day.
-                </p>
-              )}
-              {quick.recurrenceFromCompletion && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
-                  <code className="font-mono">every!</code> understood, but counting from
-                  completion isn&rsquo;t stored yet — this will repeat from the due date.
-                </p>
-              )}
-
               <div className="flex justify-between items-center mt-2 mb-3">
                 <p className="text-xs text-slate-400">
                   {parsed
@@ -470,7 +469,20 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                 </div>
                 <div>
                   <label className={labelClass}>Due date</label>
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={fieldClass} />
+                  <div className="flex gap-1.5">
+                    <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={fieldClass} />
+                    {/* A wall-clock time, kept beside the day rather than folded
+                        into it — see migration 0015. Disabled without a day,
+                        since an hour with no date has nothing to happen on. */}
+                    <input
+                      type="time"
+                      value={dueTime}
+                      disabled={!dueDate}
+                      onChange={e => setDueTime(e.target.value)}
+                      className={`${fieldClass} w-28 font-mono disabled:opacity-40`}
+                      aria-label="Due time"
+                    />
+                  </div>
                 </div>
               </div>
 

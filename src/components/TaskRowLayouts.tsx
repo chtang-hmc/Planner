@@ -142,7 +142,7 @@ function RailShell({ children }: TaskListShellProps) {
 
 function RailRow(p: TaskRowProps) {
   const { task } = p
-  const due = formatDue(task.due_date)
+  const due = formatDue(task.due_date, task.due_time_minutes)
   const est = estOf(task)
   return (
     <div
@@ -204,7 +204,7 @@ function LedgerShell({ children }: TaskListShellProps) {
 
 function LedgerRow(p: TaskRowProps) {
   const { task } = p
-  const due = formatDue(task.due_date)
+  const due = formatDue(task.due_date, task.due_time_minutes)
   const est = estOf(task)
   return (
     <div
@@ -255,7 +255,7 @@ function AiryShell({ children }: TaskListShellProps) {
 
 function AiryRow(p: TaskRowProps) {
   const { task } = p
-  const due = formatDue(task.due_date)
+  const due = formatDue(task.due_date, task.due_time_minutes)
   const est = estOf(task)
   const sep = <span className="text-slate-300 dark:text-slate-700">·</span>
   return (
@@ -304,7 +304,7 @@ function EditorialShell({ children }: TaskListShellProps) {
 
 function EditorialRow(p: TaskRowProps) {
   const { task } = p
-  const due = formatDue(task.due_date)
+  const due = formatDue(task.due_date, task.due_time_minutes)
   const est = estOf(task)
   const dash = <span className="text-slate-300 dark:text-slate-700">—</span>
   return (

@@ -33,6 +33,8 @@ export interface Task {
   urgency_score: number              // 0–100, recomputed nightly
   urgency_curve: UrgencyCurve
   rrule: string | null               // iCal RRULE string for recurring tasks
+  rrule_from_completion?: boolean    // `every!` — advance from completion, not due_date
+  due_time_minutes?: number | null   // minutes from local midnight; null = all-day
   weekly_target: number | null       // habits only: how many times per week to aim for
   exclusive_group: string | null     // habits only: habits sharing a group are never scheduled on the same day
   location: 'home' | 'away' | 'anywhere'   // where it happens; gates what can run during a tether

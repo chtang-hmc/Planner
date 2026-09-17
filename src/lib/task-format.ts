@@ -23,14 +23,30 @@ export function localDateStr(d: Date): string {
 
 export type DueTone = 'late' | 'now' | 'soon' | 'later'
 
+/** A wall-clock time on a 12-hour clock: 1020 → "5 PM", 1050 → "5:30 PM". */
+export function formatTimeOfDay(minutes: number): string {
+  const h24 = Math.floor(minutes / 60), min = minutes % 60
+  const suffix = h24 < 12 ? 'AM' : 'PM'
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+  return min === 0 ? `${h12} ${suffix}` : `${h12}:${String(min).padStart(2, '0')} ${suffix}`
+}
+
 /**
  * A due date rendered as the day it was picked.
  *
  * Compared as local calendar dates, not instants: a due date is stored at UTC
  * midnight, so comparing it to `Date.now()` marks a task due today as overdue
  * once UTC midnight passes — mid-afternoon the day before on the US west coast.
+ *
+ * `timeMinutes` (migration 0015) is appended rather than folded in. It is a
+ * wall-clock time held beside the day, never inside it, so it cannot move which
+ * day the task is on — and it does not change the tone: a task due at 9am today
+ * still reads as due today at half past nine, not overdue.
  */
-export function formatDue(iso: string | null): { label: string; tone: DueTone } | null {
+export function formatDue(
+  iso: string | null,
+  timeMinutes?: number | null,
+): { label: string; tone: DueTone } | null {
   if (!iso) return null
   const taskDate = iso.slice(0, 10)
   const today    = new Date()
@@ -38,12 +54,17 @@ export function formatDue(iso: string | null): { label: string; tone: DueTone } 
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1)
   const tmrwStr  = localDateStr(tomorrow)
 
-  if (taskDate <  todayStr) return { label: 'Overdue',  tone: 'late' }
-  if (taskDate === todayStr) return { label: 'Today',    tone: 'now'  }
-  if (taskDate === tmrwStr)  return { label: 'Tomorrow', tone: 'soon' }
+  const at = (label: string, tone: DueTone) => ({
+    label: timeMinutes == null ? label : `${label} ${formatTimeOfDay(timeMinutes)}`,
+    tone,
+  })
+
+  if (taskDate <  todayStr)  return at('Overdue',  'late')
+  if (taskDate === todayStr) return at('Today',    'now')
+  if (taskDate === tmrwStr)  return at('Tomorrow', 'soon')
 
   const ms = new Date(taskDate + 'T00:00:00').getTime() - new Date(todayStr + 'T00:00:00').getTime()
-  return { label: `${Math.round(ms / 86400000)}d`, tone: 'later' }
+  return at(`${Math.round(ms / 86400000)}d`, 'later')
 }
 
 /** Text colour for a deadline. Only urgency earns colour; the rest stays muted. */

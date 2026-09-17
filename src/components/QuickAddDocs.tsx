@@ -63,7 +63,7 @@ const REPEAT_ROWS: Row[] = [
   { syntax: ['every last day of the month'] },
   { syntax: ['every jan 27'], note: 'Annually, on a fixed date.' },
   { syntax: ['every month', 'monthly'] },
-  { syntax: ['every! 3 days'], note: 'Counts from when you finish, not from when it was due.' },
+  { syntax: ['every! 3 days'], note: 'The bang counts from when you finish, not from when it was due.' },
 ]
 
 const PREFIX_ROWS: Row[] = [
