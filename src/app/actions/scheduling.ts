@@ -366,6 +366,7 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       energy_required:  t.energy_required,
       duration_minutes: duration,
       due_date:         t.due_date,
+      dueTimeMinutes:   t.due_time_minutes ?? null,
       location:         t.location ?? 'anywhere',
       spanMinutes:      t.span_minutes ?? undefined,
       bufferMinutes:    t.buffer_minutes ?? undefined,
@@ -396,7 +397,10 @@ export async function proposeSchedule(horizonDays: number, timezone: string = 'U
       duration_minutes: duration,
       // Read from the parent every run rather than trusting the copy made at
       // creation: a subtask can never be due later than the work it's part of.
+      // The hour travels with the day for the same reason — a step of work due
+      // by five cannot run past five either.
       due_date:         parent?.due_date ?? s.due_date,
+      dueTimeMinutes:   parent?.due_time_minutes ?? s.due_time_minutes ?? null,
       // Subtasks of one parent chain together — no buffer between them, one
       // buffer around the run.
       chainGroup:       s.parent_id,
@@ -692,6 +696,7 @@ export async function planDay(timezone: string = 'UTC', dateStr?: string): Promi
       energy_required:  t.energy_required,
       duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
       due_date:         t.due_date,
+      dueTimeMinutes:   t.due_time_minutes ?? null,
     }))
 
   // All scheduled blocks for today (already in DB + newly proposed)

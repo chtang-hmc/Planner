@@ -445,6 +445,13 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   const [curve, setCurve]         = useState<UrgencyCurve>(task.urgency_curve)
   const [estimate, setEstimate]   = useState(String(task.estimated_minutes ?? ''))
   const [dueDate, setDueDate]     = useState(task.due_date ? task.due_date.slice(0, 10) : '')
+  /** "HH:MM" wall-clock, or '' for all-day. Stored as minutes from midnight. */
+  const [dueTime, setDueTime]     = useState(() => {
+    const m = task.due_time_minutes
+    return m == null
+      ? ''
+      : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+  })
   const [startDate, setStartDate] = useState(task.start_date ? task.start_date.slice(0, 10) : '')
   const [rrule, setRrule]         = useState<string | null>(task.rrule ?? null)
   const [weeklyTarget, setWeeklyTarget] = useState<string>(String(task.weekly_target ?? ''))
@@ -578,6 +585,15 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
   function onBlurDesc()     { if (description !== (task.description ?? '')) save({ description: description || null }) }
   function onBlurEstimate() { const v = parseInt(estimate); if (!isNaN(v) && v !== task.estimated_minutes) save({ estimated_minutes: v }) }
   function onBlurDue()      { save({ due_date: dueDate ? new Date(dueDate).toISOString() : null }) }
+  /**
+   * Cleared along with the date: an hour with no day has nothing to happen on,
+   * and leaving it set would make the field disagree with what is stored.
+   */
+  function onBlurDueTime()  {
+    save({ due_time_minutes: dueDate && dueTime
+      ? Number(dueTime.slice(0, 2)) * 60 + Number(dueTime.slice(3, 5))
+      : null })
+  }
   function onBlurStart()    { save({ start_date: startDate ? new Date(startDate).toISOString() : null }) }
 
   return (
@@ -705,13 +721,27 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
             {!isHabit && (
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Due date</label>
-                <input
-                  type="date"
-                  value={dueDate}
-                  onChange={e => setDueDate(e.target.value)}
-                  onBlur={onBlurDue}
-                  className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
-                />
+                <div className="flex gap-1.5">
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={e => setDueDate(e.target.value)}
+                    onBlur={onBlurDue}
+                    className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+                  />
+                  {/* A wall-clock hour kept beside the day, never folded into
+                      it (migration 0015). Disabled without a date, since an
+                      hour with no day has nothing to happen on. */}
+                  <input
+                    type="time"
+                    value={dueTime}
+                    disabled={!dueDate}
+                    onChange={e => setDueTime(e.target.value)}
+                    onBlur={onBlurDueTime}
+                    aria-label="Due time"
+                    className="w-28 shrink-0 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-2 text-sm font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500 disabled:opacity-40"
+                  />
+                </div>
               </div>
             )}
           </div>

@@ -325,3 +325,69 @@ describe('blockLabel', () => {
     expect(blockLabel('Wash Sheets')).toBe('Wash Sheets')
   })
 })
+
+describe('a due time tightens the deadline within the day', () => {
+  /**
+   * `tasks.due_time_minutes` (migration 0015). "Due at 11am" means finished by
+   * eleven — so the afternoon of the due day is no longer on time, even though
+   * the *day* still is.
+   *
+   * Deliberately a deadline and not a pin: the work may be placed any time
+   * before, which is usually where it belongs. Only the late end moves.
+   */
+  const ELEVEN_AM = 11 * 60
+  const elevenMs  = () => localMidnight(MON, TZ) + ELEVEN_AM * 60_000
+
+  it('keeps work before the hour, not merely on the day', () => {
+    const { scheduled } = run([task({
+      duration_minutes: 60, due_date: `${MON}T00:00:00Z`, dueTimeMinutes: ELEVEN_AM,
+    })])
+    expect(scheduled).toHaveLength(1)
+    expect(dayOf(scheduled[0])).toBe(MON)
+    expect(scheduled[0].end.getTime()).toBeLessThanOrEqual(elevenMs())
+  })
+
+  it('is what moved the deadline — the same task without an hour may run later', () => {
+    const withHour = run([task({
+      duration_minutes: 60, due_date: `${MON}T00:00:00Z`, dueTimeMinutes: ELEVEN_AM,
+    })]).scheduled
+    const without = run([task({
+      duration_minutes: 60, due_date: `${MON}T00:00:00Z`,
+    })]).scheduled
+    expect(withHour[0].end.getTime()).toBeLessThanOrEqual(without[0].end.getTime())
+  })
+
+  it('does not pin the start to the hour', () => {
+    // A 5pm deadline must not push the work to 5pm; earlier is still fine.
+    const { scheduled } = run([task({
+      duration_minutes: 60, due_date: `${MON}T00:00:00Z`, dueTimeMinutes: 17 * 60,
+    })])
+    expect(scheduled).toHaveLength(1)
+    expect(hourOf(scheduled[0])).toBeLessThan(17)
+  })
+
+  it('reports work that cannot finish before the hour instead of placing it late', () => {
+    // Nine-to-five, a two-hour task due by 10am, one day of horizon: one hour
+    // of usable time, so it does not fit.
+    const { scheduled, unschedulable } = run(
+      [task({ duration_minutes: 120, due_date: `${MON}T00:00:00Z`, dueTimeMinutes: 10 * 60 })],
+      { horizonDays: 1 },
+    )
+    expect(scheduled).toHaveLength(0)
+    expect(unschedulable.length).toBeGreaterThan(0)
+  })
+
+  it('binds a chain by its strictest member', () => {
+    // Two steps of one parent; only the second carries an hour. The run as a
+    // whole has to respect it.
+    const { scheduled } = run([
+      task({ id: 'a', duration_minutes: 30, due_date: `${MON}T00:00:00Z`, chainGroup: 'p', chainIndex: 0 }),
+      task({ id: 'b', duration_minutes: 30, due_date: `${MON}T00:00:00Z`, chainGroup: 'p', chainIndex: 1,
+             dueTimeMinutes: ELEVEN_AM }),
+    ])
+    expect(scheduled.length).toBeGreaterThan(0)
+    for (const b of scheduled) {
+      expect(b.end.getTime()).toBeLessThanOrEqual(elevenMs())
+    }
+  })
+})

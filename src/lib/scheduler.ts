@@ -93,6 +93,12 @@ export interface SchedulerTask {
   duration_minutes:  number   // adjusted_minutes ?? estimated_minutes, caller picks
   due_date:          string | null  // ISO
   /**
+   * Minutes from local midnight on the due day, when the deadline is an hour
+   * rather than a date. "Due at 5pm" means finished by five, not started then —
+   * so this tightens the deadline within the day; it does not pin a start.
+   */
+  dueTimeMinutes?:   number | null
+  /**
    * Tasks sharing a spreadGroup are placed on distinct days. Used for habit
    * sessions: "gym 4×/week" expands into 4 candidates with one group, so they
    * land on four different days instead of stacking into a single afternoon.
@@ -238,9 +244,28 @@ export function localMidnight(dateStr: string, tz: string): number {
  * "2026-09-16T07:00:00Z" (midnight Sep 16 PDT), NOT "2026-09-15T00:00:00Z"
  * (which is 5pm Sep 14 PDT — already in the past on the due day!).
  */
-function endOfDayMs(dueISO: string, tz: string): number {
+function deadlineMs(
+  dueISO: string,
+  dueTimeMinutes: number | null | undefined,
+  tz: string,
+): number {
   // Extract the UTC date string from the stored ISO (e.g. "2026-09-15")
   const dateStr = dueISO.slice(0, 10)
+
+  /**
+   * An hour on the due day (tasks.due_time_minutes, migration 0015) tightens the
+   * deadline: a report due at 5pm should not be placed in the 7pm slot and
+   * called on time.
+   *
+   * Deliberately a deadline and not a pin. "Due at 5pm" says when the work must
+   * be *finished*; treating it as an appointment would stop the scheduler
+   * putting the work anywhere earlier, which is usually exactly where it wants
+   * to go.
+   */
+  if (dueTimeMinutes != null) {
+    return localMidnight(dateStr, tz) + dueTimeMinutes * 60_000
+  }
+
   // Midnight of the next local day = end of the due day.
   //
   // Stepped with addDays rather than `new Date(dateStr).setDate(+1)`: that
@@ -325,7 +350,7 @@ export function runScheduler(
   const startStr = config.startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
   const days: number[] = []   // each value = UTC ms of local midnight for that day
   for (let i = 0; i < horizonDays; i++) {
-    // Same reason as endOfDayMs: pure calendar arithmetic, so a DST day cannot
+    // Same reason as deadlineMs: pure calendar arithmetic, so a DST day cannot
     // shift the horizon by one.
     days.push(localMidnight(addDays(startStr, i), tz))
   }
@@ -526,7 +551,8 @@ export function runScheduler(
       // Only the FIRST stage has to start inside this slot; later stages are
       // checked wherever their offset puts them, which may be hours later.
       for (let t = Math.max(fS, nowMs, notBeforeMs); t + members[0].duration_minutes * 60_000 <= fE; t += STEP) {
-        if (t > dueMs) break
+        // The last stage has to land before the deadline, not the first.
+        if (t + totalMs > dueMs) break
         const startAligned = Math.ceil(t / STEP) * STEP
         const ok = members.every((m, i) => intervalFree(
           startAligned + offsets[i],
@@ -565,7 +591,9 @@ export function runScheduler(
     // earliest deadline, and any location that isn't 'anywhere'.
     const bufferMs = Math.max(...members.map(m => (m.bufferMinutes ?? config.bufferMinutes))) * 60_000
     const loc      = members.find(m => (m.location ?? 'anywhere') !== 'anywhere')?.location ?? 'anywhere'
-    const dueMs    = Math.min(...members.map(m => m.due_date ? endOfDayMs(m.due_date, tz) : Infinity))
+    // A chain is bound by its strictest member, hour included.
+    const dueMs    = Math.min(...members.map(m =>
+      m.due_date ? deadlineMs(m.due_date, m.dueTimeMinutes, tz) : Infinity))
     const avoidAfterBreaks = members.some(m => m.avoidAfterBreaks)
     const notBeforeMs = Math.max(0, ...members.map(m => m.notBefore ? new Date(m.notBefore).getTime() : 0))
     const maxRunMs = config.maxSessionMinutes * 60_000
@@ -585,11 +613,12 @@ export function runScheduler(
 
       for (const { fS, fE } of freeSlots({ bufferMs, loc, avoidAfterBreaks, dueMs })) {
         const start = Math.max(fS, nowMs, notBeforeMs)
-        if (start > dueMs) continue
         if (start >= fE) continue
+        if (start >= dueMs) continue
 
-        // How many consecutive members fit here, capped by the sitting length?
-        const room = Math.min(fE - start, maxRunMs)
+        // How many consecutive members fit here, capped by the sitting length
+        // and by the deadline — a run may not spill past it.
+        const room = Math.min(fE - start, maxRunMs, dueMs - start)
         let used = 0, count = 0
         for (const m of remaining) {
           const need = m.duration_minutes * 60_000
@@ -658,7 +687,7 @@ export function runScheduler(
     const loc          = task.location ?? 'anywhere'
     const spanMs       = (task.spanMinutes ?? 0) * 60_000
     const totalSegs    = task.atomic ? 1 : Math.ceil(task.duration_minutes / config.maxSessionMinutes)
-    const dueMs        = task.due_date ? endOfDayMs(task.due_date, tz) : Infinity
+    const dueMs        = task.due_date ? deadlineMs(task.due_date, task.dueTimeMinutes, tz) : Infinity
     const blocksBefore = scheduled.length
     let remaining      = task.duration_minutes
     let allPlaced      = true
@@ -678,8 +707,14 @@ export function runScheduler(
         if (usedDays?.has(dayMs)) continue   // one session per day per habit
 
         const slotStart = Math.max(fS, nowMs, notBeforeMs)
-        if (slotStart + segMs > fE) continue  // slot too small
-        if (slotStart > dueMs) continue        // past deadline
+        if (slotStart + segMs > fE) continue      // slot too small
+        // The work must *finish* by the deadline, not merely begin before it.
+        // While dueMs was always end-of-day this was the same test — a day
+        // boundary sits well past working hours, so nothing could start inside
+        // the day and end after it. A time of day (migration 0015) makes the
+        // two differ: a 90-minute session starting at 9 against an 11am
+        // deadline begins in time and finishes half an hour late.
+        if (slotStart + segMs > dueMs) continue
 
         // If THIS task would pin you, nothing already booked inside its span
         // may need you somewhere else.
