@@ -82,6 +82,32 @@ export async function completeTask(
 
   if (taskErr) throw new Error(taskErr.message)
 
+  /**
+   * The steps of a finished piece of work are finished with it.
+   *
+   * Closing a parent used to leave its subtasks pending. They stayed in the
+   * list, kept their urgency, and — since they inherit the parent's deadline —
+   * went overdue underneath a parent that was already done. On a recurring
+   * task that happened at every occurrence, and the next occurrence spawns
+   * without subtasks (see the spawn block below), so the stale ones were all
+   * that remained of the checklist.
+   *
+   * Only pending steps are touched: one already closed keeps its own
+   * completed_at and actual_minutes. They take the *parent's* close status —
+   * an occurrence closed as `cancelled` by the duplicate-day guard above did
+   * not record the day, and its steps must not claim to either.
+   *
+   * A failure here doesn't fail the action: the task itself is already done,
+   * and throwing would tell the user their completion didn't land.
+   */
+  const { error: subErr } = await db
+    .from('tasks')
+    .update({ status: closeAs, completed_at: completedAt })
+    .eq('parent_id', taskId)
+    .in('status', ['inbox', 'active'])
+
+  if (subErr) console.error('completeTask: could not close subtasks:', subErr.message)
+
   // Log focus session with reflection — but only if the FloatingTimer hasn't
   // already written a session for this task in the last hour (to avoid duplicates).
   if (actualMinutes != null || estimateAccurate != null) {
@@ -201,6 +227,12 @@ export async function completeTask(
         created_at:    now,
       })
 
+      // Deliberately the parent row only — subtasks do not come along.
+      // The checklist belongs to the occurrence that was just closed out (and
+      // was closed out with it, above), not to the shape of the recurrence;
+      // respawning it would resurrect steps the user has already ticked off
+      // week after week. This is the one place a copy would be tempting —
+      // duplicateTask copies subtasks, and that is correct *there*.
       await db.from('tasks').insert({
         title:              taskRow.title,
         description:        taskRow.description,
@@ -916,6 +948,9 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   // If any urgency-affecting field changed, recompute the score immediately
   const needsRecompute = Object.keys(data).some(k => URGENCY_FIELDS.has(k))
   let patch = { ...data }
+  // The score this task ends up with, reused for its subtasks below — they take
+  // the same priority, deadline and curve, so they compute to the same number.
+  let mergedScore: number | null = null
 
   if (needsRecompute) {
     // Fetch current task to fill in any fields not in the patch
@@ -934,7 +969,8 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
         due_date:      (data.due_date      !== undefined ? data.due_date : current.due_date) as string | null,
         created_at:    current.created_at  as string,
       }
-      patch = { ...patch, urgency_score: computeUrgency(merged) }
+      mergedScore = computeUrgency(merged)
+      patch = { ...patch, urgency_score: mergedScore }
     }
   }
 
@@ -948,9 +984,21 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   if ('project_id'      in data) cascade.project_id      = data.project_id
   if ('due_date'        in data) cascade.due_date        = data.due_date
   if ('location'        in data) cascade.location        = data.location
+  // Importance belongs to the parent: marking it critical makes every step
+  // critical. Priority was the one input that did not cascade, which is why a
+  // subtask's own row could claim it did not matter while its parent was due
+  // today. Note this overwrites a per-subtask priority, as energy already does.
+  if ('priority'        in data) cascade.priority        = data.priority
   // Energy cascades too, by request. Note this does overwrite a per-subtask
   // override — changing the parent's energy resets every step to match.
   if ('energy_required' in data) cascade.energy_required = data.energy_required
+  // Urgency is derived, so it follows whenever one of its inputs cascades.
+  // Without this a subtask keeps the score it was born with while carrying its
+  // parent's new deadline — the two disagreeing is the state this whole change
+  // exists to remove.
+  if (mergedScore !== null && ('priority' in data || 'due_date' in data)) {
+    cascade.urgency_score = mergedScore
+  }
   if (Object.keys(cascade).length > 0) {
     await db.from('tasks').update(cascade).eq('parent_id', taskId)
   }
@@ -965,10 +1013,11 @@ export type TriageAction = 'done' | 'someday' | 'cancel' | 'activate'
 
 export async function triageTask(taskId: string, action: TriageAction) {
   const db = createServiceClient()
+  const now = new Date().toISOString()
   let patch: Record<string, unknown>
   switch (action) {
     case 'done':
-      patch = { status: 'done', completed_at: new Date().toISOString() }
+      patch = { status: 'done', completed_at: now }
       break
     case 'someday':
       patch = { type: 'someday', status: 'inbox' }
@@ -982,6 +1031,19 @@ export async function triageTask(taskId: string, action: TriageAction) {
   }
   const { error } = await db.from('tasks').update(patch).eq('id', taskId)
   if (error) throw new Error(error.message)
+
+  // Ticking a task off in the weekly review is a completion like any other, so
+  // its steps close with it — same rule as completeTask. (Cancelling leaves
+  // subtasks alone for now; that path never claimed to finish the work.)
+  if (action === 'done') {
+    const { error: subErr } = await db
+      .from('tasks')
+      .update({ status: 'done', completed_at: now })
+      .eq('parent_id', taskId)
+      .in('status', ['inbox', 'active'])
+    if (subErr) console.error('triageTask: could not close subtasks:', subErr.message)
+  }
+
   revalidatePath('/tasks')
   revalidatePath('/review')
 }
@@ -1159,7 +1221,7 @@ export async function createSubtask(
   // later than the thing it's a part of.
   const { data: parent } = await db
     .from('tasks')
-    .select('project_id, due_date, location, energy_required')
+    .select('project_id, due_date, location, energy_required, priority, urgency_curve')
     .eq('id', parentId)
     .maybeSingle()
 
@@ -1168,12 +1230,25 @@ export async function createSubtask(
     title,
     status:            'active',
     type:              'task',
-    priority:          1,
+    // Importance belongs to the parent, so a step takes it rather than being
+    // born at P1 with urgency 0. Three separate readers had to resolve upward
+    // to work around that — the scheduler, Upcoming's dueDay, and the relevance
+    // filter — and the row itself still said a reading due today did not matter.
+    //
+    // Urgency is *derived*, not copied: with the parent's priority, deadline and
+    // curve in place it computes to the same number, and stays right when either
+    // input changes. Copying the score itself is how it would drift.
+    priority:          parent?.priority ?? 1,
     // Steps of one piece of work take the same energy as the parent, and follow
     // it when it changes (see the cascade in updateTask).
     energy_required:   parent?.energy_required ?? 'low',
-    urgency_score:     0,
-    urgency_curve:     'linear',
+    urgency_curve:     parent?.urgency_curve ?? 'linear',
+    urgency_score:     computeUrgency({
+      priority:      (parent?.priority ?? 1) as Task['priority'],
+      urgency_curve: (parent?.urgency_curve ?? 'linear') as Task['urgency_curve'],
+      due_date:      parent?.due_date ?? null,
+      created_at:    new Date().toISOString(),
+    }),
     estimated_minutes: estimatedMinutes ?? null,
     project_id:        parent?.project_id ?? null,
     due_date:          parent?.due_date ?? null,

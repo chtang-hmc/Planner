@@ -639,13 +639,21 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 ### Subtasks inherit from their parent
 
-A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **priority** and **urgency**.
+A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **energy**, **priority** and **urgency curve**. All of them are set at creation and cascaded by `updateTask` when the parent changes; without the cascade they keep whatever was copied on day one and drift.
 
-Priority and urgency are read from the parent at scheduling time rather than copied. Subtasks are created at priority 1 with urgency 0, so a chain under a task marked P4 used to sort to the very bottom and get whatever slots were left — the exact opposite of what marking the parent critical is for. Project, deadline and location are set at creation and cascaded by `updateTask` when the parent moves — without the cascade they keep whatever was copied on day one and drift, showing under the wrong project or outliving the deadline they belong to.
+**Urgency is derived, not copied.** With the parent's priority, deadline and curve in place a subtask computes to the same score, and stays right when either input moves — `computeUrgency` ignores `created_at` entirely, which is what makes this safe. Copying the score itself is how it would drift.
+
+Priority was the last input to join that list, and the delay was expensive. Subtasks were born at priority 1 with urgency 0, so a row could claim it did not matter while the thing it belonged to was due today: five Public Policy readings sat at urgency 10 under a parent at 80. Three separate readers grew a workaround for it — the scheduler resolving upward, `UpcomingView.dueDay()` falling back to the parent, the relevance filter checking the parent — and a fourth would have been needed for the Home page. Fixing the data removed the need for any of them.
+
+The scheduler still reads importance from the parent on every run as belt and braces. It costs nothing and it is what kept this from being a visible bug.
 
 The scheduler reads the deadline from the parent row on every run rather than trusting the copy, so a subtask can never be scheduled later than the thing it's part of even if the two fall out of sync.
 
 **Views must not trust the copy either.** Upcoming files tasks by date and originally skipped any task with no `due_date`, so a subtask carrying null — one created before inheritance existed, or after the parent's date was cleared — appeared on no day at all. It vanished from that view while the list, which nests by `parent_id`, showed it correctly: five of six readings missing under "Public Policy Readings", which read as a nesting bug and wasn't one. `dueDay()` now falls back to the parent's date, matching what the scheduler already did. A subtask that *does* have its own date keeps it, so dragging one to another day still moves it.
+
+**A subtask does not outlive its parent.** Completing a task closes every step still open underneath it — `completeTask` and the weekly review's `done` triage both cascade. Left pending they stayed in the list, kept their urgency, and, *because* they inherit the parent's deadline, went overdue under a parent that was already finished; the checklist that was the point of the parent became six rows of noise. Only pending steps are touched, so one already ticked off keeps its own `completed_at` and `actual_minutes`. They take the parent's close status rather than always `done`: a habit occurrence closed as `cancelled` by the duplicate-day guard did not record the day, and its steps must not claim to either. A failure to cascade is logged, not thrown — the task itself is already done, and throwing would tell the user their completion didn't land.
+
+**Recurring work respawns without its checklist.** The next occurrence is the parent row alone; subtasks belong to the occurrence that was just closed out, not to the shape of the recurrence. Respawning them would resurrect steps already ticked off, week after week. `duplicateTask` *does* copy subtasks — a copy of a checklist without its items is not a copy — so the two paths differ deliberately.
 
 Subtasks appear in the main list like any other task, so each shows `↳ Parent title` — "Dahl" on its own is a mystery once it's out of the parent's checklist. The row carries a `parent:parent_id(id, title)` embed. Note the syntax: `tasks!parent_id` resolves to the *children* of a row (an array); `parent_id(...)` is the many-to-one direction.
 
