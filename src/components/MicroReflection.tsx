@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useEffect } from 'react'
+import { useState, useTransition, useEffect, useRef, useCallback } from 'react'
 import { completeTask } from '@/app/actions/tasks'
 import { Task } from '@/types'
 
@@ -24,12 +24,7 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
   const [blocker, setBlocker] = useState('')
   const [permanent, setPermanent] = useState(false)
   const [isPending, startTransition] = useTransition()
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
+  const panelRef = useRef<HTMLDivElement>(null)
 
   function handleSubmit() {
     startTransition(async () => {
@@ -44,12 +39,45 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
     })
   }
 
-  function handleSkip() {
+  const handleSkip = useCallback(() => {
     startTransition(async () => {
       await completeTask(task.id, null, null, null, permanent)
       onDone()
     })
-  }
+  }, [task.id, permanent, onDone])
+
+  /**
+   * Take the keyboard on open. Focus is still on whatever row control marked
+   * the task done, so without this the first keypress goes to the list behind
+   * the modal — and space would re-fire the button that opened it.
+   */
+  useEffect(() => { panelRef.current?.focus() }, [])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return }
+
+      // Space closes the task without logging anything — the common case is
+      // "done, nothing to report", and it shouldn't cost a click.
+      if (e.key !== ' ' && e.code !== 'Space') return
+      if (isPending) return
+
+      // Unless a control is focused that owns the space bar itself: the
+      // blocker textarea needs to type one, the permanent checkbox toggles on
+      // it, and a focused button already treats it as a click. Clicking into
+      // the minutes field is also a statement of intent — you are logging,
+      // not skipping — so the field keeps the key while it has focus.
+      const el  = e.target as HTMLElement | null
+      const tag = el?.tagName
+      if (el?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return
+
+      e.preventDefault()   // otherwise the page behind scrolls
+      handleSkip()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose, handleSkip, isPending])
 
   return (
     /* Backdrop */
@@ -58,7 +86,11 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
 
       {/* Modal */}
       <div
-        className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-5 flex flex-col gap-4"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-2xl p-5 flex flex-col gap-4 focus:outline-none"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -150,9 +182,14 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
           <button
             onClick={handleSkip}
             disabled={isPending}
-            className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-2 px-3 transition-colors"
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-2 px-3 transition-colors"
           >
             Skip
+            {/* The shortcut is the point of the button; say so rather than
+                leaving it to be discovered. */}
+            <kbd className="hidden sm:inline px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 text-[10px] font-sans leading-none text-slate-400">
+              space
+            </kbd>
           </button>
           <button
             onClick={handleSubmit}

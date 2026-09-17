@@ -82,6 +82,32 @@ export async function completeTask(
 
   if (taskErr) throw new Error(taskErr.message)
 
+  /**
+   * The steps of a finished piece of work are finished with it.
+   *
+   * Closing a parent used to leave its subtasks pending. They stayed in the
+   * list, kept their urgency, and — since they inherit the parent's deadline —
+   * went overdue underneath a parent that was already done. On a recurring
+   * task that happened at every occurrence, and the next occurrence spawns
+   * without subtasks (see the spawn block below), so the stale ones were all
+   * that remained of the checklist.
+   *
+   * Only pending steps are touched: one already closed keeps its own
+   * completed_at and actual_minutes. They take the *parent's* close status —
+   * an occurrence closed as `cancelled` by the duplicate-day guard above did
+   * not record the day, and its steps must not claim to either.
+   *
+   * A failure here doesn't fail the action: the task itself is already done,
+   * and throwing would tell the user their completion didn't land.
+   */
+  const { error: subErr } = await db
+    .from('tasks')
+    .update({ status: closeAs, completed_at: completedAt })
+    .eq('parent_id', taskId)
+    .in('status', ['inbox', 'active'])
+
+  if (subErr) console.error('completeTask: could not close subtasks:', subErr.message)
+
   // Log focus session with reflection — but only if the FloatingTimer hasn't
   // already written a session for this task in the last hour (to avoid duplicates).
   if (actualMinutes != null || estimateAccurate != null) {
@@ -201,6 +227,12 @@ export async function completeTask(
         created_at:    now,
       })
 
+      // Deliberately the parent row only — subtasks do not come along.
+      // The checklist belongs to the occurrence that was just closed out (and
+      // was closed out with it, above), not to the shape of the recurrence;
+      // respawning it would resurrect steps the user has already ticked off
+      // week after week. This is the one place a copy would be tempting —
+      // duplicateTask copies subtasks, and that is correct *there*.
       await db.from('tasks').insert({
         title:              taskRow.title,
         description:        taskRow.description,
@@ -981,10 +1013,11 @@ export type TriageAction = 'done' | 'someday' | 'cancel' | 'activate'
 
 export async function triageTask(taskId: string, action: TriageAction) {
   const db = createServiceClient()
+  const now = new Date().toISOString()
   let patch: Record<string, unknown>
   switch (action) {
     case 'done':
-      patch = { status: 'done', completed_at: new Date().toISOString() }
+      patch = { status: 'done', completed_at: now }
       break
     case 'someday':
       patch = { type: 'someday', status: 'inbox' }
@@ -998,6 +1031,19 @@ export async function triageTask(taskId: string, action: TriageAction) {
   }
   const { error } = await db.from('tasks').update(patch).eq('id', taskId)
   if (error) throw new Error(error.message)
+
+  // Ticking a task off in the weekly review is a completion like any other, so
+  // its steps close with it — same rule as completeTask. (Cancelling leaves
+  // subtasks alone for now; that path never claimed to finish the work.)
+  if (action === 'done') {
+    const { error: subErr } = await db
+      .from('tasks')
+      .update({ status: 'done', completed_at: now })
+      .eq('parent_id', taskId)
+      .in('status', ['inbox', 'active'])
+    if (subErr) console.error('triageTask: could not close subtasks:', subErr.message)
+  }
+
   revalidatePath('/tasks')
   revalidatePath('/review')
 }
