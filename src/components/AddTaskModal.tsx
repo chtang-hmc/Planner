@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef, useTransition } from 'react'
+import { useState, useEffect, useRef, useMemo, useTransition } from 'react'
 import { Project, EnergyLevel, UrgencyCurve } from '@/types'
 import { createTask } from '@/app/actions/tasks'
 import ProjectPicker from '@/components/ProjectPicker'
 import RecurrencePicker from '@/components/RecurrencePicker'
+import QuickAddInput from '@/components/QuickAddInput'
 import { rruleToLabel } from '@/lib/rrule-utils'
+import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
+import { DEFAULT_TZ, isValidTimezone } from '@/lib/day'
 
 interface ParsedResult {
   title: string
@@ -102,6 +105,34 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
 
   const [isPending, startTransition] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * The browser's own zone — the same value TimezoneSync reports to the server,
+   * so quick-add resolves "tomorrow" against the days the rest of the app
+   * counts in. Read once: it cannot change mid-modal, and reading it during
+   * render would differ between server and client.
+   */
+  const tz = useMemo(() => {
+    const browser = Intl.DateTimeFormat().resolvedOptions().timeZone
+    return isValidTimezone(browser) ? browser : DEFAULT_TZ
+  }, [])
+
+  /**
+   * Runs on every keystroke. It is pure string work against an injected clock —
+   * no network, no database — which is what lets the field highlight as you
+   * type rather than after a round trip.
+   */
+  const quick = useMemo(() => parseQuickAdd(text, { tz }), [text, tz])
+
+  /** Apply what the grammar found. Instant, and the Enter key's whole job. */
+  function applyQuickAdd() {
+    if (!quick.title && !quick.dueDay) return
+    if (quick.title) setTitle(quick.title)
+    if (quick.dueISO) setDueDate(quick.dueISO.slice(0, 10))
+    setParsed(null)
+    setParseError(null)
+    inputRef.current?.focus()
+  }
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -317,20 +348,67 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
           <>
             {/* Quick add — the fastest path in either view */}
             <div className="px-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-accent-600 dark:text-accent-400 mb-2">
-                ✦ Quick add
-              </p>
-              <textarea
+              <div className="flex items-baseline justify-between mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-accent-600 dark:text-accent-400">
+                  ✦ Quick add
+                </p>
+                <a
+                  href="/help/quick-add"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-slate-400 hover:text-accent-600 dark:hover:text-accent-400 transition-colors"
+                >
+                  Syntax ↗
+                </a>
+              </div>
+              <QuickAddInput
                 value={text}
-                onChange={e => { setText(e.target.value); setParsed(null) }}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleParse() } }}
-                rows={2}
+                onChange={v => { setText(v); setParsed(null) }}
+                onSubmit={applyQuickAdd}
+                tokens={quick.tokens}
                 placeholder="e.g. Submit CS homework by Friday, 45 min, high energy"
-                className="w-full text-sm text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-accent-500"
               />
+
+              {/* What the grammar read back, so it can be checked before it is
+                  applied. A highlight says "this was recognised"; the chip says
+                  what it was recognised *as*, which is the part that can be
+                  wrong — "3/4" is two different days on either side of an
+                  ocean. */}
+              {quick.tokens.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                  {quick.tokens.map((t, i) => (
+                    <span
+                      key={i}
+                      className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-accent-50 dark:bg-accent-500/15 text-accent-700 dark:text-accent-300"
+                    >
+                      {t.label}
+                    </span>
+                  ))}
+                  {quick.title && (
+                    <span className="text-[11px] text-slate-400 truncate">
+                      → {quick.title}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* A time is recognised and shown, but there is nowhere to store
+                  it yet: tasks.due_date is a day, not an instant. Saying so is
+                  better than reading it and dropping it silently. */}
+              {quick.timeMinutes !== null && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
+                  {formatTimeLabel(quick.timeMinutes)} understood, but not stored yet —
+                  the task will be due that day.
+                </p>
+              )}
+
               <div className="flex justify-between items-center mt-2 mb-3">
                 <p className="text-xs text-slate-400">
-                  {parsed ? '✓ Parsed — review below' : 'Press Enter or click Parse →'}
+                  {parsed
+                    ? '✓ Parsed — review below'
+                    : quick.tokens.length > 0
+                      ? 'Enter to apply'
+                      : 'Enter to apply · Parse for energy, project and estimate'}
                 </p>
                 <button
                   onClick={handleParse}

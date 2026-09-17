@@ -27,7 +27,12 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
-  const isAuthRoute  = pathname === '/login' || pathname.startsWith('/auth') || pathname === '/403'
+  // `/help` is reference material — syntax tables, no data of any kind — and a
+  // page you must log in to read is a poor place to explain how to type into a
+  // box. Kept alongside the auth routes so the single-owner check below skips
+  // it too: it is public to everyone or it is not public at all.
+  const isAuthRoute  = pathname === '/login' || pathname.startsWith('/auth')
+                     || pathname.startsWith('/help') || pathname === '/403'
   const isStaticFile = pathname.startsWith('/_next') || pathname.includes('.')
 
   if (isStaticFile) return supabaseResponse
