@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseQuickAdd, formatDayLabel, formatTimeLabel } from './quick-add'
+import { rruleToPreset, getNextOccurrence, type RecurrencePreset } from './rrule-utils'
 
 /**
  * The grammar is the contract, so it is pinned case by case.
@@ -339,5 +340,235 @@ describe('robustness', () => {
   it('never throws on arbitrary input', () => {
     const junk = ['///', '99/99/99', 'in  days', 'at :', '1/2/3/4/5', 'next', 'every', '5:99pm']
     for (const s of junk) expect(() => p(s)).not.toThrow()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recurrence
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('recurrence: the rule produced', () => {
+  it('reads the plain frequencies', () => {
+    expect(p('Standup every day').rrule).toBe('FREQ=DAILY')
+    expect(p('Review every week').rrule).toBe('FREQ=WEEKLY')
+    expect(p('Rent every month').rrule).toBe('FREQ=MONTHLY')
+    expect(p('Renew every year').rrule).toBe('FREQ=YEARLY')
+  })
+
+  it('reads the bare adverbs', () => {
+    expect(p('Standup daily').rrule).toBe('FREQ=DAILY')
+    expect(p('Review weekly').rrule).toBe('FREQ=WEEKLY')
+    expect(p('Rent monthly').rrule).toBe('FREQ=MONTHLY')
+    expect(p('Renew yearly').rrule).toBe('FREQ=YEARLY')
+    expect(p('Renew annually').rrule).toBe('FREQ=YEARLY')
+  })
+
+  it('reads intervals', () => {
+    expect(p('Water plants every 3 days').rrule).toBe('FREQ=DAILY;INTERVAL=3')
+    expect(p('Report every 2 weeks').rrule).toBe('FREQ=WEEKLY;INTERVAL=2')
+    expect(p('Deep clean every 6 months').rrule).toBe('FREQ=MONTHLY;INTERVAL=6')
+  })
+
+  it('reads "every other" as an interval of two', () => {
+    expect(p('Bins every other week').rrule).toBe('FREQ=WEEKLY;INTERVAL=2')
+    expect(p('Shave every other day').rrule).toBe('FREQ=DAILY;INTERVAL=2')
+  })
+
+  it('drops a redundant INTERVAL=1 so it matches the plain form', () => {
+    // Otherwise "every 1 week" and "every week" would be different strings and
+    // one of them would miss its preset in the recurrence picker.
+    expect(p('x every 1 week').rrule).toBe(p('x every week').rrule)
+    expect(p('x every 1 day').rrule).toBe('FREQ=DAILY')
+  })
+
+  it('reads single and multiple weekdays', () => {
+    expect(p('Gym every monday').rrule).toBe('FREQ=WEEKLY;BYDAY=MO')
+    expect(p('Gym every mon, wed and fri').rrule).toBe('FREQ=WEEKLY;BYDAY=MO,WE,FR')
+    expect(p('Gym every tuesday & thursday').rrule).toBe('FREQ=WEEKLY;BYDAY=TU,TH')
+  })
+
+  it('puts weekdays in week order however they were typed, without repeats', () => {
+    expect(p('x every fri, mon, fri').rrule).toBe('FREQ=WEEKLY;BYDAY=MO,FR')
+  })
+
+  it('reads weekday and weekend shorthands', () => {
+    expect(p('Standup every weekday').rrule).toBe('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR')
+    expect(p('Long run every weekend').rrule).toBe('FREQ=WEEKLY;BYDAY=SA,SU')
+  })
+
+  it('reads a day of the month, and the last day', () => {
+    expect(p('Rent every 1st').rrule).toBe('FREQ=MONTHLY;BYMONTHDAY=1')
+    expect(p('Invoice every 27th').rrule).toBe('FREQ=MONTHLY;BYMONTHDAY=27')
+    expect(p('Close books every last day of the month').rrule).toBe('FREQ=MONTHLY;BYMONTHDAY=-1')
+  })
+
+  it('reads an annual date', () => {
+    expect(p("Mum's birthday every jan 27").rrule).toBe('FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=27')
+    expect(p('Leap thing every feb 29').rrule).toBe('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29')
+  })
+
+  it('leaves the title clean', () => {
+    expect(p('Gym every mon, wed and fri').title).toBe('Gym')
+    expect(p('Water plants every 3 days').title).toBe('Water plants')
+    expect(p('Standup daily').title).toBe('Standup')
+  })
+
+  it('is null when nothing repeats', () => {
+    expect(p('Email Rosner tomorrow').rrule).toBeNull()
+    expect(p('Every mountain has a name').rrule).toBeNull()
+  })
+})
+
+describe('recurrence: strings the app already understands', () => {
+  /**
+   * The grammar is a second way to reach the recurrence picker's settings, not
+   * a parallel set of them. Where a phrase names a preset the string has to be
+   * byte-identical, or the picker shows "custom" for something it has a label
+   * for.
+   */
+  it('matches the presets exactly', () => {
+    const cases: [string, RecurrencePreset][] = [
+      ['x every day',      'daily'],
+      ['x every weekday',  'weekdays'],
+      ['x every monday',   'weekly_mon'],
+      ['x every friday',   'weekly_fri'],
+      ['x every sunday',   'weekly_sun'],
+      ['x every month',    'monthly'],
+    ]
+    for (const [text, preset] of cases) {
+      expect(rruleToPreset(p(text).rrule)).toBe(preset)
+    }
+  })
+
+  it('produces rules the scheduler can actually advance', () => {
+    // Every string this grammar emits has to survive a round trip through the
+    // same helper completeTask uses to spawn the next occurrence.
+    const texts = [
+      'x every day', 'x every 3 days', 'x every other week', 'x every monday',
+      'x every mon, wed and fri', 'x every weekday', 'x every weekend',
+      'x every 27th', 'x every last day of the month', 'x every jan 27',
+      'x every month', 'x every year', 'x weekly',
+    ]
+    for (const text of texts) {
+      const { rrule } = p(text)
+      expect(rrule, text).not.toBeNull()
+      const next = getNextOccurrence(rrule!, new Date('2026-09-16T00:00:00Z'))
+      expect(next, text).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      // Day strings sort lexicographically, so a plain comparison is the date
+      // comparison. toBeGreaterThan would coerce and compare as numbers.
+      expect(next! > '2026-09-16', text).toBe(true)
+    }
+  })
+})
+
+describe('recurrence: the first occurrence', () => {
+  it('is set from the rule when no date was given', () => {
+    // Today is Wednesday 16 Sep.
+    expect(p('Gym every monday').dueDay).toBe('2026-09-21')
+    expect(p('Invoice every 27th').dueDay).toBe('2026-09-27')
+    expect(p('Renew every jan 27').dueDay).toBe('2027-01-27')
+  })
+
+  it('includes today rather than skipping a week', () => {
+    // "every wednesday" typed on a Wednesday means today. Asking the rule for
+    // the occurrence strictly *after* today — which is what completeTask wants
+    // — would push it to the 23rd and quietly lose a session.
+    expect(p('Gym every wednesday').dueDay).toBe('2026-09-16')
+    expect(p('Standup every day').dueDay).toBe('2026-09-16')
+  })
+
+  it('yields to an explicit date', () => {
+    const r = p('Standup every day starting friday')
+    expect(r.rrule).toBe('FREQ=DAILY')
+    expect(r.dueDay).toBe('2026-09-18')
+    expect(r.title).toBe('Standup')
+  })
+
+  it('takes "starting" and "from" as date prefixes', () => {
+    expect(p('x every week starting monday').dueDay).toBe('2026-09-21')
+    expect(p('x every week from monday').dueDay).toBe('2026-09-21')
+  })
+})
+
+describe('recurrence: every! counts from completion', () => {
+  it('is off by default', () => {
+    expect(p('Water plants every 3 days').recurrenceFromCompletion).toBe(false)
+  })
+
+  it('is set by the bang', () => {
+    expect(p('Water plants every! 3 days').recurrenceFromCompletion).toBe(true)
+    expect(p('Water plants every! 3 days').rrule).toBe('FREQ=DAILY;INTERVAL=3')
+  })
+
+  it('works across the forms that take it', () => {
+    for (const text of ['x every! day', 'x every! monday', 'x every! other week',
+                        'x every! 27th', 'x every! weekday']) {
+      expect(p(text).recurrenceFromCompletion, text).toBe(true)
+      expect(p(text).rrule, text).not.toBeNull()
+    }
+  })
+
+  it('leaves no bang in the title', () => {
+    expect(p('Water plants every! 3 days').title).toBe('Water plants')
+  })
+})
+
+describe('recurrence: reading order against dates and times', () => {
+  /**
+   * The rule that makes the rest work: "every monday" contains a weekday and
+   * "every jan 27" contains a date. Scanning dates first would strand a bare
+   * "every" in the title and set a one-off deadline where a repeat was asked
+   * for.
+   */
+  it('does not let the date scanner eat the weekday of a repeat', () => {
+    const r = p('Gym every monday')
+    expect(r.rrule).toBe('FREQ=WEEKLY;BYDAY=MO')
+    expect(r.title).toBe('Gym')
+    expect(r.tokens.map(t => t.type)).toEqual(['recurrence'])
+  })
+
+  it('does not let it eat the date of an annual repeat', () => {
+    const r = p('Renew every jan 27')
+    expect(r.rrule).toBe('FREQ=YEARLY;BYMONTH=1;BYMONTHDAY=27')
+    expect(r.title).toBe('Renew')
+  })
+
+  it('carries a recurrence, a date and a time together', () => {
+    const r = p('Standup every weekday starting monday at 9am')
+    expect(r.rrule).toBe('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR')
+    expect(r.dueDay).toBe('2026-09-21')
+    expect(r.timeMinutes).toBe(9 * 60)
+    expect(r.title).toBe('Standup')
+    expect(r.tokens.map(t => t.type)).toEqual(['recurrence', 'date', 'time'])
+  })
+
+  it('keeps token offsets pointing at the source', () => {
+    const text = 'Standup every weekday starting monday at 9am'
+    const r = parseQuickAdd(text, { tz: LA, now: NOW })
+    for (const t of r.tokens) expect(text.slice(t.start, t.end)).toBe(t.text)
+  })
+})
+
+describe('recurrence: what it declines', () => {
+  it('does not fire on "every" alone', () => {
+    expect(p('Every effort counts').rrule).toBeNull()
+    expect(p('every').rrule).toBeNull()
+  })
+
+  it('needs an ordinal suffix for a day of the month', () => {
+    // "every 27" is indistinguishable from a count, so it is not a monthly
+    // repeat — and nothing else claims it either.
+    expect(p('x every 27').rrule).toBeNull()
+  })
+
+  it('declines an impossible annual date', () => {
+    expect(p('x every feb 30').rrule).toBeNull()
+  })
+
+  it('never throws', () => {
+    for (const s of ['every!', 'every! ', 'every 0 days', 'every 999 years',
+                     'every mon,', 'every ,', 'every 32nd']) {
+      expect(() => p(s), s).not.toThrow()
+    }
   })
 })

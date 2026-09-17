@@ -126,9 +126,12 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
 
   /** Apply what the grammar found. Instant, and the Enter key's whole job. */
   function applyQuickAdd() {
-    if (!quick.title && !quick.dueDay) return
-    if (quick.title) setTitle(quick.title)
+    if (!quick.title && !quick.dueDay && !quick.rrule) return
+    if (quick.title)  setTitle(quick.title)
     if (quick.dueISO) setDueDate(quick.dueISO.slice(0, 10))
+    // A repeat typed in the text wins over one left behind by a previous add:
+    // "every monday" is an instruction, not a suggestion.
+    if (quick.rrule)  setRrule(quick.rrule)
     setParsed(null)
     setParseError(null)
     inputRef.current?.focus()
@@ -392,13 +395,19 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                 </div>
               )}
 
-              {/* A time is recognised and shown, but there is nowhere to store
-                  it yet: tasks.due_date is a day, not an instant. Saying so is
-                  better than reading it and dropping it silently. */}
+              {/* Recognised but with nowhere to be kept. Saying so beats
+                  reading it and dropping it silently — the user typed it for a
+                  reason and would otherwise never learn it was ignored. */}
               {quick.timeMinutes !== null && (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
                   {formatTimeLabel(quick.timeMinutes)} understood, but not stored yet —
                   the task will be due that day.
+                </p>
+              )}
+              {quick.recurrenceFromCompletion && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1.5">
+                  <code className="font-mono">every!</code> understood, but counting from
+                  completion isn&rsquo;t stored yet — this will repeat from the due date.
                 </p>
               )}
 
