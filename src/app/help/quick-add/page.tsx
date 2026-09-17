@@ -12,7 +12,7 @@ import QuickAddDocs from '@/components/QuickAddDocs'
 
 export const metadata: Metadata = {
   title: 'Quick add syntax — Planner',
-  description: 'Natural-language dates and times you can type straight into the task field.',
+  description: 'Natural-language dates, times and repeats you can type straight into the task field.',
 }
 
 export default function QuickAddHelpPage() {
@@ -79,13 +79,20 @@ export default function QuickAddHelpPage() {
             <Code>every day starting friday</Code> mean what it says.
           </Note>
 
-          <Note title="Two things are read but not yet stored">
-            A <strong className="font-medium text-slate-800 dark:text-slate-200">time</strong> is
-            recognised and shown back to you, and for now the task is simply due that day. So
-            is <Code>every!</Code>: the repeat is saved, but counting from completion rather
-            than from the due date needs a column that doesn&rsquo;t exist yet, so for the
-            moment it repeats from the due date like any other. Both are said out loud in the
-            field rather than dropped in silence.
+          <Note title="A time sits beside the day, never inside it">
+            <Code>tomorrow at 5pm</Code> stores the day and the hour separately. Folding 5pm
+            into the date would make the task read as due the <em>following</em> day for
+            anyone west of UTC, so the hour is kept as a wall-clock time — it still means 5pm
+            after you move or the clocks change. The scheduler doesn&rsquo;t yet treat it as a
+            fixed appointment; it shows on the task and the day is what drives urgency.
+          </Note>
+
+          <Note title="every! restarts the clock when you finish">
+            <Code>every 3 days</Code> counts from the due date, so falling a fortnight behind
+            hands you back a date already in the past — right for rent, wrong for plants.{' '}
+            <Code>every! 3 days</Code> counts from when you actually finished, so the next one
+            is three days from now however long the last gap was. Everything else about the
+            repeat is identical.
           </Note>
         </section>
 

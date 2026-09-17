@@ -118,6 +118,7 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0012_subtask_wait_after.sql` — `tasks.gap_after_minutes`; fixed waits between subtasks (laundry cycles, proving, drying)
 - `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
 - `0014_user_timezone.sql` — `user_scheduling_config.timezone`; habit days are the user's calendar days, and the server needs to know which zone that is
+- `0015_task_due_time_and_completion_anchor.sql` — `tasks.due_time_minutes` (a wall-clock time beside the day, never inside it) and `tasks.rrule_from_completion` (`every!`)
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -772,17 +773,35 @@ A test round-trips every string the grammar can emit through `getNextOccurrence`
 
 An explicit date always wins, which is what makes `every day starting friday` mean what it says. `starting`, `start`, `starts` and `from` joined `by`/`on`/`before`/`due` as date prefixes.
 
-### `every!` is parsed but not yet stored
+### `every!` counts from completion (migration 0015)
 
-Todoist's `every! 3 days` counts the next occurrence from when you *finish* rather than from when it was due — watering the plants three days after you last watered them. The grammar reads it and returns `recurrenceFromCompletion` separately from `rrule`, because iCal has no way to express it: it is a property of how this app advances a chain, not of the rule.
+Todoist's `every! 3 days` advances the chain from when the task was *finished* rather than from when it was due. Watering the plants every three days means three days after you last watered them; a fortnight away should not come back as four missed waterings.
 
-Storing it needs a column that does not exist, and honouring it needs a change in `completeTask`, which **deliberately** anchors on the task's own `due_date` — that is plain `every`, and it is why completing a weekly review early gives the following week rather than re-spawning the same occurrence. So the field says the `!` was understood and that the task will repeat from the due date for now. Recognising it and dropping it in silence was the one option not on the table.
+This cannot live in the rrule string — iCal has no way to express it. It is a property of how *this app* advances a chain, not of the rule, so it is a column: `tasks.rrule_from_completion`, defaulting to the existing behaviour.
+
+`completeTask` picks the anchor accordingly:
+
+```ts
+const anchor = taskRow.rrule_from_completion
+  ? new Date(completedDay + 'T00:00:00Z')          // the local day it was finished
+  : (taskRow.due_date ? new Date(taskRow.due_date) : today)
+```
+
+Due-date anchoring stays the default, and stays **correct** for anything with a real deadline: rent is due on the 1st however late you paid last month. The difference only shows when you fall behind, which is exactly when it matters — `src/lib/recurrence-anchor.test.ts` pins both, side by side, because "due 1 Sep, every 3 days, finished the 14th" returns **4 September** under the default, a date already a fortnight past.
+
+The flag is carried forward on every spawn. Without that the second occurrence would silently revert to due-date anchoring, and the bug would only appear one cycle in.
+
+### A time of day lives beside the day, never inside it
+
+`tasks.due_time_minutes` — minutes from local midnight, 0–1439, NULL for all-day.
+
+It is deliberately *not* folded into `due_date`. That column is a `timestamptz` the whole app treats as UTC midnight of the local day: every comparison does `due_date.slice(0, 10)`. Storing the real instant of "5pm in Los Angeles" there would make it read as the following day — the bug class already fixed three times elsewhere in this codebase.
+
+Minutes-past-midnight is also the right *type*. A wall-clock time is timezone-independent by nature: "due at 5pm" means 5pm after a move or a DST change, which an instant would not. `formatDue` appends it and deliberately does not let it affect the tone — a task due at 9am today reads as due today at half past nine, not overdue. The scheduler does not yet treat it as a fixed appointment; that is a separate decision about pinning.
 
 ### Staged
 
-Dates, times and recurrence are in. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
-
-Two things are recognised and shown but have nowhere to live: a parsed **time** (`tasks.due_date` is a day, and there is no time-of-day column) and **`every!`**. Both are surfaced in the field rather than discarded quietly — the user typed them for a reason and would otherwise never learn they were ignored.
+Dates, times and recurrence are in, and both are now stored. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
 
 ---
 
