@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server'
+import { normalizeRelevance } from '@/lib/relevance'
 import SettingsView from './SettingsView'
 import { isWeekStartDay, WEEK_START_DEFAULT } from '@/lib/week'
 import { listDailyBreaks } from '@/app/actions/scheduling'
@@ -36,6 +37,7 @@ export default async function SettingsPage() {
       bufferMinutes={configRow?.buffer_minutes ?? 15}
       weekStartDay={isWeekStartDay(configRow?.week_start_day) ? configRow.week_start_day : WEEK_START_DEFAULT}
       breaks={await listDailyBreaks()}
+      relevance={normalizeRelevance(configRow)}
     />
   )
 }

@@ -7,6 +7,10 @@ import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
+import { saveRelevanceSettings } from '@/app/actions/scheduling'
+import {
+  relevanceHint, RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX, type RelevanceConfig,
+} from '@/lib/relevance'
 import {
   TASK_LAYOUTS, DEFAULT_TASK_LAYOUT, getStoredTaskLayout, storeTaskLayout,
   type TaskLayoutId,
@@ -437,6 +441,105 @@ function TaskLayoutSection() {
   )
 }
 
+/**
+ * The two numbers behind the task list's "Relevant" toggle.
+ *
+ * The filter is on by default, so these decide what the list looks like on
+ * arrival — which makes them worth surfacing rather than leaving as constants
+ * someone has to go and find in the source. The preview line spells out the
+ * rule in the user's own terms, because "relevant" on its own explains nothing.
+ */
+function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
+  const [windowDays, setWindowDays]   = useState(String(relevance.windowDays))
+  const [minPriority, setMinPriority] = useState(relevance.minPriority)
+  const [error, setError]   = useState<string | null>(null)
+  const [saved, setSaved]   = useState(false)
+  const [pending, start]    = useTransition()
+
+  const parsedWindow = Number(windowDays)
+  const windowValid  = Number.isInteger(parsedWindow)
+    && parsedWindow >= RELEVANT_WINDOW_MIN && parsedWindow <= RELEVANT_WINDOW_MAX
+
+  function save(nextWindow: number, nextPriority: number) {
+    setError(null)
+    setSaved(false)
+    start(async () => {
+      const res = await saveRelevanceSettings(nextWindow, nextPriority)
+      if (res.error) setError(res.error)
+      else setSaved(true)
+    })
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Relevant tasks</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        What the task list shows before you turn the Relevant filter off.
+      </p>
+
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            Show deadlines within
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={RELEVANT_WINDOW_MIN}
+              max={RELEVANT_WINDOW_MAX}
+              value={windowDays}
+              onChange={e => setWindowDays(e.target.value)}
+              onBlur={() => windowValid && save(parsedWindow, minPriority)}
+              className="w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+            <span className="text-xs text-slate-400">days ahead</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            Without a deadline, show priority
+          </label>
+          <div className="flex gap-1.5">
+            {([1, 2, 3, 4] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => { setMinPriority(p); if (windowValid) save(parsedWindow, p) }}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                  minPriority === p
+                    ? 'border-accent-500 bg-accent-50 dark:bg-accent-950 text-accent-700 dark:text-accent-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                }`}
+              >
+                {PRIORITY_NAMES[p]}+
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* The rule, in the terms just chosen. Without it "Relevant" is a word
+            with no visible meaning until something goes missing from the list. */}
+        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed border-l-2 border-slate-200 dark:border-slate-700 pl-3">
+          {relevanceHint({
+            windowDays: windowValid ? parsedWindow : relevance.windowDays,
+            minPriority,
+          })}
+        </p>
+
+        {!windowValid && (
+          <p className="text-xs text-amber-500">
+            Enter a whole number between {RELEVANT_WINDOW_MIN} and {RELEVANT_WINDOW_MAX}.
+          </p>
+        )}
+        {error && <p className="text-xs text-amber-500">{error}</p>}
+        {saved && !error && !pending && <p className="text-xs text-slate-400">Saved.</p>}
+      </div>
+    </section>
+  )
+}
+
+const PRIORITY_NAMES = ['', 'Low', 'Med', 'High', 'Crit'] as const
+
 interface SettingsViewProps {
   gcalConnected:    boolean
   gcalHasWriteScope: boolean
@@ -447,11 +550,13 @@ interface SettingsViewProps {
   bufferMinutes:    number
   weekStartDay:     number
   breaks:           DailyBreak[]
+  relevance:        RelevanceConfig
 }
 
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
   workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
+  relevance,
 }: SettingsViewProps) {
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
@@ -470,6 +575,8 @@ export default function SettingsView({
         <DefaultViewSection />
         <div className="border-t border-slate-200 dark:border-slate-800" />
         <TaskLayoutSection />
+        <div className="border-t border-slate-200 dark:border-slate-800" />
+        <RelevanceSection relevance={relevance} />
         <div className="border-t border-slate-200 dark:border-slate-800" />
         <GoogleCalendarSection
           connected={gcalConnected}

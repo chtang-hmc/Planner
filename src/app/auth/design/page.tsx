@@ -27,6 +27,7 @@ import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { HabitStreak, CalendarEvent } from '@/types'
 import QuickAddInput from '@/components/QuickAddInput'
+import { relevanceHint } from '@/lib/relevance'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
@@ -276,6 +277,65 @@ function QuickAddPreview() {
   )
 }
 
+/**
+ * The relevance controls, reading and writing local state instead of the server
+ * action — enough to see the layout and the live hint line without a session.
+ */
+function RelevancePreview() {
+  const [windowDays, setWindowDays]   = useState('7')
+  const [minPriority, setMinPriority] = useState(3)
+  const names = ['', 'Low', 'Med', 'High', 'Crit']
+  const n = Number(windowDays)
+  const valid = Number.isInteger(n) && n >= 0 && n <= 90
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Relevant tasks</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        What the task list shows before you turn the Relevant filter off.
+      </p>
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            Show deadlines within
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={0} max={90} value={windowDays}
+              onChange={e => setWindowDays(e.target.value)}
+              className="w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+            <span className="text-xs text-slate-400">days ahead</span>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            Without a deadline, show priority
+          </label>
+          <div className="flex gap-1.5">
+            {[1, 2, 3, 4].map(p => (
+              <button
+                key={p}
+                onClick={() => setMinPriority(p)}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                  minPriority === p
+                    ? 'border-accent-500 bg-accent-50 dark:bg-accent-950 text-accent-700 dark:text-accent-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                }`}
+              >
+                {names[p]}+
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed border-l-2 border-slate-200 dark:border-slate-700 pl-3">
+          {relevanceHint({ windowDays: valid ? n : 7, minPriority })}
+        </p>
+      </div>
+    </section>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -334,6 +394,15 @@ export default function DesignPreview() {
         <div className="flex flex-col gap-14">
           {!only && (
             <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Relevance settings</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="max-w-lg rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+                  <RelevancePreview />
+                </div>
+              </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Quick add</h2>

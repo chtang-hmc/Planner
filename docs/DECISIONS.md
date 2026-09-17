@@ -640,6 +640,19 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 `tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
 
+### "Relevant" is two settings, not two constants
+
+The task list's default filter answers "what am I doing now" rather than "what do I owe anyone, ever". Its two numbers — a seven-day deadline window, and priority 3 as the line an *undated* task must clear — were constants in `TaskList.tsx`. Both are judgement calls about how much of the future counts as now, and the right answer differs by how someone works: a week is a long horizon for errands and a short one for coursework. They live in `user_scheduling_config` (migration `0017`), alongside the week start day.
+
+The rule itself moved to `src/lib/relevance.ts`. It is the interesting part and the component is not — pulling it out is what made it testable, and `relevance.test.ts` pins each rule *and the order they run in*, because the order is where the meaning is:
+
+- the calendar overrides a far-off deadline — booking something far off **is** the statement that you are doing it soon
+- "not before" overrides the calendar — a gate that has not opened wins even over a booking, because you still cannot start
+- `someday` overrides everything
+- a deadline beats priority; priority is only the fallback for rows with no date to judge
+
+Settings shows the rule back in the terms just chosen, live. "Relevant" is a word with no visible meaning until something goes missing from the list, and a filter that is on by default has to explain itself.
+
 ### Subtasks inherit from their parent
 
 A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **energy**, **priority** and **urgency curve**. All of them are set at creation and cascaded by `updateTask` when the parent changes; without the cascade they keep whatever was copied on day one and drift.
