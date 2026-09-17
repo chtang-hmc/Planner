@@ -4,7 +4,10 @@
 
 ## Project orientation
 
-Personal productivity planner. Single-user. Next.js 16 App Router + Supabase + Google OAuth + Google Calendar sync. See **[`docs/DECISIONS.md`](docs/DECISIONS.md)** for the full architecture and every significant design decision.
+Personal productivity planner. Single-user. Next.js 16 App Router + Supabase + Google OAuth + Google Calendar sync.
+
+- **[`docs/DECISIONS.md`](docs/DECISIONS.md)** — the architecture and every significant design decision. Read this before changing how something works.
+- **[`docs/TODO.md`](docs/TODO.md)** — known outstanding work, with the reason each item is still open. Check it before starting something, and update it when you finish or defer something.
 
 ## Keeping decisions documented
 
