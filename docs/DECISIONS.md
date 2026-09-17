@@ -756,11 +756,33 @@ There is nowhere to store a time yet — `tasks.due_date` is a day and there is 
 
 Every example in its tables is resolved by calling `parseQuickAdd` in the reader's own zone as the page renders, rather than being written out by hand. A table that *claims* "friday → the next Friday" goes stale the moment the grammar moves; this one can only be wrong if the parser is wrong, in which case it is showing a real bug rather than hiding one.
 
+### Recurrence produces RRULE strings the app already speaks
+
+`every monday` becomes `FREQ=WEEKLY;BYDAY=MO` — a bare `FREQ=…` string with no `RRULE:` prefix, which is exactly what `tasks.rrule` stores and what `rrule-utils` accepts. Where a phrase names one of the presets in `PRESETS` the string is **byte-identical**, so the recurrence picker shows "Every Mon" rather than falling back to "custom". The grammar is a second way to reach the picker's settings, not a parallel set of them. `every 1 week` deliberately drops `INTERVAL=1` for the same reason: a redundant parameter would miss its preset.
+
+A test round-trips every string the grammar can emit through `getNextOccurrence` — the helper `completeTask` uses to spawn the next occurrence — because a rule that parses but cannot advance would fail silently, one completion later.
+
+### Recurrence is scanned before dates, and that order is load-bearing
+
+"every monday" contains a weekday; "every jan 27" contains a date. Letting the date scanner run first would strand a bare "every" in the title and set a one-off deadline where a repeat was asked for. Each pass masks its span before the next runs, so the three scans — recurrence, date, time — cannot read each other's digits.
+
+### A repeat sets its own first occurrence, inclusively
+
+`every monday` is due the coming Monday, not undated. The day is asked of the rule itself via a new `getFirstOccurrence`, so one implementation answers "when does this fire" — and asked **inclusively**, which is the difference from `getNextOccurrence`: that one is strictly *after* its anchor because it answers "the one after the one just completed". Typed on a Monday, `every monday` has to mean today; using the strict helper would push it a week out and quietly lose a session.
+
+An explicit date always wins, which is what makes `every day starting friday` mean what it says. `starting`, `start`, `starts` and `from` joined `by`/`on`/`before`/`due` as date prefixes.
+
+### `every!` is parsed but not yet stored
+
+Todoist's `every! 3 days` counts the next occurrence from when you *finish* rather than from when it was due — watering the plants three days after you last watered them. The grammar reads it and returns `recurrenceFromCompletion` separately from `rrule`, because iCal has no way to express it: it is a property of how this app advances a chain, not of the rule.
+
+Storing it needs a column that does not exist, and honouring it needs a change in `completeTask`, which **deliberately** anchors on the task's own `due_date` — that is plain `every`, and it is why completing a weekly review early gives the following week rather than re-spawning the same occurrence. So the field says the `!` was understood and that the task will repeat from the due date for now. Recognising it and dropping it in silence was the one option not on the table.
+
 ### Staged
 
-Dates and times are in. Recurrence (`every monday`, and `every!` counting from completion rather than from the due date), `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
+Dates, times and recurrence are in. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
 
-`every!` is worth calling out as more than a parser feature: `completeTask` deliberately anchors the next occurrence on the task's own `due_date`, not on when it was finished — that is plain `every`. Completion-anchored recurrence is new machinery in the completion path, not a new pattern in this file.
+Two things are recognised and shown but have nowhere to live: a parsed **time** (`tasks.due_date` is a day, and there is no time-of-day column) and **`every!`**. Both are surfaced in the field rather than discarded quietly — the user typed them for a reason and would otherwise never learn they were ignored.
 
 ---
 

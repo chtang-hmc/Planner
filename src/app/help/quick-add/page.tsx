@@ -73,9 +73,19 @@ export default function QuickAddHelpPage() {
             always part of what the task is about.
           </Note>
 
-          <Note title="Times are read but not yet stored">
-            A time is recognised and shown back to you, and for now the task is simply due that
-            day. Somewhere to keep the hour is the next piece of work.
+          <Note title="A repeat sets its own first date">
+            <Code>every monday</Code> is due the coming Monday — and typed <em>on</em> a Monday
+            it means today, not a week away. An explicit date still wins, which is what makes{' '}
+            <Code>every day starting friday</Code> mean what it says.
+          </Note>
+
+          <Note title="Two things are read but not yet stored">
+            A <strong className="font-medium text-slate-800 dark:text-slate-200">time</strong> is
+            recognised and shown back to you, and for now the task is simply due that day. So
+            is <Code>every!</Code>: the repeat is saved, but counting from completion rather
+            than from the due date needs a column that doesn&rsquo;t exist yet, so for the
+            moment it repeats from the due date like any other. Both are said out loud in the
+            field rather than dropped in silence.
           </Note>
         </section>
 
@@ -89,10 +99,9 @@ export default function QuickAddHelpPage() {
           </p>
           <ul className="flex flex-col gap-2.5 text-sm">
             {[
-              ['every monday', 'Recurrence, including every! which counts from when you finish rather than when it was due.'],
-              ['#project',     'File it as you type.'],
-              ['p1 – p4',      'Priority.'],
-              ['for 45m',      'An estimate.'],
+              ['#project', 'File it as you type.'],
+              ['p1 – p4',  'Priority.'],
+              ['for 45m',  'An estimate.'],
             ].map(([syntax, what]) => (
               <li key={syntax} className="flex gap-3">
                 <Code>{syntax}</Code>

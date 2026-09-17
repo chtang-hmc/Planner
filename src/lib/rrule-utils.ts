@@ -114,3 +114,24 @@ function toYYYYMMDD(d: Date): string {
   const day = String(d.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
+
+/**
+ * The first occurrence of a rule on or after a given day.
+ *
+ * Distinct from `getNextOccurrence`, which is strictly *after* its anchor
+ * because it answers "the one after the one just completed". This one answers
+ * "when does this rule first fire", which is what a task typed as `every
+ * monday` needs for its own due date — and on a Monday that has to be today,
+ * not a week away.
+ *
+ * Takes and returns day strings, so nothing here can drift across a timezone.
+ */
+export function getFirstOccurrence(rruleStr: string, onOrAfterDay: string): string | null {
+  try {
+    const anchor = new Date(onOrAfterDay + 'T00:00:00Z')
+    const next = rrulestr(rruleStr, { dtstart: anchor }).after(anchor, /* inc = */ true)
+    return next ? toYYYYMMDD(next) : null
+  } catch {
+    return null
+  }
+}

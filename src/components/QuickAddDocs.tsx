@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react'
 import QuickAddInput from '@/components/QuickAddInput'
-import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
-import { DEFAULT_TZ, isValidTimezone } from '@/lib/day'
+import { parseQuickAdd, formatTimeLabel, formatDayLabel } from '@/lib/quick-add'
+import { DEFAULT_TZ, isValidTimezone, todayStr } from '@/lib/day'
 
 /**
  * The interactive half of the quick-add reference.
@@ -51,9 +51,25 @@ const TIME_ROWS: Row[] = [
   { syntax: ['midnight'] },
 ]
 
+const REPEAT_ROWS: Row[] = [
+  { syntax: ['every day', 'daily'] },
+  { syntax: ['every monday', 'every mon'] },
+  { syntax: ['every mon, wed and fri'], note: 'Any list, in any order.' },
+  { syntax: ['every weekday'] },
+  { syntax: ['every weekend'] },
+  { syntax: ['every 3 days'], note: 'Also weeks, months, years.' },
+  { syntax: ['every other week'] },
+  { syntax: ['every 27th'], note: 'Monthly, on that day. The ordinal ending is required.' },
+  { syntax: ['every last day of the month'] },
+  { syntax: ['every jan 27'], note: 'Annually, on a fixed date.' },
+  { syntax: ['every month', 'monthly'] },
+  { syntax: ['every! 3 days'], note: 'Counts from when you finish, not from when it was due.' },
+]
+
 const PREFIX_ROWS: Row[] = [
   { syntax: ['Pay rent by friday'], note: 'by, on, before and due attach to the date and leave the title clean.' },
   { syntax: ['Email Rosner tomorrow at 5pm'], note: 'A date and a time, in either order.' },
+  { syntax: ['Standup every weekday starting monday'], note: 'starting and from set the first occurrence.' },
 ]
 
 const EXAMPLES = [
@@ -62,6 +78,8 @@ const EXAMPLES = [
   'Submit grades end of month',
   'Renew passport jan 27',
   'Draft the memo in 3 days',
+  'Gym every mon, wed and fri',
+  'Water plants every! 3 days',
   'Buy Tomorrowland tickets',
 ]
 
@@ -73,6 +91,15 @@ export default function QuickAddDocs() {
 
   const [text, setText] = useState('Email Rosner tomorrow at 5pm')
   const quick = useMemo(() => parseQuickAdd(text, { tz }), [text, tz])
+
+  /**
+   * A repeat sets a due day without producing a date *token* — nothing in the
+   * text said "Monday", the rule did. So the label has to be derived rather
+   * than read off the token, or the row renders as a bare ISO date.
+   */
+  const dueLabel = quick.dueDay
+    ? quick.tokens.find(t => t.type === 'date')?.label ?? formatDayLabel(quick.dueDay, todayStr(tz))
+    : null
 
   return (
     <div className="flex flex-col gap-12">
@@ -109,12 +136,23 @@ export default function QuickAddDocs() {
           <dt className="text-slate-400">Due</dt>
           <dd className="text-slate-800 dark:text-slate-200">
             {quick.dueDay
-              ? <>{quick.tokens.find(t => t.type === 'date')?.label} <span className="text-slate-400 font-mono text-xs ml-1">{quick.dueDay}</span></>
+              ? <>{dueLabel} <span className="text-slate-400 font-mono text-xs ml-1">{quick.dueDay}</span></>
               : <Dash />}
           </dd>
           <dt className="text-slate-400">Time</dt>
           <dd className="text-slate-800 dark:text-slate-200">
             {quick.timeMinutes === null ? <Dash /> : formatTimeLabel(quick.timeMinutes)}
+          </dd>
+          <dt className="text-slate-400">Repeats</dt>
+          <dd className="text-slate-800 dark:text-slate-200">
+            {quick.rrule
+              ? <>
+                  {quick.tokens.find(t => t.type === 'recurrence')?.label}
+                  <span className="text-slate-400 font-mono text-xs ml-2">{quick.rrule}</span>
+                  {quick.recurrenceFromCompletion &&
+                    <span className="text-slate-400"> · from completion</span>}
+                </>
+              : <Dash />}
           </dd>
         </dl>
       </section>
@@ -128,6 +166,14 @@ export default function QuickAddDocs() {
       <section className="flex flex-col gap-3">
         <SectionHead title="Times" />
         <RefTable rows={TIME_ROWS} tz={tz} kind="time" />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <SectionHead
+          title="Repeats"
+          sub="The rule each phrase produces, and when it first fires."
+        />
+        <RefTable rows={REPEAT_ROWS} tz={tz} kind="repeat" />
       </section>
 
       <section className="flex flex-col gap-3">
@@ -154,7 +200,7 @@ function SectionHead({ title, sub }: { title: string; sub?: string }) {
 function RefTable({ rows, tz, kind = 'date' }: {
   rows: Row[]
   tz: string
-  kind?: 'date' | 'time' | 'full'
+  kind?: 'date' | 'time' | 'repeat' | 'full'
 }) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -169,9 +215,14 @@ function RefTable({ rows, tz, kind = 'date' }: {
             const resolved =
               kind === 'time'
                 ? (parsed.timeMinutes === null ? null : formatTimeLabel(parsed.timeMinutes))
-                : parsed.dueDay
-                  ? `${parsed.tokens.find(t => t.type === 'date')?.label} · ${parsed.dueDay}`
-                  : null
+                : kind === 'repeat'
+                  ? (parsed.rrule
+                      ? `${parsed.tokens.find(t => t.type === 'recurrence')?.label} · starts `
+                        + (parsed.dueDay ? formatDayLabel(parsed.dueDay, todayStr(tz)) : '—')
+                      : null)
+                  : parsed.dueDay
+                    ? `${parsed.tokens.find(t => t.type === 'date')?.label} · ${parsed.dueDay}`
+                    : null
 
             return (
               <tr
@@ -195,6 +246,9 @@ function RefTable({ rows, tz, kind = 'date' }: {
                   {resolved
                     ? <span className="text-slate-800 dark:text-slate-200">{resolved}</span>
                     : <Dash />}
+                  {kind === 'repeat' && parsed.rrule && (
+                    <p className="font-mono text-[11px] text-slate-400 mt-0.5">{parsed.rrule}</p>
+                  )}
                   {kind === 'full' && parsed.title && (
                     <span className="text-slate-400"> · title “{parsed.title}”</span>
                   )}
