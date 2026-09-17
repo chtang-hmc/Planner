@@ -14,6 +14,27 @@ import { getValidToken, deleteTaskBlock, createTaskBlock } from '@/lib/google-ca
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
 
+/** Postgres unique-violation. */
+const UNIQUE_VIOLATION = '23505'
+
+/**
+ * True when an error is the one-habit-per-day index (migration 0016) refusing a
+ * second completion for the same day.
+ *
+ * That index is the backstop under three hand-written guards, so tripping it is
+ * not a failure the user needs to see — it means another writer got there first,
+ * which is precisely the outcome the guards were trying to produce. Callers
+ * treat it as "already recorded" and carry on.
+ *
+ * Matched on the code plus the index name so a *different* unique violation is
+ * still reported rather than silently swallowed.
+ */
+function isDuplicateHabitDay(err: { code?: string; message?: string } | null): boolean {
+  return !!err
+    && err.code === UNIQUE_VIOLATION
+    && !!err.message?.includes('tasks_one_habit_completion_per_day')
+}
+
 // ── Complete a task + log reflection ────────────────────────────────────────
 export async function completeTask(
   taskId: string,
@@ -74,11 +95,35 @@ export async function completeTask(
     if (sameDay && sameDay.length > 0) closeAs = 'cancelled'
   }
 
-  // Mark task done
-  const { error: taskErr } = await db
+  // Mark task done.
+  //
+  // Nothing here writes `completed_day` (migration 0016): a trigger derives it
+  // from completed_at, so the one-per-day index is maintained even by a writer
+  // that has never heard of the column. That also keeps this path working on a
+  // database where 0016 has not been applied yet — the index simply is not
+  // there to enforce anything.
+  let { error: taskErr } = await db
     .from('tasks')
     .update({ status: closeAs, completed_at: completedAt, actual_minutes: actualMinutes })
     .eq('id', taskId)
+
+  /**
+   * The index refused it, so another writer recorded this day between our
+   * check above and our write — the race the pre-flight guard cannot close on
+   * its own.
+   *
+   * Close the occurrence out as `cancelled`, which is exactly what that guard
+   * would have chosen had it seen the other row. Returning here instead would
+   * leave the occurrence pending: the day would hold one record, correctly,
+   * but the chain would never advance and the habit would sit un-spawned.
+   */
+  if (isDuplicateHabitDay(taskErr)) {
+    closeAs = 'cancelled'
+    ;({ error: taskErr } = await db
+      .from('tasks')
+      .update({ status: 'cancelled', completed_at: completedAt, actual_minutes: actualMinutes })
+      .eq('id', taskId))
+  }
 
   if (taskErr) throw new Error(taskErr.message)
 
@@ -670,6 +715,8 @@ export async function setHabitCompletion(
     completed_at:      noonLocal,
     ...(template.exclusive_group ? { exclusive_group: template.exclusive_group } : {}),
   })
+  // Already recorded by another writer — the same answer this path wanted.
+  if (isDuplicateHabitDay(error)) return {}
   if (error) return { error: error.message }
 
   revalidatePath('/habits')
@@ -763,6 +810,7 @@ export async function logHabitSession(
       completed_at:      opts.startISO,   // created_at: column default = now()
       ...(habit.exclusive_group ? { exclusive_group: habit.exclusive_group } : {}),
     }).select('id').single()
+    if (isDuplicateHabitDay(error)) return { error: 'Already logged for that day' }
     if (error) return { error: error.message }
     rowId = inserted.id
   }
@@ -1051,16 +1099,25 @@ export async function triageTask(taskId: string, action: TriageAction) {
   const { error } = await db.from('tasks').update(patch).eq('id', taskId)
   if (error) throw new Error(error.message)
 
-  // Ticking a task off in the weekly review is a completion like any other, so
-  // its steps close with it — same rule as completeTask. (Cancelling leaves
-  // subtasks alone for now; that path never claimed to finish the work.)
-  if (action === 'done') {
+  /**
+   * A subtask does not outlive its parent, whichever way the parent closed.
+   *
+   * Ticking a task off in the weekly review is a completion like any other, so
+   * its steps are done with it. Cancelling is not a completion — the work was
+   * dropped, not finished — but the steps are equally over, and leaving them
+   * `active` under a cancelled parent puts orphans back in the list carrying
+   * the parent's deadline. They take the parent's own status so the record
+   * stays honest about which of the two happened.
+   */
+  if (action === 'done' || action === 'cancel') {
     const { error: subErr } = await db
       .from('tasks')
-      .update({ status: 'done', completed_at: now })
+      .update(action === 'done'
+        ? { status: 'done', completed_at: now }
+        : { status: 'cancelled' })
       .eq('parent_id', taskId)
       .in('status', ['inbox', 'active'])
-    if (subErr) console.error('triageTask: could not close subtasks:', subErr.message)
+    if (subErr) console.error(`triageTask(${action}): could not close subtasks:`, subErr.message)
   }
 
   revalidatePath('/tasks')

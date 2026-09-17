@@ -310,18 +310,22 @@ const ENERGY_LABELS = ['', 'Exhausted', 'Low', 'Okay', 'Good', 'Energized']
 // ── Rolling 7-day bar chart ───────────────────────────────────────────────────
 
 function EnergyRecentChart({ days }: { days: DailyEnergy[] }) {
-  // Fill in missing days so we always show 7 bars
-  const filled: (DailyEnergy | null)[] = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i))
-    const key = d.toISOString().slice(0, 10)
-    return days.find(e => e.date === key) ?? null
-  })
+  /**
+   * `days` arrives as exactly seven local days, oldest first, empty ones
+   * included — built server-side where the timezone is known. This component
+   * deliberately does no date arithmetic: the version that did built its keys
+   * from a local `Date` run through `toISOString()` and silently failed to
+   * match the server's east of UTC.
+   */
+  const filled = days.map(d => (d.count > 0 ? d : null))
 
-  function dayLabel(offset: number) {
-    if (offset === 6) return 'Today'
-    if (offset === 5) return 'Yday'
-    const d = new Date(); d.setDate(d.getDate() - (6 - offset))
-    return d.toLocaleDateString('en-US', { weekday: 'short' })
+  function dayLabel(i: number) {
+    if (i === days.length - 1) return 'Today'
+    if (i === days.length - 2) return 'Yday'
+    // Noon UTC, read back as UTC: a day string formatted without ever becoming
+    // a local instant that could land on the day either side.
+    return new Date(days[i].date + 'T12:00:00Z')
+      .toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
   }
 
   const hasAny = filled.some(Boolean)

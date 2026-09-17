@@ -23,8 +23,19 @@ function startOfDay(d: Date): Date {
 function addDays(d: Date, n: number): Date {
   const r = new Date(d); r.setDate(r.getDate() + n); return r
 }
+/**
+ * A local `Date` as its own calendar day.
+ *
+ * Read from the date's own fields, never through `toISOString()`. Every `Date`
+ * here comes from `startOfDay`, which is local midnight — and local midnight
+ * east of UTC is still the *previous* day in UTC, so the ISO route labelled
+ * every column a day early there. West of UTC the two agree, which is why this
+ * survived unnoticed.
+ */
 function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  return d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0')
 }
 function dayLabel(d: Date, today: Date): string {
   const ds = toDateStr(d), ts = toDateStr(today)
