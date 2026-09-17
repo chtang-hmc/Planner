@@ -26,6 +26,8 @@ import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { HabitStreak, CalendarEvent } from '@/types'
+import QuickAddInput from '@/components/QuickAddInput'
+import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
@@ -224,6 +226,56 @@ function LayoutPreview({ id, expanded, onToggle }: {
   )
 }
 
+/**
+ * The real QuickAddInput against a fixed clock, so the highlighting and the
+ * resolved labels can be seen without a session. The examples are the ones the
+ * grammar is most likely to get subtly wrong.
+ */
+function QuickAddPreview() {
+  const [text, setText] = useState('Email Rosner tomorrow at 5pm')
+  const NOW = new Date('2026-09-16T19:00:00Z')   // Wed 16 Sep, noon in LA
+  const quick = parseQuickAdd(text, { tz: 'America/Los_Angeles', now: NOW })
+
+  const examples = [
+    'Email Rosner tomorrow at 5pm',
+    'Pay rent by friday',
+    'Submit grades end of month',
+    'Renew passport jan 27',
+    'Standup 9am next monday',
+    'Buy Tomorrowland tickets',
+  ]
+
+  return (
+    <div className="max-w-2xl flex flex-col gap-3">
+      <p className="text-xs text-slate-400">Clock pinned to Wed 16 Sep 2026, 12:00 America/Los_Angeles.</p>
+      <QuickAddInput
+        value={text}
+        onChange={setText}
+        tokens={quick.tokens}
+        placeholder="e.g. Submit CS homework by Friday"
+      />
+      <div className="flex flex-wrap gap-1.5">
+        {examples.map(e => (
+          <button
+            key={e}
+            onClick={() => setText(e)}
+            className="text-[11px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-400"
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <div className="text-xs font-mono text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900 rounded-lg p-3 flex flex-col gap-1">
+        <span>title       {quick.title || '—'}</span>
+        <span>dueDay      {quick.dueDay ?? '—'}</span>
+        <span>dueISO      {quick.dueISO ?? '—'}</span>
+        <span>time        {quick.timeMinutes === null ? '—' : formatTimeLabel(quick.timeMinutes)}</span>
+        <span>tokens      {quick.tokens.map(t => `${t.type}:"${t.text}"→${t.label}`).join('  ') || '—'}</span>
+      </div>
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -282,6 +334,13 @@ export default function DesignPreview() {
         <div className="flex flex-col gap-14">
           {!only && (
             <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Quick add</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <QuickAddPreview />
+              </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Sidebar &amp; calendar panel</h2>

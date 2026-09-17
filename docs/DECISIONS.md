@@ -15,16 +15,18 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Task Row Layouts](#task-row-layouts)
-11. [Task List Views](#task-list-views)
-12. [Inline Search](#inline-search)
-13. [Drag-to-Reschedule](#drag-to-reschedule)
-14. [Priority-Colored Circles](#priority-colored-circles)
-15. [Projects](#projects)
-16. [Color Themes](#color-themes)
-17. [Week Start](#week-start)
-18. [Tests](#tests)
-19. [Server / Client Component Split](#server--client-component-split)
+10. [Add Modal: Compact vs Detailed](#add-modal-compact-vs-detailed)
+11. [Quick Add: natural-language dates](#quick-add-natural-language-dates)
+12. [Task Row Layouts](#task-row-layouts)
+13. [Task List Views](#task-list-views)
+14. [Inline Search](#inline-search)
+15. [Drag-to-Reschedule](#drag-to-reschedule)
+16. [Priority-Colored Circles](#priority-colored-circles)
+17. [Projects](#projects)
+18. [Color Themes](#color-themes)
+19. [Week Start](#week-start)
+20. [Tests](#tests)
+21. [Server / Client Component Split](#server--client-component-split)
 
 ---
 
@@ -709,6 +711,56 @@ Same reason as everywhere else — those columns arrived in later migrations, an
 ### What's not here
 
 Habit exclusivity (gym and running never sharing a day) stays on the habits page. It's a pairing against habits that already exist, and the add modal doesn't have that list — a free-text group name here is exactly the mistake that produced cross-named groups the first time.
+
+---
+
+## Quick Add: natural-language dates
+
+Typing the date into the task — "Email Rosner tomorrow at 5pm" — the way Todoist does. `src/lib/quick-add.ts` finds the tokens, returns their source offsets so the field can highlight them where they were typed, and hands back the title with those spans removed.
+
+### Deterministic grammar beside the LLM parser, not instead of it
+
+The field already had a parser: `/api/parse-task` sends the text to Claude and fills in energy, project and an estimate. That stays, because a fixed grammar will never infer "deep work" from a phrase. But it is a network round trip behind a button, and the thing that makes quick-add feel like quick-add is watching the date light up *as you type*. So the two split by what each is good for:
+
+- the grammar runs on every keystroke — pure, synchronous, free, and always the same answer twice
+- **Enter** applies what the grammar found, with no network at all
+- **✦ Parse** still calls the model for the fields the grammar has no opinion about
+
+### Hand-rolled rather than `chrono-node`
+
+`chrono-node` covers the date and time columns well and would have saved a day's work. Against it: the grammar also has to produce recurrence (`every monday` → an RRULE) and the metadata tokens, which chrono does not do at all, so half the input would be parsed by a library and half by us — two sets of offsets to reconcile for one highlight layer. And the timezone contract here is strict in a way chrono's reference-date API makes awkward to guarantee. One tokenizer that owns the whole string is simpler than a library plus a second parser, and the grammar is bounded — it is keyword-driven, not open-ended prose.
+
+### Days are resolved as days, never by `Date` arithmetic
+
+Every resolution runs on day strings through `lib/day`. This is the rule the module exists to protect: `new Date(Date.now() + 86400000)` gives the wrong "tomorrow" for anyone west of UTC in the evening, which is the same bug this codebase has already fixed in the habit heatmap, in Upcoming, and in the weekly review.
+
+`dueISO` is **UTC midnight of the local day** — the `due_date` convention everything else relies on, since every comparison in the app does `due_date.slice(0, 10)`. A parsed *time* is returned as a separate `timeMinutes` and deliberately **not** folded into that timestamp: doing so would make a task due at 5pm in Los Angeles read as the following day.
+
+There is nowhere to store a time yet — `tasks.due_date` is a day and there is no time-of-day column — so the field says the time was understood and that the task will be due that day. Recognising it and dropping it silently was the one option not on the table.
+
+### Choices the grammar makes on purpose
+
+- **A bare number is not a time.** `at 5pm`, `17:00` and `noon` are times; `at 5` is not. In "Read at 5 pages" the 5 is a quantity far more often than an hour, and silently scheduling the wrong time is worse than leaving it alone.
+- **`next friday` is that weekday in the *following* week**, anchored on the configured first day of the week so it agrees with everything else that talks about weeks. From a Wednesday it coincides with plain `friday`; standing on a Friday the two differ, which is the case where treating them as synonyms would be wrong.
+- **A month-day with no year means the next one to come round**, searching forward several years rather than one — `feb 29` is a real date whose next occurrence can be three years out.
+- **The first date wins.** "Call mom monday about friday plans" takes only `monday`. One task has one deadline; a second date is nearly always part of what the task is about.
+- **Anything unrecognised stays in the title.** `Buy Tomorrowland tickets` is a festival, not a due date, and `feb 30` is declined rather than rounded to the 28th.
+
+### The highlight is two layers, and they must lay out identically
+
+`QuickAddInput` stacks a transparent textarea over a backdrop that renders the same string in transparent ink — the backdrop contributes only the coloured rectangles, the visible glyphs are always the textarea's. Any difference in font, size, line height, padding or border between the two shows up as highlights drifting off their words, worse the further down you read, so the box metrics are written once and shared. The background sits on the *backdrop*: an opaque textarea would paint over the very highlights it is meant to reveal.
+
+### The reference page is public and computes itself
+
+`/help/quick-add` — exempted in `src/proxy.ts` alongside the auth routes. It documents syntax and holds no data, and a page you must log in to read is a poor place to explain how to type into a box.
+
+Every example in its tables is resolved by calling `parseQuickAdd` in the reader's own zone as the page renders, rather than being written out by hand. A table that *claims* "friday → the next Friday" goes stale the moment the grammar moves; this one can only be wrong if the parser is wrong, in which case it is showing a real bug rather than hiding one.
+
+### Staged
+
+Dates and times are in. Recurrence (`every monday`, and `every!` counting from completion rather than from the due date), `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
+
+`every!` is worth calling out as more than a parser feature: `completeTask` deliberately anchors the next occurrence on the task's own `due_date`, not on when it was finished — that is plain `every`. Completion-anchored recurrence is new machinery in the completion path, not a new pattern in this file.
 
 ---
 
