@@ -13,6 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history. The migration check below asks what this branch added
+          # *since it diverged* from the target, which needs a merge base — and
+          # a shallow clone has none. At the default depth of 1 that comparison
+          # died with "no merge base", the error was swallowed, and the step
+          # cheerfully reported "No new migrations" on every PR ever opened,
+          # including ones that added them. A check that cannot fail is not a
+          # check.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -41,8 +50,24 @@ jobs:
       - name: Flag new migrations
         if: github.event_name == 'pull_request'
         run: |
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
-          NEW=$(git diff --name-only --diff-filter=A "origin/${{ github.base_ref }}"...HEAD -- supabase/migrations/ || true)
+          BASE="origin/${{ github.base_ref }}"
+          # No --depth here either: re-fetching shallow would undo fetch-depth: 0.
+          git fetch --no-tags origin "${{ github.base_ref }}"
+
+          # Prove the comparison can run before trusting what it says. Without
+          # this the happy path and the broken path print the same reassuring
+          # line, which is how "No new migrations" went unquestioned through
+          # every PR. merge-base exits non-zero when there is none, and the
+          # step runs under `bash -e`, so a broken check now fails loudly
+          # instead of passing quietly.
+          MERGE_BASE=$(git merge-base "$BASE" HEAD)
+          echo "Comparing against $BASE (merge base ${MERGE_BASE:0:12})"
+
+          # Three dots — files added since this branch diverged, not files that
+          # merely differ from the tip of the target. No `|| true`: a diff that
+          # cannot run is a broken check, and swallowing its error is exactly
+          # how this one stayed broken while looking green.
+          NEW=$(git diff --name-only --diff-filter=A "$BASE...HEAD" -- supabase/migrations/)
           if [ -n "$NEW" ]; then
             echo "::warning title=Migration needs applying::This PR adds migrations. Apply them to Supabase before merging:"
             echo "$NEW" | while read -r f; do echo "::warning::  $f"; done
