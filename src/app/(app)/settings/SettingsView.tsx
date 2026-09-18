@@ -12,6 +12,7 @@ import {
   LightIcon, DarkIcon, SystemIcon, CalendarIcon, WarningIcon, DoneIcon,
 } from '@/components/icons'
 import { List as ListIcon } from 'lucide-react'
+import { Segmented } from '@/components/TaskChrome'
 import { saveRelevanceSettings } from '@/app/actions/scheduling'
 import {
   relevanceHint, RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX, type RelevanceConfig,
@@ -554,57 +555,85 @@ interface SettingsViewProps {
   relevance:        RelevanceConfig
 }
 
+/**
+ * Which half of Settings is showing.
+ *
+ * Tabs rather than two routes: Settings is one sidebar entry, and a second one
+ * for "Settings (advanced)" would put the split in the navigation where it
+ * would be read on every page rather than only here. Remembered, because
+ * whichever half you use is the half you keep coming back to.
+ */
+const TAB_KEY = 'planner.settings.tab'
+type SettingsTab = 'simple' | 'advanced'
+
+function storedTab(): SettingsTab {
+  if (typeof window === 'undefined') return 'simple'
+  try { return localStorage.getItem(TAB_KEY) === 'advanced' ? 'advanced' : 'simple' }
+  catch { return 'simple' }
+}
+
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
   workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
   relevance,
 }: SettingsViewProps) {
+  const tab = useStored(storedTab, 'simple' as SettingsTab)
+
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
-      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
-        <div className="px-6 py-3">
+        <div className="px-6 py-3 flex items-center justify-between gap-4">
           <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Settings</h1>
+          <Segmented
+            value={tab}
+            onChange={v => writeStored(() => localStorage.setItem(TAB_KEY, v))}
+            options={[
+              { id: 'simple',   label: 'Simple'   },
+              { id: 'advanced', label: 'Advanced' },
+            ]}
+          />
         </div>
       </header>
 
-      {/* Settings fill the panel.
-          max-w-lg with no mx-auto pinned every control to the left edge and
-          left the rest of the width blank — the same thing Projects and
-          Analytics were doing. Sections are cards in a grid that breaks into
-          two columns as the panel grows, rather than one column stretched to
-          whatever the window is: a 1400px-wide row of radio buttons "fills the
-          panel" and reads worse than the 512px it replaced.
+      {/* Sections are cards in a grid that breaks into two columns as the panel
+          grows, rather than one column stretched to whatever the window is: a
+          1400px-wide row of radio buttons "fills the panel" and reads worse
+          than the 512px it replaced.
 
-          The dividers went with the change. A horizontal rule between sections
-          only reads as a separator while they are in one stack; in a grid it is
-          a line across the middle of nothing. The card edges do that job now.
-
-          Scheduling spans both columns — it holds a week grid and an hours
-          table, and was laid out to be wide. */}
+          items-start, unlike Analytics: these cards have genuinely different
+          amounts in them, and stretching a three-option radio group to match a
+          working-hours table gives it a field of empty space rather than a
+          matching neighbour. */}
       <div className="px-6 py-6 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <Card><ThemeSection /></Card>
-        <Card><AccentSection /></Card>
-        <Card><DefaultViewSection /></Card>
-        <Card><TaskLayoutSection /></Card>
-        <Card><RelevanceSection relevance={relevance} /></Card>
-        <Card>
-          <GoogleCalendarSection
-            connected={gcalConnected}
-            hasWriteScope={gcalHasWriteScope}
-            connectedAt={gcalConnectedAt}
-          />
-        </Card>
-        <Card className="xl:col-span-2">
-          <SchedulingSettings
-            workingHours={workingHours}
-            energySchedule={energySchedule}
-            maxSession={maxSession}
-            bufferMinutes={bufferMinutes}
-            weekStartDay={weekStartDay}
-            breaks={breaks}
-          />
-        </Card>
+        {tab === 'simple' ? (
+          <>
+            <Card><ThemeSection /></Card>
+            <Card><AccentSection /></Card>
+            <Card><DefaultViewSection /></Card>
+            <Card><TaskLayoutSection /></Card>
+            <Card className="xl:col-span-2">
+              <GoogleCalendarSection
+                connected={gcalConnected}
+                hasWriteScope={gcalHasWriteScope}
+                connectedAt={gcalConnectedAt}
+              />
+            </Card>
+          </>
+        ) : (
+          <>
+            <Card className="xl:col-span-2"><RelevanceSection relevance={relevance} /></Card>
+            <Card className="xl:col-span-2">
+              <SchedulingSettings
+                workingHours={workingHours}
+                energySchedule={energySchedule}
+                maxSession={maxSession}
+                bufferMinutes={bufferMinutes}
+                weekStartDay={weekStartDay}
+                breaks={breaks}
+              />
+            </Card>
+          </>
+        )}
       </div>
     </div>
   )
