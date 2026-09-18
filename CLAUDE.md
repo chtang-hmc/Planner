@@ -7,7 +7,8 @@
 Personal productivity planner. Single-user. Next.js 16 App Router + Supabase + Google OAuth + Google Calendar sync.
 
 - **[`docs/DECISIONS.md`](docs/DECISIONS.md)** — the architecture and every significant design decision. Read this before changing how something works.
-- **[`docs/TODO.md`](docs/TODO.md)** — known outstanding work, with the reason each item is still open. Check it before starting something, and update it when you finish or defer something.
+- **[`docs/TODO.md`](docs/TODO.md)** — standing context: accepted costs, thin spots, and work that shipped but has never been run for real. Not a work queue.
+- **GitHub Issues** — the work queue. Anything someone could pick up and finish lives there, not in `TODO.md`.
 
 ## Keeping decisions documented
 
@@ -25,6 +26,49 @@ Examples of things that warrant an entry:
 - Adding a new table or column with non-obvious semantics
 - Changing the urgency formula or timer state machine
 - Any "we tried X but switched to Y because Z"
+
+## Written-down facts decay
+
+`docs/TODO.md`, `docs/DECISIONS.md` and issue descriptions all state things about
+the code and the database that were true when someone typed them. Some of them
+stop being true without anyone noticing, because nothing fails when a document
+goes stale.
+
+**Treat a written claim as a lead, not a finding.** Before acting on one,
+re-establish it — read the code, query the database, run the command. Then say
+in the commit or PR how you checked. This is not ceremony: on 2026-09-17 a stale
+`TODO.md` produced a duplicate count that was wrong, and a "fix the client" entry
+that would have broken the matching server-side bug it never mentioned.
+
+Three specific habits:
+
+- **Date every factual claim you write down.** A row count, a file count, a
+  "this has never fired" — all of them need "checked YYYY-MM-DD" beside them, or
+  the next reader cannot tell a fresh measurement from a year-old one.
+- **When you finish something, delete the entry and check its neighbours.** Most
+  staleness is collateral — an entry nobody touched, describing code somebody
+  did.
+- **Prefer documents that compute themselves.** `/help/quick-add` resolves every
+  example by calling the real parser, so it cannot go stale; a table of hand-written
+  answers would have started lying the first time the grammar moved. Where a doc
+  can be derived rather than asserted, derive it.
+
+## Keeping the work queue and the context apart
+
+Two trackers that overlap is how one of them stops being updated.
+
+- **An issue** is discrete work someone could pick up and finish. Include the
+  decisions that need settling before starting — the ones that would otherwise
+  be made silently and wrongly.
+- **`docs/TODO.md`** is what is true about the project and not a unit of work:
+  costs accepted on purpose, data that is thin rather than broken, code that
+  shipped but has never been exercised for real.
+- **`docs/DECISIONS.md`** is why the code is the way it is. Settled decisions
+  live there, never in `TODO.md`.
+
+When a `TODO.md` entry becomes actionable, open an issue and **delete** the
+entry. Do not leave a pointer behind — "see #24" is one more thing to keep in
+sync.
 
 ## Code conventions
 
