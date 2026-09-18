@@ -498,7 +498,7 @@ function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
 
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-            Minimum priority
+            …or priority at least
           </label>
           <div className="flex gap-1.5">
             {([1, 2, 3, 4] as const).map(p => (

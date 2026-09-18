@@ -650,14 +650,13 @@ The horizontal rules between sections went with the change. A divider only reads
 
 The task list's default filter answers "what am I doing now" rather than "what do I owe anyone, ever". Its two numbers — a seven-day deadline window, and priority 3 as the line an *undated* task must clear — were constants in `TaskList.tsx`. Both are judgement calls about how much of the future counts as now, and the right answer differs by how someone works: a week is a long horizon for errands and a short one for coursework. They live in `user_scheduling_config` (migration `0017`), alongside the week start day.
 
-**Priority is a floor, not a fallback.** It applies to dated and undated work alike: a deadline says *when*, not whether the thing matters, and a Low task due tomorrow is still a Low task. It was originally consulted only when a task had no date, which put a P1 errand due tomorrow at the top of the list beside genuinely urgent work. The calendar still overrides it — having decided explicitly to do a small thing at a set time, the filter should not take it back out for being small.
+**The deadline and the priority are an `or`, and each rescues what the other would drop.** A Low errand due tomorrow is current because it is due tomorrow, not because it is important; a Critical piece of work due in three months is current because it is Critical, even though the date is far off. Priority was originally consulted *only* when a task had no date at all, so that second case — important work with a distant deadline — was hidden, which is the gap this closes. Requiring both instead would hide both, and they are the two things a person most often wants to see. What falls out is the genuine backlog: unimportant work that is neither soon nor undated-and-important.
 
 The rule itself moved to `src/lib/relevance.ts`. It is the interesting part and the component is not — pulling it out is what made it testable, and `relevance.test.ts` pins each rule *and the order they run in*, because the order is where the meaning is:
 
-- the calendar overrides a far-off deadline **and** the priority floor — booking something *is* the statement that you are doing it
-- "not before" overrides the calendar — a gate that has not opened wins even over a booking, because you still cannot start
-- `someday` overrides everything
-- the priority floor is applied before the deadline, not after
+- `someday` and an unopened "not before" gate disqualify outright, whatever else is true — including a calendar booking, since you still cannot start
+- the calendar admits anything, however small or far off: booking something *is* the statement that you are doing it
+- the deadline window and the priority bar are independent grounds; either alone is enough
 
 Settings shows the rule back in the terms just chosen, live. "Relevant" is a word with no visible meaning until something goes missing from the list, and a filter that is on by default has to explain itself.
 

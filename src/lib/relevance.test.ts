@@ -17,113 +17,106 @@ const HORIZON = '2026-09-24'   // seven days on
 
 type Row = Parameters<typeof isRelevant>[0]
 
-/** Priority 3 by default, so a row clears the floor unless a test lowers it. */
+/** Priority 1 by default, so a row qualifies only on the grounds a test gives it. */
 const row = (over: Partial<Row> = {}): Row => ({
-  type: 'task', start_date: null, scheduled_start: null, due_date: null, priority: 3,
+  type: 'task', start_date: null, scheduled_start: null, due_date: null, priority: 1,
   ...over,
 } as Row)
 
 const rel = (over: Partial<Row> = {}, minPriority?: number) =>
   isRelevant(row(over), TODAY, HORIZON, minPriority)
 
-describe('the five rules', () => {
+describe('the two disqualifiers', () => {
   it('never counts someday, whatever else it has going for it', () => {
     expect(rel({ type: 'someday' as Task['type'], due_date: `${TODAY}T00:00:00Z`, priority: 4 })).toBe(false)
   })
 
   it('drops work gated by a future "not before"', () => {
-    expect(rel({ due_date: `${TODAY}T00:00:00Z`, start_date: '2026-09-20T00:00:00Z' })).toBe(false)
+    expect(rel({ due_date: `${TODAY}T00:00:00Z`, priority: 4, start_date: '2026-09-20T00:00:00Z' })).toBe(false)
   })
 
   it('keeps work whose gate has already opened', () => {
     expect(rel({ due_date: `${TODAY}T00:00:00Z`, start_date: '2026-09-10T00:00:00Z' })).toBe(true)
   })
 
-  it('keeps anything already on the calendar', () => {
-    expect(rel({ scheduled_start: '2026-11-01T17:00:00Z' })).toBe(true)
+  it('lets the gate override even a calendar booking', () => {
+    // You cannot start it, however firmly it is booked.
+    expect(rel({ scheduled_start: '2026-09-18T17:00:00Z', start_date: '2026-10-01T00:00:00Z' })).toBe(false)
+  })
+})
+
+describe('the three ways in — any one is enough', () => {
+  /**
+   * The deadline and the priority are an **or**. Each rescues what the other
+   * would drop, and these two cases are the whole reason for it.
+   */
+  it('admits an unimportant task because it is due soon', () => {
+    expect(rel({ priority: 1, due_date: '2026-09-18T00:00:00Z' })).toBe(true)
   })
 
-  it('applies the priority floor to dated and undated work alike', () => {
-    // The point of the rule: a deadline says *when*, not whether it matters.
-    expect(rel({ priority: 2, due_date: '2026-09-18T00:00:00Z' })).toBe(false)
-    expect(rel({ priority: 2 })).toBe(false)
-    expect(rel({ priority: 3, due_date: '2026-09-18T00:00:00Z' })).toBe(true)
-    expect(rel({ priority: 3 })).toBe(true)
+  it('admits an important task whose deadline is a long way off', () => {
+    expect(rel({ priority: 4, due_date: '2027-06-01T00:00:00Z' })).toBe(true)
   })
 
-  it('keeps a deadline inside the window and drops one beyond it', () => {
-    expect(rel({ due_date: '2026-09-24T00:00:00Z' })).toBe(true)    // the edge counts
-    expect(rel({ due_date: '2026-09-25T00:00:00Z' })).toBe(false)
-  })
-
-  it('keeps an overdue deadline', () => {
-    expect(rel({ due_date: '2026-01-01T00:00:00Z' })).toBe(true)
-  })
-
-  it('keeps undated work that clears the floor', () => {
+  it('admits an important task with no deadline at all', () => {
     expect(rel({ priority: 4 })).toBe(true)
     expect(rel({ priority: 3 })).toBe(true)
   })
+
+  it('admits anything already on the calendar, however small or far off', () => {
+    expect(rel({ priority: 1, scheduled_start: '2026-11-01T17:00:00Z' })).toBe(true)
+    expect(rel({ priority: 1, due_date: '2027-01-01T00:00:00Z', scheduled_start: '2026-09-18T17:00:00Z' })).toBe(true)
+  })
+
+  it('keeps an overdue deadline', () => {
+    expect(rel({ priority: 1, due_date: '2026-01-01T00:00:00Z' })).toBe(true)
+  })
+
+  it('counts the last day of the window', () => {
+    expect(rel({ priority: 1, due_date: '2026-09-24T00:00:00Z' })).toBe(true)
+    expect(rel({ priority: 1, due_date: '2026-09-25T00:00:00Z' })).toBe(false)
+  })
 })
 
-describe('the order of the rules', () => {
+describe('what actually falls out', () => {
   /**
-   * Each of these passes one rule and fails another; the answer says which rule
-   * ran first. Reordering them would break these and nothing else, which is the
-   * point of having them.
+   * The backlog: work that is neither soon nor important. If this set were
+   * empty the filter would be doing nothing.
    */
-  it('lets the calendar override a far-off deadline', () => {
-    // Booking something far-off *is* the statement that you are doing it soon.
-    expect(rel({ due_date: '2027-01-01T00:00:00Z', scheduled_start: '2026-09-18T17:00:00Z' })).toBe(true)
+  it('drops unimportant work with a far-off deadline', () => {
+    expect(rel({ priority: 2, due_date: '2027-01-01T00:00:00Z' })).toBe(false)
+    expect(rel({ priority: 1, due_date: '2027-01-01T00:00:00Z' })).toBe(false)
   })
 
-  it('lets the calendar override the priority floor', () => {
-    // Having decided explicitly to do a small thing at a set time, the filter
-    // should not then take it back out for being small.
-    expect(rel({ priority: 1, scheduled_start: '2026-09-18T17:00:00Z' })).toBe(true)
-  })
-
-  it('lets "not before" override the calendar', () => {
-    // A gate that has not opened wins even over a booking: you cannot start it.
-    expect(rel({ scheduled_start: '2026-09-18T17:00:00Z', start_date: '2026-10-01T00:00:00Z' })).toBe(false)
-  })
-
-  it('lets someday override everything', () => {
-    expect(rel({ type: 'someday' as Task['type'], scheduled_start: '2026-09-18T17:00:00Z' })).toBe(false)
-  })
-
-  it('applies the floor before the deadline, not after', () => {
-    // A Low task due tomorrow is still a Low task. This is the case that
-    // changed: the deadline used to win outright.
-    expect(rel({ priority: 1, due_date: '2026-09-18T00:00:00Z' })).toBe(false)
+  it('drops unimportant work with no deadline', () => {
+    expect(rel({ priority: 2 })).toBe(false)
+    expect(rel({ priority: 1 })).toBe(false)
   })
 })
 
-describe('the window is configurable', () => {
+describe('both numbers are configurable', () => {
   it('honours a tighter horizon', () => {
     // The caller passes the horizon, so this pins the component's arithmetic
-    // rather than the rule's.
-    expect(isRelevant(row({ due_date: '2026-09-24T00:00:00Z' }), TODAY, '2026-09-19')).toBe(false)
-    expect(isRelevant(row({ due_date: '2026-09-18T00:00:00Z' }), TODAY, '2026-09-19')).toBe(true)
+    // rather than the rule's. Priority 1 so only the window can admit it.
+    expect(isRelevant(row({ priority: 1, due_date: '2026-09-24T00:00:00Z' }), TODAY, '2026-09-19')).toBe(false)
+    expect(isRelevant(row({ priority: 1, due_date: '2026-09-18T00:00:00Z' }), TODAY, '2026-09-19')).toBe(true)
   })
 
-  it('honours a lower priority threshold', () => {
+  it('honours a lower priority bar', () => {
     expect(rel({ priority: 2 }, 2)).toBe(true)
     expect(rel({ priority: 1 }, 2)).toBe(false)
     expect(rel({ priority: 1 }, 1)).toBe(true)
   })
 
-  it('honours a stricter one, deadline or not', () => {
+  it('honours a stricter one', () => {
     expect(rel({ priority: 3 }, 4)).toBe(false)
-    expect(rel({ priority: 3, due_date: '2026-09-18T00:00:00Z' }, 4)).toBe(false)
-    expect(rel({ priority: 4, due_date: '2026-09-18T00:00:00Z' }, 4)).toBe(true)
+    expect(rel({ priority: 4 }, 4)).toBe(true)
   })
 
-  it('lets a floor of 1 admit everything that is dated or undated', () => {
-    // With no floor to clear, only someday, the gate and the window filter.
-    expect(rel({ priority: 1 }, 1)).toBe(true)
-    expect(rel({ priority: 1, due_date: '2026-09-18T00:00:00Z' }, 1)).toBe(true)
-    expect(rel({ priority: 1, due_date: '2027-01-01T00:00:00Z' }, 1)).toBe(false)  // still the window
+  it('lets a stricter bar still admit something due soon', () => {
+    // Raising the bar narrows what qualifies *on priority*; it does not start
+    // hiding imminent work.
+    expect(rel({ priority: 1, due_date: '2026-09-18T00:00:00Z' }, 4)).toBe(true)
   })
 
   it('defaults to High+ and a week', () => {
@@ -157,9 +150,11 @@ describe('normalizeRelevance', () => {
 })
 
 describe('relevanceHint', () => {
-  it('leads with the priority floor, since it now applies to everything', () => {
-    expect(relevanceHint({ windowDays: 7, minPriority: 3 })).toMatch(/^High\+ priority/)
-    expect(relevanceHint({ windowDays: 30, minPriority: 1 })).toMatch(/^Low\+ priority/)
+  it('names both ways in', () => {
+    const hint = relevanceHint({ windowDays: 7, minPriority: 3 })
+    expect(hint).toContain('within 7 days')
+    expect(hint).toContain('High+ priority')
+    expect(hint).toContain('or')
   })
 
   it('describes the window actually in force', () => {
