@@ -640,16 +640,24 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 `tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
 
+### Settings fills the panel
+
+`max-w-lg` with no `mx-auto` pinned every control to the left edge and left the rest of the width blank — the same thing Projects and Analytics were doing. Sections are now cards in a grid that breaks into two columns as the panel grows, rather than one column stretched to the window: a 1400px-wide row of radio buttons "fills the panel" and reads worse than the 512px it replaced. Scheduling spans both columns, since it holds a week grid and an hours table and was laid out to be wide.
+
+The horizontal rules between sections went with the change. A divider only reads as a separator while the sections are in one stack; in a grid it is a line across the middle of nothing. The card edges do that job now.
+
 ### "Relevant" is two settings, not two constants
 
 The task list's default filter answers "what am I doing now" rather than "what do I owe anyone, ever". Its two numbers — a seven-day deadline window, and priority 3 as the line an *undated* task must clear — were constants in `TaskList.tsx`. Both are judgement calls about how much of the future counts as now, and the right answer differs by how someone works: a week is a long horizon for errands and a short one for coursework. They live in `user_scheduling_config` (migration `0017`), alongside the week start day.
 
+**Priority is a floor, not a fallback.** It applies to dated and undated work alike: a deadline says *when*, not whether the thing matters, and a Low task due tomorrow is still a Low task. It was originally consulted only when a task had no date, which put a P1 errand due tomorrow at the top of the list beside genuinely urgent work. The calendar still overrides it — having decided explicitly to do a small thing at a set time, the filter should not take it back out for being small.
+
 The rule itself moved to `src/lib/relevance.ts`. It is the interesting part and the component is not — pulling it out is what made it testable, and `relevance.test.ts` pins each rule *and the order they run in*, because the order is where the meaning is:
 
-- the calendar overrides a far-off deadline — booking something far off **is** the statement that you are doing it soon
+- the calendar overrides a far-off deadline **and** the priority floor — booking something *is* the statement that you are doing it
 - "not before" overrides the calendar — a gate that has not opened wins even over a booking, because you still cannot start
 - `someday` overrides everything
-- a deadline beats priority; priority is only the fallback for rows with no date to judge
+- the priority floor is applied before the deadline, not after
 
 Settings shows the rule back in the terms just chosen, live. "Relevant" is a word with no visible meaning until something goes missing from the list, and a filter that is on by default has to explain itself.
 

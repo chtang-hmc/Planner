@@ -17,9 +17,11 @@ import type { Task } from '@/types'
 export const RELEVANT_WINDOW_DEFAULT = 7
 
 /**
- * Without a deadline, priority is the only signal separating "matters" from
- * "eventually", so this is the line below which an undated task stays out of
- * the way. 3 = High.
+ * The lowest priority that counts as current work, deadline or not. 3 = High.
+ *
+ * A deadline says *when*, not *whether it matters* — a Low task due tomorrow is
+ * still a Low task, and the point of this filter is to get it out of the way
+ * until you ask for it.
  */
 export const RELEVANT_MIN_PRIORITY_DEFAULT = 3
 
@@ -30,7 +32,7 @@ export const RELEVANT_WINDOW_MAX = 90
 export interface RelevanceConfig {
   /** Days ahead a deadline still counts. */
   windowDays: number
-  /** Lowest priority an *undated* task can have and still show. 1–4. */
+  /** Lowest priority that counts as current work at all. 1–4. */
   minPriority: number
 }
 
@@ -60,16 +62,21 @@ export function normalizeRelevance(raw: {
  *   1. someday is a parking lot, never current
  *   2. a task gated by "not before" can't be started yet, however urgent
  *   3. anything already blocked on the calendar is by definition the plan
- *   4. a deadline inside the window is live; one beyond it isn't yet
- *   5. no deadline at all falls back to priority
+ *   4. priority is a floor: below it, nothing is current work
+ *   5. a deadline inside the window is live; one beyond it isn't yet
  *
- * The order carries meaning. Rule 3 sits above the deadline check deliberately:
- * putting something far-off on the calendar *is* the statement that you are
- * doing it soon, and it should not then be hidden for being far-off.
+ * The order carries meaning.
  *
- * Rule 5 is the one that surprises people. An undated task below the threshold
- * is invisible by default — which is the intent, but it is why a low-priority
- * errand with no date does not appear until the toggle is off.
+ * Rule 3 sits above everything that follows deliberately: putting something on
+ * the calendar *is* the statement that you are doing it, and having decided
+ * that explicitly it should not then be filtered back out for being low
+ * priority or far off.
+ *
+ * Rule 4 applies to dated and undated work alike, which is the part worth
+ * saying out loud. A deadline says *when*, not *whether it matters* — a Low
+ * task due tomorrow is still a Low task. It was previously a fallback used only
+ * when a task had no date, so a P1 errand due tomorrow sat at the top of the
+ * list next to genuinely urgent work.
  *
  * `todayStr` and `horizonStr` are local day strings; comparing them as strings
  * is the comparison, since YYYY-MM-DD sorts lexicographically.
@@ -83,8 +90,9 @@ export function isRelevant(
   if (t.type === 'someday') return false
   if (t.start_date && t.start_date.slice(0, 10) > todayStr) return false
   if (t.scheduled_start) return true
+  if (t.priority < minPriority) return false
   if (t.due_date) return t.due_date.slice(0, 10) <= horizonStr
-  return t.priority >= minPriority
+  return true
 }
 
 /** How the toggle explains itself, in the user's own configured terms. */
@@ -94,8 +102,8 @@ export function relevanceHint({ windowDays, minPriority }: RelevanceConfig): str
     ? 'due today'
     : windowDays === 1
       ? 'due today or tomorrow'
-      : `due in the next ${windowDays} days`
-  return `Only what you can act on now — ${window}, already on the calendar, `
-       + `or ${PRIORITY[minPriority]}+ priority with no deadline. `
+      : `due within ${windowDays} days`
+  return `${PRIORITY[minPriority]}+ priority work that is ${window} or undated, `
+       + `plus anything already on the calendar. `
        + `Hides someday and anything gated by "not before".`
 }

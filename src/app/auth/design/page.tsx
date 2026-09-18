@@ -297,7 +297,7 @@ function RelevancePreview() {
       <div className="flex flex-col gap-4">
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-            Show deadlines within
+            Deadlines within
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -310,7 +310,7 @@ function RelevancePreview() {
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-            Without a deadline, show priority
+            Minimum priority
           </label>
           <div className="flex gap-1.5">
             {[1, 2, 3, 4].map(p => (
@@ -399,8 +399,16 @@ export default function DesignPreview() {
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Relevance settings</h2>
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
-                <div className="max-w-lg rounded-xl border border-slate-200 dark:border-slate-800 p-5">
-                  <RelevancePreview />
+                {/* Two cards in the real grid, to check the section sits in a
+                    column rather than across the panel. */}
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+                    <RelevancePreview />
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+                    <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Neighbouring card</h2>
+                    <p className="text-xs text-slate-400">Shows the column break, not a real setting.</p>
+                  </div>
                 </div>
               </section>
               <section>

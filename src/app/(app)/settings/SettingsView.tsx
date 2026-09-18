@@ -480,7 +480,7 @@ function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
       <div className="flex flex-col gap-4">
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-            Show deadlines within
+            Deadlines within
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -498,7 +498,7 @@ function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
 
         <div>
           <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
-            Without a deadline, show priority
+            Minimum priority
           </label>
           <div className="flex gap-1.5">
             {([1, 2, 3, 4] as const).map(p => (
@@ -540,6 +540,15 @@ function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
 
 const PRIORITY_NAMES = ['', 'Low', 'Med', 'High', 'Crit'] as const
 
+/** One settings section. The border is what separates them now the rules are gone. */
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 ${className}`}>
+      {children}
+    </div>
+  )
+}
+
 interface SettingsViewProps {
   gcalConnected:    boolean
   gcalHasWriteScope: boolean
@@ -567,31 +576,43 @@ export default function SettingsView({
         </div>
       </header>
 
-      <div className="px-6 py-8 max-w-lg flex flex-col gap-10">
-        <ThemeSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <AccentSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <DefaultViewSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <TaskLayoutSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <RelevanceSection relevance={relevance} />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <GoogleCalendarSection
-          connected={gcalConnected}
-          hasWriteScope={gcalHasWriteScope}
-          connectedAt={gcalConnectedAt}
-        />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <SchedulingSettings
-          workingHours={workingHours}
-          energySchedule={energySchedule}
-          maxSession={maxSession}
-          bufferMinutes={bufferMinutes}
-          weekStartDay={weekStartDay}
-          breaks={breaks}
-        />
+      {/* Settings fill the panel.
+          max-w-lg with no mx-auto pinned every control to the left edge and
+          left the rest of the width blank — the same thing Projects and
+          Analytics were doing. Sections are cards in a grid that breaks into
+          two columns as the panel grows, rather than one column stretched to
+          whatever the window is: a 1400px-wide row of radio buttons "fills the
+          panel" and reads worse than the 512px it replaced.
+
+          The dividers went with the change. A horizontal rule between sections
+          only reads as a separator while they are in one stack; in a grid it is
+          a line across the middle of nothing. The card edges do that job now.
+
+          Scheduling spans both columns — it holds a week grid and an hours
+          table, and was laid out to be wide. */}
+      <div className="px-6 py-6 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        <Card><ThemeSection /></Card>
+        <Card><AccentSection /></Card>
+        <Card><DefaultViewSection /></Card>
+        <Card><TaskLayoutSection /></Card>
+        <Card><RelevanceSection relevance={relevance} /></Card>
+        <Card>
+          <GoogleCalendarSection
+            connected={gcalConnected}
+            hasWriteScope={gcalHasWriteScope}
+            connectedAt={gcalConnectedAt}
+          />
+        </Card>
+        <Card className="xl:col-span-2">
+          <SchedulingSettings
+            workingHours={workingHours}
+            energySchedule={energySchedule}
+            maxSession={maxSession}
+            bufferMinutes={bufferMinutes}
+            weekStartDay={weekStartDay}
+            breaks={breaks}
+          />
+        </Card>
       </div>
     </div>
   )
