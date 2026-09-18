@@ -28,9 +28,6 @@ export interface PresetOption {
   rrule: string | null // null = no recurrence
 }
 
-const WEEKDAY_MAP: Record<string, number> = {
-  MO: 0, TU: 1, WE: 2, TH: 3, FR: 4, SA: 5, SU: 6,
-}
 
 export const PRESETS: PresetOption[] = [
   { id: 'none',        label: 'No repeat',  rrule: null },

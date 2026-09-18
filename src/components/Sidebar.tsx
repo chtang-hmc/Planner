@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useStored } from '@/lib/use-stored'
 import { Project } from '@/types'
 import { signOut } from '@/app/actions/auth'
 import EnergyLogger from './EnergyLogger'
@@ -26,10 +27,11 @@ export default function Sidebar({ projects }: { projects: Project[] }) {
   // Stored preferences can only be read in the browser. The server renders the
   // defaults and the client swaps in the stored values on hydrate — no effect,
   // no mismatch. `override` holds anything changed since load.
-  const stored = useSyncExternalStore(
-    () => () => {},
+  // Packed into one string because a snapshot must be identity-stable —
+  // returning a fresh object each render is an infinite loop.
+  const stored = useStored(
     () => `${getStoredSidebarWidth()}|${getStoredSidebarCollapsed() ? 1 : 0}`,
-    () => `${SIDEBAR_DEFAULT_WIDTH}|0`,
+    `${SIDEBAR_DEFAULT_WIDTH}|0`,
   )
   const [storedWidth, storedCollapsed] = stored.split('|')
 

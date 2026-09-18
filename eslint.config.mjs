@@ -12,21 +12,43 @@ const eslintConfig = defineConfig([
       // escaped apostrophes in the project. No correctness value here.
       "react/no-unescaped-entities": "off",
 
-      // Both of these are React-compiler rules that misfire on patterns this
-      // app uses deliberately, so they warn rather than block:
+      // Underscore-prefixed bindings are deliberate discards, not oversights.
       //
-      //   set-state-in-effect — reading localStorage on mount is how a client
-      //     preference is applied without a hydration mismatch. Where
-      //     useSyncExternalStore fits it is used instead (Sidebar, TaskList),
-      //     but the settings sections genuinely need the mounted guard.
+      // The pattern they exist for is stripping fields by destructuring —
+      // `const { id: _id, created_at: _c, ...shape } = row` in duplicateTask —
+      // where spreading the rest means a column added later is carried over
+      // automatically. Listing the kept fields by hand instead is how
+      // weekly_target got missed the one time someone tried.
       //
-      //   purity — flags `new Date()` inside async Server Components, which
-      //     render once per request and are not components in the sense the
-      //     rule means.
+      // Only the discard side is exempted. A genuinely unused import or
+      // variable still warns, which is how twelve dead ones were found the day
+      // this was added.
+      "@typescript-eslint/no-unused-vars": ["warn", {
+        varsIgnorePattern:       "^_",
+        argsIgnorePattern:       "^_",
+        caughtErrorsIgnorePattern: "^_",
+        destructuredArrayIgnorePattern: "^_",
+        ignoreRestSiblings:      true,
+      }],
+
+      // Both React-compiler rules are errors, with their handful of real
+      // exceptions disabled inline and explained at the site.
       //
-      // Left visible so genuinely new instances still show up in the output.
-      "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/purity": "warn",
+      // They were warnings while eight and two instances were outstanding,
+      // which meant they blocked nothing and were read by nobody. Every
+      // instance is now either fixed or justified, so the rules can do the job
+      // they were added for: catching the next one.
+      //
+      //   set-state-in-effect — the common case was reading localStorage on
+      //     mount to apply a client preference. `src/lib/use-stored.ts` does
+      //     that properly. What is left disabled is state reset when a prop
+      //     changes, which is a different thing the rule cannot distinguish.
+      //
+      //   purity — `Date.now()` in an async Server Component renders once per
+      //     request and is fine; the same call in a client component during
+      //     render is a genuine hydration bug.
+      "react-hooks/set-state-in-effect": "error",
+      "react-hooks/purity": "error",
     },
   },
   // Override default ignores of eslint-config-next.

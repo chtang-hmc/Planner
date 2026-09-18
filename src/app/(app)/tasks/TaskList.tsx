@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useTransition, useEffect, useSyncExternalStore } from 'react'
+import { useState, useTransition } from 'react'
+import { useStored } from '@/lib/use-stored'
 import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
@@ -58,11 +59,7 @@ export default function TaskList({
   // Which row layout to draw. localStorage can only be read in the browser, so
   // the server renders the default and the client swaps in the stored value —
   // useSyncExternalStore does that without a hydration mismatch or an effect.
-  const layoutId = useSyncExternalStore(
-    () => () => {},
-    () => getStoredTaskLayout(),
-    () => DEFAULT_TASK_LAYOUT,
-  )
+  const layoutId = useStored(getStoredTaskLayout, DEFAULT_TASK_LAYOUT)
   const Layout = TASK_LAYOUT_IMPLS[layoutId]
 
   // Completing a regular task (opens MicroReflection)
@@ -92,15 +89,24 @@ export default function TaskList({
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
 
-  // tz and planDayDate must be client-side only — Intl on the server returns UTC,
-  // not the user's browser timezone. useEffect ensures these are set after hydration.
-  const [tz, setTz] = useState('UTC')
-  const [planDayDate, setPlanDayDate] = useState('')
-  useEffect(() => {
-    const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-    setTz(browserTz)
-    setPlanDayDate(new Intl.DateTimeFormat('en-CA', { timeZone: browserTz }).format(new Date()))
-  }, [])
+  // Client-side only: Intl on the server resolves to the deployment's zone, not
+  // the user's. Read through useStored so the server renders UTC and the client
+  // the real value in one pass, rather than rendering a known-wrong value and
+  // correcting it in an effect.
+  const tz = useStored(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    'UTC',
+  )
+  // Today in that zone, which is what the Plan Day field starts on — but the
+  // user can pick another day, so it is derived with an override rather than
+  // seeded into state by an effect. Null means "they have not chosen", which is
+  // what lets the default follow the zone once it resolves on the client.
+  const todayInTz = useStored(
+    () => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()),
+    '',
+  )
+  const [planDayOverride, setPlanDayOverride] = useState<string | null>(null)
+  const planDayDate = planDayOverride ?? todayInTz
 
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
@@ -335,7 +341,7 @@ export default function TaskList({
                       <input
                         type="date"
                         value={planDayDate}
-                        onChange={e => setPlanDayDate(e.target.value)}
+                        onChange={e => setPlanDayOverride(e.target.value)}
                         disabled={scheduling}
                         className="px-2 h-full text-xs bg-transparent text-slate-600 dark:text-slate-300 focus:outline-none disabled:opacity-40"
                       />

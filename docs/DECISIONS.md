@@ -839,6 +839,26 @@ Dates, times and recurrence are in, and both are now stored. `#project`, `p1`–
 
 ---
 
+## Reading browser-only values
+
+`src/lib/use-stored.ts`. `localStorage`, the resolved timezone and "has this hydrated yet" are all things the server cannot know, and the obvious approach — default state plus an effect that overwrites it on mount — renders once with a value known to be wrong and then again with the real one. `useSyncExternalStore` does it in a single pass React understands.
+
+The idiom had been written out by hand in five places before it was extracted. The extracted version adds a **real subscribe**, which the hand-rolled copies did not have (they passed `() => () => {}`), and that changed the shape of the settings sections: they had carried each preference in local state *as well as* in `localStorage`, keeping the two in step by hand, because a no-op subscribe meant writing storage did not re-render anything. Now `writeStored` notifies and there is one source.
+
+Subscribing also picks up the `storage` event, so two windows of the app stay in step for free.
+
+**Snapshots must be primitives.** React calls the read on every render and compares by identity, so a fresh object each time is an infinite loop. `Sidebar` packs its width and collapsed flag into one string for exactly this reason.
+
+### Both React-compiler rules are errors now
+
+`set-state-in-effect` and `purity` were warnings while ten instances were outstanding, which meant they blocked nothing and were read by nobody. Every instance is now fixed or disabled inline with a reason at the site, so the rules can catch the next one.
+
+What stays disabled is the handful the rules genuinely cannot distinguish: resetting state when a prop changes (`FloatingTimer` clearing its reflection panel when the timer goes idle, `SearchModal` clearing the last query on open — where the reset belongs with a DOM focus call that has to be in an effect anyway), and `Date.now()` in an async Server Component, which renders once per request.
+
+### Unused-variable warnings, narrowed to discards
+
+`varsIgnorePattern: '^_'` exempts the deliberate strip-fields-by-destructuring idiom (`const { id: _id, ...shape } = row`) and nothing else. Twelve genuinely dead bindings were hiding behind the un-narrowed rule — unused imports, a superseded `useState`, a prop `ProjectCard` never read — and were deleted.
+
 ## Task Row Layouts
 
 The task list draws a row four ways, chosen in **Settings → Task list layout** and stored per browser in `localStorage['planner-task-layout']`.

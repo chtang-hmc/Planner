@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { Task, Project, EstimationProfile, HabitStreak, EnergyLevel, INBOX_PROJECT } from '@/types'
+import { Task, Project, EstimationProfile, HabitStreak, EnergyLevel } from '@/types'
 
 function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
   switch (priority) {
@@ -192,7 +192,6 @@ export default function ProjectDetailView({
   const [pendingHabits,   setPendingHabits]   = useState<Set<string>>(new Set())
   const [showAdd,         setShowAdd]         = useState(false)
   const [showEdit,        setShowEdit]        = useState(false)
-  const [showDone,        setShowDone]        = useState(false)
   const [archiving,       setArchiving]       = useState(false)
   const [tab,             setTab]             = useState<'active' | 'done'>('active')
 

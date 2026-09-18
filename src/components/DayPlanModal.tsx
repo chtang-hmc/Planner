@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import ScheduleWeekCalendar, { type CalendarBlock } from '@/components/ScheduleWeekCalendar'
 import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
-import type { AttackItem, SchedulerTask } from '@/lib/scheduler'
+import type { SchedulerTask } from '@/lib/scheduler'
 import type { PreviewBlock } from './SchedulePreviewModal'
 
 const ENERGY_ICON: Record<string, string> = { low: '🌿', medium: '⚡', high: '🔥' }

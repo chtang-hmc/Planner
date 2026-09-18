@@ -83,9 +83,16 @@ export default function FloatingTimer() {
   const { phase, task, elapsedMs, targetMs, pause, resume, abandon } = useTimer()
   const [finishing, setFinishing] = useState(false)
 
-  // Reset reflection UI whenever the timer goes idle (session finished or abandoned)
-  // The component stays mounted so this effect runs even across sessions.
+  // Reset the reflection panel whenever the timer goes idle — the session
+  // finished or was abandoned. The component stays mounted across sessions, so
+  // without this the panel from the last one would still be open on the next.
+  //
+  // This is React's documented "adjust state when a prop changes" pattern
+  // rather than the hydration guard the rule is aimed at: `phase` comes from
+  // the timer context and there is no stored value to read. Deriving it is not
+  // possible either, since `finishing` is also set by a button.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (phase === 'idle') setFinishing(false)
   }, [phase])
 

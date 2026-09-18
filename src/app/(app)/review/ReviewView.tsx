@@ -48,8 +48,6 @@ const STEPS = [
   { key: 'done',     label: 'Done',       icon: '✅' },
 ] as const
 
-type StepKey = typeof STEPS[number]['key']
-
 // ── TaskTriageRow ─────────────────────────────────────────────────────────────
 
 interface TriageRowProps {

@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef, useTransition, useSyncExternalStore } from 'react'
+import { useState, useEffect, useRef, useTransition } from 'react'
+import { useStored } from '@/lib/use-stored'
 import { Task, Project, CalendarEvent } from '@/types'
 import { daysSinceWeekStart } from '@/lib/week'
 import { useSearch } from '@/contexts/SearchContext'
@@ -133,11 +134,7 @@ export default function UpcomingView({
 
   // Same layout the list view draws, read the same way — the server renders the
   // default and the client swaps in the stored value without a mismatch.
-  const layoutId = useSyncExternalStore(
-    () => () => {},
-    () => getStoredTaskLayout(),
-    () => DEFAULT_TASK_LAYOUT,
-  )
+  const layoutId = useStored(getStoredTaskLayout, DEFAULT_TASK_LAYOUT)
   const Layout = TASK_LAYOUT_IMPLS[layoutId]
 
   // ── Derived ────────────────────────────────────────────────────────────────

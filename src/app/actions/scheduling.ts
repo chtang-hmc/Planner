@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX } from '@/lib/relevance'
 import { createServiceClient } from '@/lib/supabase/server'
-import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
+import { getValidToken, createTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
 import {
   runScheduler,
   buildAttackList,
@@ -15,8 +15,6 @@ import {
   type SchedulerTask,
   type BreakWindow,
   blockLabel,
-  type ProposedBlock,
-  type AttackItem,
 } from '@/lib/scheduler'
 import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
 import { isValidTimezone, fetchTimezone, localDayStr, startOfLocalDay, addDays as addDayStr } from '@/lib/day'
