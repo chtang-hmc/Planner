@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { EnergyLevel } from '@/types'
+import { addDays } from '@/lib/day'
 
 // ── Time blocks ───────────────────────────────────────────────────────────────
 
@@ -240,11 +241,14 @@ export function localMidnight(dateStr: string, tz: string): number {
 function endOfDayMs(dueISO: string, tz: string): number {
   // Extract the UTC date string from the stored ISO (e.g. "2026-09-15")
   const dateStr = dueISO.slice(0, 10)
-  // Midnight of the next local day = end of the due day
-  const d = new Date(dateStr)
-  d.setDate(d.getDate() + 1)
-  const nextDateStr = d.toISOString().slice(0, 10)
-  return localMidnight(nextDateStr, tz)
+  // Midnight of the next local day = end of the due day.
+  //
+  // Stepped with addDays rather than `new Date(dateStr).setDate(+1)`: that
+  // round trip parses to UTC midnight, adds one *local* day — 23 or 25 hours
+  // across a DST change — and reads the result back as UTC, so on the two
+  // transition days a year it lands on the wrong date. addDays steps in UTC,
+  // where every day is 24 hours.
+  return localMidnight(addDays(dateStr, 1), tz)
 }
 
 /** Returns local {dayOfWeek, hour} for a UTC timestamp in the given IANA timezone. */
@@ -321,10 +325,9 @@ export function runScheduler(
   const startStr = config.startDateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
   const days: number[] = []   // each value = UTC ms of local midnight for that day
   for (let i = 0; i < horizonDays; i++) {
-    const d = new Date(startStr)
-    d.setDate(d.getDate() + i)
-    const dateStr = d.toISOString().slice(0, 10)
-    days.push(localMidnight(dateStr, tz))
+    // Same reason as endOfDayMs: pure calendar arithmetic, so a DST day cannot
+    // shift the horizon by one.
+    days.push(localMidnight(addDays(startStr, i), tz))
   }
 
   // Occupied intervals grow as we place blocks (stored raw, buffer applied on use)

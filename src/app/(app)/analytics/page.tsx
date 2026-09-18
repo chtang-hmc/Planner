@@ -2,12 +2,15 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { Project, EstimationProfile, EnergyPattern } from '@/types'
 import AnalyticsView from './AnalyticsView'
 import { fetchWeekStartDay } from '@/lib/week'
+import { fetchTimezone, localDayStr, todayStr, addDays } from '@/lib/day'
 
 export const dynamic = 'force-dynamic'
 
 export interface DailyEnergy {
-  date: string        // YYYY-MM-DD
-  avg: number         // 1–5
+  /** A local calendar day, YYYY-MM-DD. Always exactly 7, oldest first. */
+  date: string
+  avg: number         // 1–5; meaningless when count is 0
+  /** 0 means the day has no logs — the bar is drawn empty. */
   count: number
 }
 
@@ -107,17 +110,39 @@ export default async function AnalyticsPage() {
   const accurateSessions   = sessions.filter(s => s.estimate_accurate === true).length
   const inaccurateSessions = sessions.filter(s => s.estimate_accurate === false).length
 
-  // Rolling 7-day energy — group by calendar date, compute daily avg
+  /**
+   * Rolling 7-day energy, grouped by the user's *local* day.
+   *
+   * Both halves of this used to read UTC. The server grouped on
+   * `logged_at.slice(0, 10)`, so an evening log west of UTC counted toward the
+   * next day; the client then built its seven bar keys from a local `Date` run
+   * back through `toISOString()`. The two were wrong in compensating ways,
+   * which is why the chart looked right from Los Angeles and would have
+   * dropped a day's bar anywhere east of UTC.
+   *
+   * The window is built here rather than in the component because this is the
+   * side that knows the timezone. The client renders what it is given and does
+   * no date arithmetic at all, so the keys cannot disagree.
+   */
+  const tz    = await fetchTimezone(db)
+  const today = todayStr(tz)
+
   const dailyMap: Record<string, { sum: number; count: number }> = {}
   for (const log of (energyLogs ?? [])) {
-    const date = log.logged_at.slice(0, 10)  // YYYY-MM-DD
+    const date = localDayStr(log.logged_at, tz)
     if (!dailyMap[date]) dailyMap[date] = { sum: 0, count: 0 }
     dailyMap[date].sum   += log.level
     dailyMap[date].count += 1
   }
-  const recentEnergy: DailyEnergy[] = Object.entries(dailyMap)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, { sum, count }]) => ({ date, avg: sum / count, count }))
+
+  // Exactly seven, oldest first, empty days included.
+  const recentEnergy: DailyEnergy[] = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(today, i - 6)
+    const hit  = dailyMap[date]
+    return hit
+      ? { date, avg: hit.sum / hit.count, count: hit.count }
+      : { date, avg: 0, count: 0 }
+  })
 
   const data: AnalyticsData = {
     weekStartDay: await fetchWeekStartDay(db),

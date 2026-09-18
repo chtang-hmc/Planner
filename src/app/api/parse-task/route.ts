@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
+import { createServiceClient } from '@/lib/supabase/server'
+import { fetchTimezone, todayStr } from '@/lib/day'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -25,7 +27,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No text provided' }, { status: 400 })
   }
 
-  const today = new Date().toISOString().slice(0, 10)
+  /**
+   * The user's today, not UTC's.
+   *
+   * This line is the whole basis for how the model resolves "tomorrow", and it
+   * read the UTC date — so from 5pm in Los Angeles it told Claude the date was
+   * already tomorrow, and every relative date came back a day late. Same bug
+   * the deterministic parser exists to avoid; it had simply never been fixed on
+   * this side.
+   */
+  const today = todayStr(await fetchTimezone(createServiceClient()))
   const projectList = projects.map(p => p.name).join(', ') || 'none'
 
   const userPrompt = `Today is ${today}.
