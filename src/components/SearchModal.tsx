@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Task, Project, EnergyLevel, INBOX_PROJECT } from '@/types'
+import { EnergyIcon } from '@/components/icons'
+import { Task, Project, INBOX_PROJECT } from '@/types'
 import TaskDetail from './TaskDetail'
 
-const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 
 function highlight(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text
@@ -190,9 +190,7 @@ export default function SearchModal({ allProjects }: Props) {
                           >
                             {proj.name}
                           </span>
-                          {ENERGY_ICON[task.energy_required] && (
-                            <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
-                          )}
+                          <EnergyIcon level={task.energy_required} className="text-slate-400" />
                           {due && <span className={`text-xs ${due.cls}`}>{due.text}</span>}
                           {task.type !== 'task' && (
                             <span className="text-xs text-slate-400 capitalize">{task.type}</span>

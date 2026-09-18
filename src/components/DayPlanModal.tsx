@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { EnergyIcon, CalendarIcon } from '@/components/icons'
+import type { EnergyLevel } from '@/types'
 import ScheduleWeekCalendar, { type CalendarBlock } from '@/components/ScheduleWeekCalendar'
 import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
 import type { PreviewBlock } from './SchedulePreviewModal'
 
-const ENERGY_ICON: Record<string, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 const PRIORITY_DOT: Record<number, string> = {
   4: 'bg-red-500', 3: 'bg-amber-500', 2: 'bg-sky-500', 1: 'bg-slate-400',
 }
@@ -187,13 +188,13 @@ export default function DayPlanModal({
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       {item.scheduledStartISO && (
                         <span className="text-[10px] text-sky-500 font-medium">
-                          📅 {formatTime(item.scheduledStartISO)}
+                          <CalendarIcon size={10} className="inline-block mr-1 -mt-px" />{formatTime(item.scheduledStartISO)}
                         </span>
                       )}
                       {item.durationMinutes && (
                         <span className="text-[10px] text-slate-400 font-mono">{fmtDur(item.durationMinutes)}</span>
                       )}
-                      <span className="text-[10px] text-slate-400">{ENERGY_ICON[item.energyRequired]}</span>
+                      <EnergyIcon level={item.energyRequired as EnergyLevel} size={12} className="text-slate-400" />
                       {item.energyMatchNow && !item.isScheduled && (
                         <span className="text-[10px] text-accent-500 font-medium">✓ Good energy now</span>
                       )}

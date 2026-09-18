@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { StatsIcon, OverdueIcon, InboxIcon, CalendarIcon, ArchiveIcon, DoneIcon, CelebrateIcon } from '@/components/icons'
 import { Task, Project } from '@/types'
 import { ReviewData } from './page'
 import { triageTask, saveWeeklyReview } from '@/app/actions/tasks'
@@ -40,12 +41,12 @@ function localToday() {
 // ── Step config ───────────────────────────────────────────────────────────────
 
 const STEPS = [
-  { key: 'recap',    label: 'This week',  icon: '📊' },
-  { key: 'overdue',  label: 'Overdue',    icon: '🔴' },
-  { key: 'inbox',    label: 'Inbox',      icon: '📥' },
-  { key: 'upcoming', label: 'Upcoming',   icon: '📅' },
-  { key: 'someday',  label: 'Someday',    icon: '📦' },
-  { key: 'done',     label: 'Done',       icon: '✅' },
+  { key: 'recap',    label: 'This week',  Icon: StatsIcon    },
+  { key: 'overdue',  label: 'Overdue',    Icon: OverdueIcon  },
+  { key: 'inbox',    label: 'Inbox',      Icon: InboxIcon    },
+  { key: 'upcoming', label: 'Upcoming',   Icon: CalendarIcon },
+  { key: 'someday',  label: 'Someday',    Icon: ArchiveIcon  },
+  { key: 'done',     label: 'Done',       Icon: DoneIcon     },
 ] as const
 
 // ── TaskTriageRow ─────────────────────────────────────────────────────────────
@@ -197,7 +198,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
   overdue: {
     title: 'Overdue tasks',
     sub: 'These missed their deadline. Mark done, push to someday, or cancel.',
-    emptyMsg: 'No overdue tasks 🎉',
+    emptyMsg: 'No overdue tasks',
     actions: (id, triage) => [
       { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
@@ -207,7 +208,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
   inbox: {
     title: 'Inbox — unassigned tasks',
     sub: 'Route these to a project, or move to someday/cancel.',
-    emptyMsg: 'Inbox is clear 📭',
+    emptyMsg: 'Inbox is clear',
     actions: (id, triage) => [
       { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
@@ -217,7 +218,7 @@ const VARIANT_CONFIG: Record<TriageVariant, {
   upcoming: {
     title: 'Due in the next 7 days',
     sub: 'Confirm these are on track or push them out.',
-    emptyMsg: 'Nothing due this week 👌',
+    emptyMsg: 'Nothing due this week',
     actions: (id, triage) => [
       { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
@@ -295,7 +296,9 @@ function DoneStep({ data, onSave }: { data: ReviewData; onSave: (notes: string) 
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Review complete 🎉</h2>
+        <h2 className="flex items-center justify-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+            <CelebrateIcon size={18} className="text-accent-500" /> Review complete
+          </h2>
         <p className="text-sm text-slate-400 mt-0.5">Add any notes for next week, then save.</p>
       </div>
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col gap-4">
@@ -342,7 +345,7 @@ function DoneStep({ data, onSave }: { data: ReviewData; onSave: (notes: string) 
 function SavedScreen() {
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
-      <div className="text-5xl">✅</div>
+      <DoneIcon size={40} className="mx-auto text-accent-500" />
       <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">All done for this week</h2>
       <p className="text-sm text-slate-400 max-w-xs">
         Your review is saved. Check back at the start of next week to run it again.
@@ -376,6 +379,17 @@ function StepProgress({ steps, current }: { steps: typeof STEPS; current: number
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 
+/** The current step's icon and label — the icon is a component, so it needs a
+ *  capitalised binding before JSX will render it. */
+function StepLabel({ step }: { step: number }) {
+  const { Icon, label } = STEPS[step]
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-slate-400">
+      <Icon size={13} /> {label} · {step + 1}/{STEPS.length}
+    </span>
+  )
+}
+
 export default function ReviewView({ data }: { data: ReviewData }) {
   const [step, setStep] = useState(0)
   const [saved, setSaved] = useState(false)
@@ -407,9 +421,7 @@ export default function ReviewView({ data }: { data: ReviewData }) {
           <div className="px-6 py-3 flex items-center justify-between">
             <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Weekly review</h1>
             <div className="flex items-center gap-3">
-              <span className="text-xs text-slate-400">
-                {STEPS[step].icon} {STEPS[step].label} · {step + 1}/{STEPS.length}
-              </span>
+              <StepLabel step={step} />
               <button
                 onClick={() => setShowAddTask(true)}
                 className="text-xs bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity"

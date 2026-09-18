@@ -27,7 +27,7 @@ import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { HabitStreak, CalendarEvent } from '@/types'
 import QuickAddInput from '@/components/QuickAddInput'
-import { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
+import SettingsView, { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
 import { relevanceHint } from '@/lib/relevance'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
@@ -395,6 +395,26 @@ export default function DesignPreview() {
         <div className="flex flex-col gap-14">
           {!only && (
             <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Settings — simple / advanced</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <SettingsView
+                    gcalConnected
+                    gcalHasWriteScope
+                    gcalConnectedAt={new Date().toISOString()}
+                    workingHours={[]}
+                    energySchedule={[]}
+                    maxSession={90}
+                    bufferMinutes={15}
+                    weekStartDay={1}
+                    breaks={[]}
+                    relevance={{ windowDays: 7, minPriority: 3 }}
+                  />
+                </div>
+              </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Relevance settings</h2>

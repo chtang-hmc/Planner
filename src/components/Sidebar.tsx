@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { SettingsIcon } from '@/components/icons'
 import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStored } from '@/lib/use-stored'
@@ -212,7 +213,7 @@ export default function Sidebar({ projects }: { projects: Project[] }) {
               : 'text-slate-400 dark:text-slate-600 hover:text-slate-600 dark:hover:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
           }`}
         >
-          <span className="font-mono w-4 text-center shrink-0">⚙</span>
+          <SettingsIcon size={14} className="w-4 shrink-0" />
           {!collapsed && 'Settings'}
         </Link>
 
