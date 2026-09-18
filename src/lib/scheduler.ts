@@ -342,7 +342,6 @@ export function runScheduler(
   horizonDays:    number,
   config:         SchedulerConfig,
 ): SchedulerResult {
-  const maxMs    = config.maxSessionMinutes * 60_000
   const nowMs    = Date.now()
   const tz       = config.timezone
 

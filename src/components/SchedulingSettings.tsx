@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useSyncExternalStore, useTransition, useRef } from 'react'
+import { useState, useTransition, useRef } from 'react'
+import { useStored } from '@/lib/use-stored'
 import {
   saveWorkingHours,
   saveEnergyLevel,
@@ -23,11 +24,6 @@ const ENERGY_COLORS: Record<EnergyLevel, string> = {
   high:   'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800',
 }
 
-const ENERGY_LABELS: Record<EnergyLevel, string> = {
-  low:    '🌿 Low',
-  medium: '⚡ Med',
-  high:   '🔥 High',
-}
 
 function pad2(n: number) { return String(n).padStart(2, '0') }
 function toTimeStr(h: number, m: number) { return `${pad2(h)}:${pad2(m)}` }
@@ -518,10 +514,9 @@ function TimezoneNote() {
   // value on the client, without a hydration mismatch or an effect that sets
   // state on mount. The subscribe callback is a no-op: a browser's zone doesn't
   // change under a live page.
-  const tz = useSyncExternalStore(
-    () => () => {},
+  const tz = useStored(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || null,
-    () => null,
+    null as string | null,
   )
   if (!tz) return null
   return (

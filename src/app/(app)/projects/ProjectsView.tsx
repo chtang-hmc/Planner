@@ -64,13 +64,12 @@ function BiasChip({ ratio, samples }: { ratio: number; samples: number }) {
 
 interface CardProps {
   pd: ProjectData
-  allProjects: Project[]
   onSelectTask: (task: Task & { project: Project }) => void
   onAddTask: (projectId: string) => void
   onEdit: (project: Project) => void
 }
 
-function ProjectCard({ pd, allProjects, onSelectTask, onAddTask, onEdit }: CardProps) {
+function ProjectCard({ pd, onSelectTask, onAddTask, onEdit }: CardProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [menuOpen, setMenuOpen]   = useState(false)
   const [archiving, setArchiving] = useState(false)
@@ -299,7 +298,6 @@ export default function ProjectsView({ projectDataList, allProjects }: Props) {
               <ProjectCard
                 key={pd.project.id}
                 pd={pd}
-                allProjects={allProjects}
                 onSelectTask={setDetailTask}
                 onAddTask={id => setAddTaskProjId(id)}
                 onEdit={p => setEditingProject(p)}

@@ -27,6 +27,7 @@ import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { HabitStreak, CalendarEvent } from '@/types'
 import QuickAddInput from '@/components/QuickAddInput'
+import { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
 import { relevanceHint } from '@/lib/relevance'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
@@ -406,8 +407,10 @@ export default function DesignPreview() {
                     <RelevancePreview />
                   </div>
                   <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
-                    <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Neighbouring card</h2>
-                    <p className="text-xs text-slate-400">Shows the column break, not a real setting.</p>
+                    {/* The real section, so the store round trip can be clicked:
+                        picking a layout writes localStorage and every reader
+                        re-renders from it, with no local copy in between. */}
+                    <TaskLayoutSection />
                   </div>
                 </div>
               </section>

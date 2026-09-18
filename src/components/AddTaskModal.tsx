@@ -82,7 +82,12 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [priority, setPriority] = useState<1|2|3|4>(2)
   const [energy, setEnergy]     = useState<EnergyLevel>('medium')
   const [estimate, setEstimate] = useState('')
-  const [dueDate, setDueDate]   = useState('')
+  // Seeded from the prop rather than synced into state by an effect. The modal
+  // is mounted fresh each time it opens — Upcoming's "+ Add task" passes the day
+  // of the column it was clicked from — so the initial value is the whole job,
+  // and copying a prop into state on every change is the pattern React warns
+  // about: two sources for one value, and a render with the wrong one first.
+  const [dueDate, setDueDate]   = useState(initialDueDate ?? '')
   /** "HH:MM" wall-clock, or '' for all-day. Stored as minutes from midnight. */
   const [dueTime, setDueTime]   = useState('')
   /** `every!` — advance the chain from completion rather than from the due date. */
@@ -102,10 +107,6 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   const [avoidBreaks, setAvoidBreaks] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
-  // Pre-fill due date if provided (e.g. from Upcoming view "+ Add task" for a specific day)
-  useEffect(() => {
-    if (initialDueDate) setDueDate(initialDueDate)
-  }, [initialDueDate])
 
   const [isPending, startTransition] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)

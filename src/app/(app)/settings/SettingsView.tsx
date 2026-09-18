@@ -1,12 +1,13 @@
 'use client'
 
 import { useTheme } from 'next-themes'
-import { useEffect, useState, useTransition } from 'react'
-import { ACCENTS, AccentId, applyAccent, getStoredAccent } from '@/components/Providers'
+import { useState, useTransition } from 'react'
+import { ACCENTS, ACCENT_DEFAULT, AccentId, applyAccent, getStoredAccent } from '@/components/Providers'
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
+import { useStored, useHydrated, writeStored } from '@/lib/use-stored'
 import { saveRelevanceSettings } from '@/app/actions/scheduling'
 import {
   relevanceHint, RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX, type RelevanceConfig,
@@ -26,8 +27,9 @@ const THEME_OPTIONS = [
 
 function ThemeSection() {
   const { theme, setTheme, resolvedTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
+  // next-themes only knows the resolved theme in the browser, so the control
+  // cannot be rendered server-side at all.
+  const mounted = useHydrated()
 
   return (
     <section>
@@ -72,17 +74,15 @@ function ThemeSection() {
 // ── Accent color picker ───────────────────────────────────────────────────────
 
 function AccentSection() {
-  const [accent, setAccent] = useState<AccentId>('teal')
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setAccent(getStoredAccent())
-    setMounted(true)
-  }, [])
+  // Read straight from storage rather than mirrored into state: one source, so
+  // the two cannot drift, and writeStored below re-renders every reader.
+  const accent  = useStored(getStoredAccent, ACCENT_DEFAULT as AccentId)
+  const mounted = useHydrated()
 
   function handleSelect(id: AccentId) {
-    setAccent(id)
-    applyAccent(id)
+    // applyAccent writes the preference and repaints the document; writeStored
+    // is what tells this component (and any other reader) to re-render.
+    writeStored(() => applyAccent(id))
   }
 
   if (!mounted) return null
@@ -168,17 +168,11 @@ const VIEW_OPTIONS = [
 ]
 
 function DefaultViewSection() {
-  const [view, setView]   = useState<DefaultView>('list')
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setView(getStoredDefaultView())
-    setMounted(true)
-  }, [])
+  const view    = useStored(getStoredDefaultView, 'list' as DefaultView)
+  const mounted = useHydrated()
 
   function handleSelect(v: DefaultView) {
-    setView(v)
-    localStorage.setItem(VIEW_KEY, v)
+    writeStored(() => localStorage.setItem(VIEW_KEY, v))
   }
 
   if (!mounted) return null
@@ -361,18 +355,12 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
  * can't convey, and anything a layout deliberately leaves out is stated so the
  * choice is informed rather than a guess.
  */
-function TaskLayoutSection() {
-  const [layout, setLayout] = useState<TaskLayoutId>(DEFAULT_TASK_LAYOUT)
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setLayout(getStoredTaskLayout())
-    setMounted(true)
-  }, [])
+export function TaskLayoutSection() {
+  const layout  = useStored(getStoredTaskLayout, DEFAULT_TASK_LAYOUT)
+  const mounted = useHydrated()
 
   function handleSelect(id: TaskLayoutId) {
-    setLayout(id)
-    storeTaskLayout(id)
+    writeStored(() => storeTaskLayout(id))
   }
 
   if (!mounted) return null

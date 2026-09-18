@@ -8,6 +8,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function HabitsPage() {
   const db = createServiceClient()
+  // Async Server Component: this runs once per request on the server, not
+  // during a React render, so there is no hydration to mismatch and no
+  // re-render to be impure in.
+  // eslint-disable-next-line react-hooks/purity
   const cutoff = new Date(Date.now() - 112 * 24 * 60 * 60 * 1000).toISOString() // 16 weeks back
 
   // The user's day, as instants. Habit days are local days (src/lib/day.ts):
