@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Task, Project, EnergyLevel, INBOX_PROJECT } from '@/types'
+import { EnergyIcon, EditIcon, ArchiveIcon } from '@/components/icons'
+import { Task, Project, INBOX_PROJECT } from '@/types'
 import { ProjectData } from './page'
 import { archiveProject } from '@/app/actions/projects'
 import TaskDetail from '@/components/TaskDetail'
@@ -10,7 +11,6 @@ import ProjectModal from '@/components/ProjectModal'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 
 function formatMinutes(m: number | null): string {
   if (!m) return '—'
@@ -141,14 +141,14 @@ function ProjectCard({ pd, onSelectTask, onAddTask, onEdit }: CardProps) {
                   onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit(project) }}
                   className="w-full text-left px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                 >
-                  ✏️ Edit
+                  <span className="flex items-center gap-2"><EditIcon size={12} /> Edit</span>
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); setMenuOpen(false); handleArchive() }}
                   disabled={archiving}
                   className="w-full text-left px-4 py-2.5 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 transition-colors disabled:opacity-50"
                 >
-                  📦 Archive
+                  <span className="flex items-center gap-2"><ArchiveIcon size={12} /> Archive</span>
                 </button>
               </div>
             )}
@@ -206,7 +206,7 @@ function ProjectCard({ pd, onSelectTask, onAddTask, onEdit }: CardProps) {
                         {task.title}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
+                        <EnergyIcon level={task.energy_required} className="text-slate-400" />
                         {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
                         {due.label && (
                           <span className={`text-xs font-medium ${due.urgent ? 'text-red-500' : 'text-slate-400'}`}>

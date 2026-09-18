@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo, useTransition } from 'react'
+import { AiIcon } from '@/components/icons'
+import { SquareCheck as CheckSquare, Square } from 'lucide-react'
+import { EnergyIcon } from '@/components/icons'
 import { Project, EnergyLevel, UrgencyCurve } from '@/types'
 import { createTask } from '@/app/actions/tasks'
 import ProjectPicker from '@/components/ProjectPicker'
@@ -20,7 +23,6 @@ interface ParsedResult {
   is_calendar_event: boolean
 }
 
-const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 const PRIORITY_LABELS = ['', 'Low', 'Medium', 'High', 'Critical'] as const
 
 const CURVE_OPTS: { val: UrgencyCurve; label: string; desc: string }[] = [
@@ -193,7 +195,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
     if (detailed) return []
     const out: string[] = []
     if (mode === 'task') {
-      if (energy !== 'medium') out.push(`${ENERGY_ICON[energy]} ${energy} energy`)
+      if (energy !== 'medium') out.push(`${energy} energy`)
       if (rrule)               out.push(`↻ ${rruleToLabel(rrule)}`)
       if (rrule && fromCompletion) out.push('repeats from completion')
       if (dueTime)             out.push(`at ${dueTime}`)
@@ -369,7 +371,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
             <div className="px-5">
               <div className="flex items-baseline justify-between mb-2">
                 <p className="text-xs font-semibold uppercase tracking-wider text-accent-600 dark:text-accent-400">
-                  ✦ Quick add
+                  <AiIcon size={12} className="inline-block mr-1 -mt-px" />Quick add
                 </p>
                 <a
                   href="/help/quick-add"
@@ -424,7 +426,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                   disabled={!text.trim() || parsing}
                   className="text-xs font-medium px-3 py-1.5 rounded-lg bg-accent-500 text-white hover:bg-accent-600 disabled:opacity-40 transition-colors"
                 >
-                  {parsing ? 'Parsing…' : '✦ Parse'}
+                  {parsing ? 'Parsing…' : <><AiIcon size={12} className="inline-block mr-1 -mt-px" />Parse</>}
                 </button>
               </div>
               {parseError && <p className="text-xs text-amber-500 mb-3">{parseError}</p>}
@@ -507,7 +509,9 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                       {(['low', 'medium', 'high'] as const).map(e => (
                         <button key={e} onClick={() => setEnergy(e)}
                           className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-colors ${energy === e ? 'bg-slate-900 dark:bg-white border-slate-900 dark:border-white text-white dark:text-slate-900' : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'}`}>
-                          {ENERGY_ICON[e]} {e}
+                          <span className="flex items-center justify-center gap-1.5">
+                            <EnergyIcon level={e} size={12} /> {e}
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -675,7 +679,9 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                             ? 'bg-violet-600 border-violet-600 text-white'
                             : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-violet-300'
                         }`}>
-                        {ENERGY_ICON[e]} {e}
+                        <span className="flex items-center justify-center gap-1.5">
+                          <EnergyIcon level={e} size={12} /> {e}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -700,7 +706,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                         : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-violet-300'
                     }`}
                   >
-                    <span className="text-sm shrink-0">{avoidBreaks ? '☑' : '☐'}</span>
+                    {avoidBreaks ? <CheckSquare size={15} className="shrink-0" /> : <Square size={15} className="shrink-0" />}
                     <span className="text-xs leading-snug">
                       Not for an hour after a meal — for anything strenuous, like a gym
                       session or a run.

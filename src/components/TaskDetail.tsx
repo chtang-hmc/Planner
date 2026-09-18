@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useTransition, useEffect, useRef } from 'react'
+import { EnergyIcon, CalendarIcon } from '@/components/icons'
+import { Flame } from 'lucide-react'
 import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
 import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, duplicateTask, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
@@ -12,9 +14,7 @@ import { rruleToLabel } from '@/lib/rrule-utils'
 // ── Subtask list ──────────────────────────────────────────────────────────────
 
 const SUBTASK_ENERGY_OPTS = [
-  { val: 'low',    icon: '🌿' },
-  { val: 'medium', icon: '⚡' },
-  { val: 'high',   icon: '🔥' },
+  { val: 'low' }, { val: 'medium' }, { val: 'high' },
 ] as const
 
 function SubtaskSection({ taskId }: { taskId: string }) {
@@ -135,7 +135,8 @@ function SubtaskSection({ taskId }: { taskId: string }) {
                     )}
                     {sub.scheduled_start && (
                       <span className="text-[10px] text-sky-500">
-                        📅 {new Date(sub.scheduled_start).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                        <CalendarIcon size={11} className="inline-block mr-1 -mt-px" />
+                        {new Date(sub.scheduled_start).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
                       </span>
                     )}
                     <button
@@ -200,7 +201,7 @@ function SubtaskSection({ taskId }: { taskId: string }) {
                             : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
                         }`}
                       >
-                        {o.icon}
+                        <EnergyIcon level={o.val} size={12} />
                       </button>
                     ))}
                   </div>
@@ -248,10 +249,10 @@ const PRIORITY_OPTS = [
   { val: 4, label: 'Critical', color: 'text-red-500' },
 ]
 
-const ENERGY_OPTS: { val: EnergyLevel; label: string; icon: string }[] = [
-  { val: 'low',    label: 'Low',    icon: '🌿' },
-  { val: 'medium', label: 'Medium', icon: '⚡' },
-  { val: 'high',   label: 'High',   icon: '🔥' },
+const ENERGY_OPTS: { val: EnergyLevel; label: string }[] = [
+  { val: 'low',    label: 'Low'    },
+  { val: 'medium', label: 'Medium' },
+  { val: 'high',   label: 'High'   },
 ]
 
 const CURVE_OPTS: { val: UrgencyCurve; label: string; desc: string }[] = [
@@ -335,7 +336,7 @@ function ScheduleSection({
       <div>
         <label className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wide">Schedule</label>
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-          <span className="text-base">📅</span>
+          <CalendarIcon size={16} />
           <p className="text-xs text-slate-400 flex-1">
             Connect Google Calendar in{' '}
             <a href="/settings" className="text-accent-500 hover:underline">Settings</a>
@@ -350,7 +351,11 @@ function ScheduleSection({
     <div>
       <label className="block text-xs font-medium text-slate-400 mb-2 uppercase tracking-wide">
         Schedule
-        {isScheduled && <span className="ml-2 normal-case text-sky-500 font-normal">📅 Blocked on calendar</span>}
+        {isScheduled && (
+          <span className="ml-2 inline-flex items-center gap-1 normal-case text-sky-500 font-normal">
+            <CalendarIcon size={11} /> Blocked on calendar
+          </span>
+        )}
       </label>
 
       {isScheduled ? (
@@ -417,7 +422,8 @@ function ScheduleSection({
             disabled={!startVal || !endVal}
             className="w-full py-2 rounded-lg bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5"
           >
-            📅 Block time on calendar
+            <CalendarIcon size={13} className="inline-block mr-1.5 -mt-px" />
+            Block time on calendar
           </button>
         </div>
       )}
@@ -691,7 +697,9 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                       : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
                   }`}
                 >
-                  {o.icon} {o.label}
+                  <span className="flex items-center justify-center gap-1.5">
+                    <EnergyIcon level={o.val} size={12} /> {o.label}
+                  </span>
                 </button>
               ))}
             </div>
@@ -924,7 +932,8 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
                       </span>
                       <span className="text-sm text-violet-500 dark:text-violet-400">
                         {streak.current_streak === 1 ? 'day' : 'days'}
-                        {streak.current_streak >= 7 && ' 🔥'}
+                        {streak.current_streak >= 7 &&
+                          <Flame size={12} className="inline-block ml-1 -mt-px text-orange-500" />}
                       </span>
                     </div>
                     <p className="text-xs text-violet-400 dark:text-violet-500 mt-1">

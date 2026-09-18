@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { CalendarIcon, FocusIcon } from '@/components/icons'
 import type { ExistingItem } from '@/app/actions/scheduling'
 import type { PreviewBlock } from '@/components/SchedulePreviewModal'
 
@@ -221,7 +222,7 @@ export default function ScheduleWeekCalendar({ proposals, existing, onToggle, on
                         title={`${e.title} — ${fmtTime(item.start)}`}
                       >
                         <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate leading-tight">
-                          {e.kind === 'event' ? '📅' : '🎯'} {e.title}
+                          {e.kind === 'event' ? <CalendarIcon size={10} className="inline-block mr-1 -mt-px" /> : <FocusIcon size={10} className="inline-block mr-1 -mt-px" />}{e.title}
                         </p>
                         <p className="text-[9px] text-slate-400 truncate">{fmtTime(item.start)}</p>
                       </div>

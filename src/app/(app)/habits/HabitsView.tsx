@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useTransition } from 'react'
+import { TimeIcon, StreakIcon, CalendarIcon } from '@/components/icons'
 import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
 import { completeTask, setHabitCompletion, syncScheduledHabits } from '@/app/actions/tasks'
 import { rruleToLabel } from '@/lib/rrule-utils'
@@ -217,7 +218,7 @@ function HabitCard({
           title="Log with a time, and optionally put it on your calendar"
           className="shrink-0 w-9 h-9 rounded-full border-2 border-slate-200 dark:border-slate-700 flex items-center justify-center text-sm text-slate-400 hover:border-violet-400 hover:text-violet-500 transition-colors"
         >
-          🕐
+          <TimeIcon size={12} />
         </button>
 
         {/* Complete button */}
@@ -240,7 +241,7 @@ function HabitCard({
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2 text-center">
         {[
-          { label: 'Streak', value: current, suffix: current >= 7 ? '🔥' : '', color: current >= 7 ? 'text-orange-500' : current >= 3 ? 'text-accent-500' : 'text-slate-700 dark:text-slate-300' },
+          { label: 'Streak', value: current, suffix: '', color: current >= 7 ? 'text-orange-500' : current >= 3 ? 'text-accent-500' : 'text-slate-700 dark:text-slate-300' },
           { label: 'Best',   value: longest, suffix: '', color: 'text-slate-500 dark:text-slate-400' },
           { label: 'Total',  value: total,   suffix: '', color: 'text-slate-500 dark:text-slate-400' },
         ].map(({ label, value, suffix, color }) => (
@@ -435,7 +436,7 @@ export default function HabitsView({
           {habits.length === 0 ? (
             /* Empty state */
             <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-              <div className="text-5xl">🌱</div>
+              <StreakIcon size={40} className="mx-auto text-slate-300 dark:text-slate-700" />
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">No habits yet</h2>
               <p className="text-sm text-slate-400 max-w-xs">
                 Add habits you want to build — gym, reading, meditation — and track your streaks over time.
@@ -455,7 +456,7 @@ export default function HabitsView({
 
               {autoLogged.length > 0 && (
                 <div className="mb-4 flex items-start gap-3 px-3.5 py-2.5 rounded-xl border border-accent-200 dark:border-accent-900 bg-accent-50 dark:bg-accent-950/40">
-                  <span className="text-sm shrink-0">📅</span>
+                  <CalendarIcon size={14} className="shrink-0" />
                   <p className="text-xs text-slate-600 dark:text-slate-300 flex-1 leading-relaxed">
                     Filled in from your calendar:{' '}
                     <span className="font-medium">

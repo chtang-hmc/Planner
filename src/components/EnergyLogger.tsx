@@ -3,13 +3,23 @@
 import { useState } from 'react'
 import { useTimer } from '@/contexts/TimerContext'
 import { logEnergy } from '@/app/actions/energy'
+import { EnergyLevelIcon, DoneIcon } from '@/components/icons'
 
+/**
+ * Five faces became one glyph at five weights.
+ *
+ * 😴 😔 😐 😊 ⚡ were five unrelated pictures the reader had to rank from
+ * memory, and whether 😔 looks lower than 😐 depends on the platform's font —
+ * a poor way to encode a scale whose whole meaning is its order. A single icon
+ * getting brighter is ordinal by construction, and it is what Analytics
+ * already does with the same values.
+ */
 const LEVELS = [
-  { v: 1 as const, emoji: '😴', label: 'Exhausted' },
-  { v: 2 as const, emoji: '😔', label: 'Low'       },
-  { v: 3 as const, emoji: '😐', label: 'Okay'      },
-  { v: 4 as const, emoji: '😊', label: 'Good'      },
-  { v: 5 as const, emoji: '⚡', label: 'Energized' },
+  { v: 1 as const, label: 'Exhausted' },
+  { v: 2 as const, label: 'Low'       },
+  { v: 3 as const, label: 'Okay'      },
+  { v: 4 as const, label: 'Good'      },
+  { v: 5 as const, label: 'Energized' },
 ]
 
 export default function EnergyLogger() {
@@ -34,20 +44,21 @@ export default function EnergyLogger() {
         Energy
       </p>
       {logged !== null ? (
-        <p className="text-xs text-accent-500 dark:text-accent-400 py-0.5 pl-0.5">
-          Logged ✓
+        <p className="flex items-center gap-1.5 text-xs text-accent-500 dark:text-accent-400 py-0.5 pl-0.5">
+          <DoneIcon size={12} /> Logged
         </p>
       ) : (
         <div className="flex gap-0.5">
-          {LEVELS.map(({ v, emoji, label }) => (
+          {LEVELS.map(({ v, label }) => (
             <button
               key={v}
               onClick={() => handle(v)}
               disabled={saving}
               title={`${label} (${v})`}
-              className="flex-1 py-1 rounded-md text-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-40 leading-none"
+              aria-label={`Log energy: ${label}`}
+              className="flex-1 py-1.5 rounded-md flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-accent-600 dark:hover:text-accent-400 transition-colors disabled:opacity-40"
             >
-              {emoji}
+              <EnergyLevelIcon level={v} size={14} />
             </button>
           ))}
         </div>
