@@ -1,13 +1,17 @@
 -- The two numbers behind the "Relevant" toggle on the task list.
 --
--- They were constants in TaskList.tsx: a seven-day window, and priority 3 as
--- the line an *undated* task has to clear. Both are judgement calls about how
--- much of the future counts as now, and the right answer differs by how the
--- person works — a week is a long horizon for errands and a short one for
--- coursework.
+-- They were constants in TaskList.tsx: a seven-day window and priority 3. Both
+-- are judgement calls about how much of the future counts as now, and the right
+-- answer differs by how the person works — a week is a long horizon for errands
+-- and a short one for coursework.
 --
--- NULL means "not set" and falls back to the previous constants, so the filter
--- behaves exactly as before until someone changes it.
+-- The two are independent grounds, not a single test: a task is relevant if it
+-- falls inside the window OR clears the priority bar. Either alone is enough,
+-- and each rescues what the other would drop — a Low errand due tomorrow, a
+-- Critical piece of work due in three months.
+--
+-- NULL means "not set" and falls back to the constants, so the filter behaves
+-- exactly as before until someone changes it.
 
 alter table user_scheduling_config
   add column if not exists relevant_window_days smallint,
@@ -34,6 +38,6 @@ exception
 end $$;
 
 comment on column user_scheduling_config.relevant_window_days is
-  'Days ahead a deadline still counts as relevant. NULL = 7.';
+  'Days ahead a deadline still counts as relevant. One of two independent grounds — see relevant_min_priority. NULL = 7.';
 comment on column user_scheduling_config.relevant_min_priority is
-  'Lowest priority an undated task can have and still count as relevant. NULL = 3 (High).';
+  'Priority that makes a task relevant on its own, whatever its deadline says. Independent of relevant_window_days: either alone qualifies. NULL = 3 (High).';
