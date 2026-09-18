@@ -29,10 +29,14 @@ function Panel({ title, sub, children, className = '' }: {
   className?: string
 }) {
   return (
-    <section className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 ${className}`}>
+    <section className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 flex flex-col ${className}`}>
       <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h3>
       {sub && <p className="text-[11px] text-slate-400 mt-0.5">{sub}</p>}
-      <div className={sub ? 'mt-4' : 'mt-3'}>{children}</div>
+      {/* flex-1 so a panel stretched to match its neighbour hands the spare
+          height to its chart rather than leaving it dead at the bottom. What
+          the chart does with it is the chart's business — most ignore it; the
+          accuracy donut centres in it. */}
+      <div className={`flex-1 ${sub ? 'mt-4' : 'mt-3'}`}>{children}</div>
     </section>
   )
 }
@@ -266,7 +270,7 @@ function AccuracyDonut({ accurate, inaccurate }: { accurate: number; inaccurate:
           Complete tasks with reflections to see accuracy
         </p>
       ) : (
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-6 h-full">
           <svg width={88} height={88} className="shrink-0">
             <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor"
               className="text-slate-100 dark:text-slate-800" strokeWidth={stroke} />
@@ -499,8 +503,14 @@ export default function AnalyticsView({ data }: { data: AnalyticsData }) {
         />
 
         {/* Two full-width charts stacked left a lot of empty panel beside them
-            once the width cap came off, so they pair up when there is room. */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+            once the width cap came off, so they pair up when there is room.
+
+            No `items-start`: a bar chart and a project list have no reason to
+            end at the same height, and letting each size to its own content
+            left one card visibly short of the other. Stretching them is what
+            the pair below already did — the two rows disagreeing was the
+            actual complaint. */}
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
           <UrgencyChart buckets={urgencyBuckets} />
           <ProjectWorkload stats={projectStats} />
         </div>
