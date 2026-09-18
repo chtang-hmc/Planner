@@ -799,6 +799,12 @@ Due-date anchoring stays the default, and stays **correct** for anything with a 
 
 The flag is carried forward on every spawn. Without that the second occurrence would silently revert to due-date anchoring, and the bug would only appear one cycle in.
 
+### A due time is a deadline, not an appointment
+
+The scheduler treats `due_time_minutes` as the instant the work must be *finished*, not the instant it starts. "Due at 5pm" says when the thing is wanted; placing the work at 5pm because of it would stop the scheduler putting it anywhere earlier, which is usually exactly where it belongs. A chain is bound by its strictest member's hour, the same way it already is by the earliest deadline.
+
+**Adding it exposed a latent bug.** The placement loops tested a candidate's *start* against the deadline. While `dueMs` was always the end of the due day that was the same test — a day boundary sits well past working hours, so nothing could begin inside the day and end after it. A mid-day deadline makes the two differ: a 90-minute session starting at 9 against an 11am deadline begins in time and finishes half an hour late. All three sites now bound the end — the single-task loop, the chain run (which also caps its length at the deadline), and the fixed-offset sequence, where it is the *last* stage that has to land in time rather than the first.
+
 ### A time of day lives beside the day, never inside it
 
 `tasks.due_time_minutes` — minutes from local midnight, 0–1439, NULL for all-day.

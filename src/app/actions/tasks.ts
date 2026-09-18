@@ -1050,6 +1050,10 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   const cascade: Record<string, unknown> = {}
   if ('project_id'      in data) cascade.project_id      = data.project_id
   if ('due_date'        in data) cascade.due_date        = data.due_date
+  // The hour travels with the day: a step of work due by five cannot sensibly
+  // run past five either. Cascaded whenever it is set, including to null, so
+  // clearing the parent's time clears its steps' too.
+  if ('due_time_minutes' in data) cascade.due_time_minutes = data.due_time_minutes
   if ('location'        in data) cascade.location        = data.location
   // Importance belongs to the parent: marking it critical makes every step
   // critical. Priority was the one input that did not cascade, which is why a
