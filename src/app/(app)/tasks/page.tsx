@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, CalendarEvent, HabitStreak } from '@/types'
 import TaskList from './TaskList'
 import { fetchWeekStartDay } from '@/lib/week'
+import { normalizeRelevance } from '@/lib/relevance'
 import CalendarPanel from '@/components/CalendarPanel'
 
 export const dynamic = 'force-dynamic'
@@ -56,6 +57,13 @@ export default async function TasksPage() {
     'https://www.googleapis.com/auth/calendar.events'
   )
 
+  // select('*') so a pre-0017 database returns the row without the columns;
+  // normalizeRelevance then falls back to the constants the filter used before
+  // they were settings.
+  const { data: relevanceRow } = await db
+    .from('user_scheduling_config').select('*').limit(1).maybeSingle()
+  const relevance = normalizeRelevance(relevanceRow)
+
   return (
     <div className="flex h-full">
       <div className="flex-1 overflow-y-auto min-w-0">
@@ -66,6 +74,7 @@ export default async function TasksPage() {
           events={calEvents}
           gcalWriteEnabled={gcalWriteEnabled}
           weekStartDay={weekStartDay}
+          relevance={relevance}
         />
       </div>
       <CalendarPanel

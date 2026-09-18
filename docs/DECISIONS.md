@@ -640,6 +640,26 @@ Over-subscription degrades honestly: Gym 5× + Run 4× is nine sessions for seve
 
 `tasks.parent_id` is a self-referential FK (`REFERENCES tasks(id) ON DELETE CASCADE`). Subtasks are task rows with `parent_id` set to the parent task's id. They do not appear in the main task list (filtered by `parent_id IS NULL`).
 
+### Settings fills the panel
+
+`max-w-lg` with no `mx-auto` pinned every control to the left edge and left the rest of the width blank — the same thing Projects and Analytics were doing. Sections are now cards in a grid that breaks into two columns as the panel grows, rather than one column stretched to the window: a 1400px-wide row of radio buttons "fills the panel" and reads worse than the 512px it replaced. Scheduling spans both columns, since it holds a week grid and an hours table and was laid out to be wide.
+
+The horizontal rules between sections went with the change. A divider only reads as a separator while the sections are in one stack; in a grid it is a line across the middle of nothing. The card edges do that job now.
+
+### "Relevant" is two settings, not two constants
+
+The task list's default filter answers "what am I doing now" rather than "what do I owe anyone, ever". Its two numbers — a seven-day deadline window, and priority 3 as the line an *undated* task must clear — were constants in `TaskList.tsx`. Both are judgement calls about how much of the future counts as now, and the right answer differs by how someone works: a week is a long horizon for errands and a short one for coursework. They live in `user_scheduling_config` (migration `0017`), alongside the week start day.
+
+**The deadline and the priority are an `or`, and each rescues what the other would drop.** A Low errand due tomorrow is current because it is due tomorrow, not because it is important; a Critical piece of work due in three months is current because it is Critical, even though the date is far off. Priority was originally consulted *only* when a task had no date at all, so that second case — important work with a distant deadline — was hidden, which is the gap this closes. Requiring both instead would hide both, and they are the two things a person most often wants to see. What falls out is the genuine backlog: unimportant work that is neither soon nor undated-and-important.
+
+The rule itself moved to `src/lib/relevance.ts`. It is the interesting part and the component is not — pulling it out is what made it testable, and `relevance.test.ts` pins each rule *and the order they run in*, because the order is where the meaning is:
+
+- `someday` and an unopened "not before" gate disqualify outright, whatever else is true — including a calendar booking, since you still cannot start
+- the calendar admits anything, however small or far off: booking something *is* the statement that you are doing it
+- the deadline window and the priority bar are independent grounds; either alone is enough
+
+Settings shows the rule back in the terms just chosen, live. "Relevant" is a word with no visible meaning until something goes missing from the list, and a filter that is on by default has to explain itself.
+
 ### Subtasks inherit from their parent
 
 A subtask is part of one piece of work, so it takes the parent's **project**, **deadline**, **location**, **energy**, **priority** and **urgency curve**. All of them are set at creation and cascaded by `updateTask` when the parent changes; without the cascade they keep whatever was copied on day one and drift.

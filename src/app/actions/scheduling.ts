@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX } from '@/lib/relevance'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getValidToken, createTaskBlock, updateTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
 import {
@@ -887,6 +888,45 @@ export async function saveWeekStartDay(day: number): Promise<{ error?: string }>
 
   revalidatePath('/settings')
   revalidatePath('/habits')
+  revalidatePath('/tasks')
+  return {}
+}
+
+/**
+ * The two numbers behind the "Relevant" toggle.
+ *
+ * Saved together because they are one judgement — how much of the future counts
+ * as now — and adjusting one usually means reconsidering the other.
+ */
+export async function saveRelevanceSettings(
+  windowDays: number,
+  minPriority: number,
+): Promise<{ error?: string }> {
+  if (!Number.isInteger(windowDays) || windowDays < RELEVANT_WINDOW_MIN || windowDays > RELEVANT_WINDOW_MAX) {
+    return { error: `Window must be a whole number of days between ${RELEVANT_WINDOW_MIN} and ${RELEVANT_WINDOW_MAX}` }
+  }
+  if (!Number.isInteger(minPriority) || minPriority < 1 || minPriority > 4) {
+    return { error: 'Priority must be between 1 and 4' }
+  }
+
+  const db = createServiceClient()
+  const { data } = await db.from('user_scheduling_config').select('id').limit(1).single()
+
+  const patch = { relevant_window_days: windowDays, relevant_min_priority: minPriority }
+  const { error } = data
+    ? await db.from('user_scheduling_config').update(patch).eq('id', data.id)
+    : await db.from('user_scheduling_config').insert({
+        max_session_minutes: 90, buffer_minutes: 15, ...patch,
+      })
+
+  if (error) {
+    // Missing until 0017 runs. Reading falls back to the old constants, so the
+    // filter still works — only the preference cannot be stored.
+    console.error('saveRelevanceSettings:', error.message)
+    return { error: 'Could not save — run migration 0017_relevance_settings.sql first.' }
+  }
+
+  revalidatePath('/settings')
   revalidatePath('/tasks')
   return {}
 }

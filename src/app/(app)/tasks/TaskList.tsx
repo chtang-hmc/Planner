@@ -18,30 +18,7 @@ import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { formatMinutes, localDateStr } from '@/lib/task-format'
-
-
-/** How far ahead a deadline still counts as something to think about today. */
-const RELEVANT_WINDOW_DAYS = 7
-
-/**
- * "Relevant" = work you could pick up in the next week.
- *
- * The full list answers "what do I owe anyone, ever"; this answers "what am I
- * doing now". Four rules, each dropping a different kind of noise:
- *   - someday is a parking lot, never current
- *   - a task gated by "not before" can't be started yet, however urgent it looks
- *   - anything already blocked on the calendar is by definition the plan
- *   - a deadline inside the window is live; one beyond it isn't yet
- * Tasks with no deadline at all fall back to priority — without a date, P3+ is
- * the only signal that it matters more than "eventually".
- */
-function isRelevant(t: Task, todayStr: string, horizonStr: string): boolean {
-  if (t.type === 'someday') return false
-  if (t.start_date && t.start_date.slice(0, 10) > todayStr) return false
-  if (t.scheduled_start) return true
-  if (t.due_date) return t.due_date.slice(0, 10) <= horizonStr
-  return t.priority >= 3
-}
+import { isRelevant, relevanceHint, RELEVANCE_DEFAULT, type RelevanceConfig } from '@/lib/relevance'
 
 
 /** Rows carry a `parent` embed so a subtask can show what it belongs to. */
@@ -54,9 +31,14 @@ interface Props {
   events: CalendarEvent[]
   gcalWriteEnabled: boolean
   weekStartDay: number
+  /** The two numbers behind the Relevant toggle, from Settings. */
+  relevance?: RelevanceConfig
 }
 
-export default function TaskList({ tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay }: Props) {
+export default function TaskList({
+  tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay,
+  relevance = RELEVANCE_DEFAULT,
+}: Props) {
   const { query } = useSearch()
   const [view, setView] = useState<'list' | 'upcoming'>(() =>
     typeof window !== 'undefined' ? getStoredDefaultView() : 'list'
@@ -184,7 +166,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
   // string comparison formatDue uses, for the same reason.
   const todayStr   = localDateStr(new Date())
   const horizonStr = (() => {
-    const d = new Date(); d.setDate(d.getDate() + RELEVANT_WINDOW_DAYS); return localDateStr(d)
+    const d = new Date(); d.setDate(d.getDate() + relevance.windowDays); return localDateStr(d)
   })()
 
   // Split habits from regular tasks
@@ -199,9 +181,9 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
     // A subtask rides on its parent's relevance: parents pass their deadline
     // down, but a chain member with no date of its own would otherwise vanish
     // out from under a parent that's still showing.
-    if (relevantOnly && !isRelevant(t, todayStr, horizonStr)) {
+    if (relevantOnly && !isRelevant(t, todayStr, horizonStr, relevance.minPriority)) {
       const parent = t.parent_id ? tasks.find(p => p.id === t.parent_id) : null
-      if (!parent || !isRelevant(parent, todayStr, horizonStr)) return false
+      if (!parent || !isRelevant(parent, todayStr, horizonStr, relevance.minPriority)) return false
     }
     return true
   })
@@ -418,7 +400,7 @@ export default function TaskList({ tasks, projects, streaks, events, gcalWriteEn
                   <Toggle
                     on={relevantOnly}
                     onClick={() => setRelevantOnly(v => !v)}
-                    title={`Only what you can act on now — due in the next ${RELEVANT_WINDOW_DAYS} days, already on the calendar, or high priority with no deadline. Hides someday and anything gated by "not before".`}
+                    title={relevanceHint(relevance)}
                   >
                     Relevant
                   </Toggle>

@@ -7,6 +7,10 @@ import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
+import { saveRelevanceSettings } from '@/app/actions/scheduling'
+import {
+  relevanceHint, RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX, type RelevanceConfig,
+} from '@/lib/relevance'
 import {
   TASK_LAYOUTS, DEFAULT_TASK_LAYOUT, getStoredTaskLayout, storeTaskLayout,
   type TaskLayoutId,
@@ -437,6 +441,114 @@ function TaskLayoutSection() {
   )
 }
 
+/**
+ * The two numbers behind the task list's "Relevant" toggle.
+ *
+ * The filter is on by default, so these decide what the list looks like on
+ * arrival — which makes them worth surfacing rather than leaving as constants
+ * someone has to go and find in the source. The preview line spells out the
+ * rule in the user's own terms, because "relevant" on its own explains nothing.
+ */
+function RelevanceSection({ relevance }: { relevance: RelevanceConfig }) {
+  const [windowDays, setWindowDays]   = useState(String(relevance.windowDays))
+  const [minPriority, setMinPriority] = useState(relevance.minPriority)
+  const [error, setError]   = useState<string | null>(null)
+  const [saved, setSaved]   = useState(false)
+  const [pending, start]    = useTransition()
+
+  const parsedWindow = Number(windowDays)
+  const windowValid  = Number.isInteger(parsedWindow)
+    && parsedWindow >= RELEVANT_WINDOW_MIN && parsedWindow <= RELEVANT_WINDOW_MAX
+
+  function save(nextWindow: number, nextPriority: number) {
+    setError(null)
+    setSaved(false)
+    start(async () => {
+      const res = await saveRelevanceSettings(nextWindow, nextPriority)
+      if (res.error) setError(res.error)
+      else setSaved(true)
+    })
+  }
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Relevant tasks</h2>
+      <p className="text-xs text-slate-400 mb-4">
+        What the task list shows before you turn the Relevant filter off.
+      </p>
+
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            Deadlines within
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={RELEVANT_WINDOW_MIN}
+              max={RELEVANT_WINDOW_MAX}
+              value={windowDays}
+              onChange={e => setWindowDays(e.target.value)}
+              onBlur={() => windowValid && save(parsedWindow, minPriority)}
+              className="w-24 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+            <span className="text-xs text-slate-400">days ahead</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+            …or priority at least
+          </label>
+          <div className="flex gap-1.5">
+            {([1, 2, 3, 4] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => { setMinPriority(p); if (windowValid) save(parsedWindow, p) }}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${
+                  minPriority === p
+                    ? 'border-accent-500 bg-accent-50 dark:bg-accent-950 text-accent-700 dark:text-accent-300'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
+                }`}
+              >
+                {PRIORITY_NAMES[p]}+
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* The rule, in the terms just chosen. Without it "Relevant" is a word
+            with no visible meaning until something goes missing from the list. */}
+        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed border-l-2 border-slate-200 dark:border-slate-700 pl-3">
+          {relevanceHint({
+            windowDays: windowValid ? parsedWindow : relevance.windowDays,
+            minPriority,
+          })}
+        </p>
+
+        {!windowValid && (
+          <p className="text-xs text-amber-500">
+            Enter a whole number between {RELEVANT_WINDOW_MIN} and {RELEVANT_WINDOW_MAX}.
+          </p>
+        )}
+        {error && <p className="text-xs text-amber-500">{error}</p>}
+        {saved && !error && !pending && <p className="text-xs text-slate-400">Saved.</p>}
+      </div>
+    </section>
+  )
+}
+
+const PRIORITY_NAMES = ['', 'Low', 'Med', 'High', 'Crit'] as const
+
+/** One settings section. The border is what separates them now the rules are gone. */
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 ${className}`}>
+      {children}
+    </div>
+  )
+}
+
 interface SettingsViewProps {
   gcalConnected:    boolean
   gcalHasWriteScope: boolean
@@ -447,11 +559,13 @@ interface SettingsViewProps {
   bufferMinutes:    number
   weekStartDay:     number
   breaks:           DailyBreak[]
+  relevance:        RelevanceConfig
 }
 
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
   workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
+  relevance,
 }: SettingsViewProps) {
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
@@ -462,29 +576,43 @@ export default function SettingsView({
         </div>
       </header>
 
-      <div className="px-6 py-8 max-w-lg flex flex-col gap-10">
-        <ThemeSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <AccentSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <DefaultViewSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <TaskLayoutSection />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <GoogleCalendarSection
-          connected={gcalConnected}
-          hasWriteScope={gcalHasWriteScope}
-          connectedAt={gcalConnectedAt}
-        />
-        <div className="border-t border-slate-200 dark:border-slate-800" />
-        <SchedulingSettings
-          workingHours={workingHours}
-          energySchedule={energySchedule}
-          maxSession={maxSession}
-          bufferMinutes={bufferMinutes}
-          weekStartDay={weekStartDay}
-          breaks={breaks}
-        />
+      {/* Settings fill the panel.
+          max-w-lg with no mx-auto pinned every control to the left edge and
+          left the rest of the width blank — the same thing Projects and
+          Analytics were doing. Sections are cards in a grid that breaks into
+          two columns as the panel grows, rather than one column stretched to
+          whatever the window is: a 1400px-wide row of radio buttons "fills the
+          panel" and reads worse than the 512px it replaced.
+
+          The dividers went with the change. A horizontal rule between sections
+          only reads as a separator while they are in one stack; in a grid it is
+          a line across the middle of nothing. The card edges do that job now.
+
+          Scheduling spans both columns — it holds a week grid and an hours
+          table, and was laid out to be wide. */}
+      <div className="px-6 py-6 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        <Card><ThemeSection /></Card>
+        <Card><AccentSection /></Card>
+        <Card><DefaultViewSection /></Card>
+        <Card><TaskLayoutSection /></Card>
+        <Card><RelevanceSection relevance={relevance} /></Card>
+        <Card>
+          <GoogleCalendarSection
+            connected={gcalConnected}
+            hasWriteScope={gcalHasWriteScope}
+            connectedAt={gcalConnectedAt}
+          />
+        </Card>
+        <Card className="xl:col-span-2">
+          <SchedulingSettings
+            workingHours={workingHours}
+            energySchedule={energySchedule}
+            maxSession={maxSession}
+            bufferMinutes={bufferMinutes}
+            weekStartDay={weekStartDay}
+            breaks={breaks}
+          />
+        </Card>
       </div>
     </div>
   )
