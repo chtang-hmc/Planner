@@ -162,7 +162,14 @@ export async function createTaskBlock(
    * auto-schedule sweep would delete them.
    */
   auto = false,
-  /** Leading glyph. '🎯' is work planned ahead; '✓' is a session already done. */
+  /**
+   * Leading glyph. '🎯' is work planned ahead; '✓' is a session already done.
+   *
+   * These stay emoji, deliberately. They go into the *title of a real Google
+   * Calendar event*, which is plain text rendered by Google's clients — an SVG
+   * icon cannot go there, and changing the glyph would make every event written
+   * from now on inconsistent with the ones already in the calendar.
+   */
   prefix = '🎯',
 ): Promise<string> {
   const body = {

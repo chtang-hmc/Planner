@@ -8,6 +8,11 @@ import SchedulingSettings from '@/components/SchedulingSettings'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
 import { useStored, useHydrated, writeStored } from '@/lib/use-stored'
+import {
+  LightIcon, DarkIcon, SystemIcon, CalendarIcon, WarningIcon, DoneIcon,
+} from '@/components/icons'
+import { List as ListIcon } from 'lucide-react'
+import { Segmented } from '@/components/TaskChrome'
 import { saveRelevanceSettings } from '@/app/actions/scheduling'
 import {
   relevanceHint, RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX, type RelevanceConfig,
@@ -20,9 +25,9 @@ import {
 // ── Theme toggle ──────────────────────────────────────────────────────────────
 
 const THEME_OPTIONS = [
-  { id: 'light',  label: 'Light',  icon: '☀️' },
-  { id: 'dark',   label: 'Dark',   icon: '🌙' },
-  { id: 'system', label: 'System', icon: '💻' },
+  { id: 'light',  label: 'Light',  Icon: LightIcon  },
+  { id: 'dark',   label: 'Dark',   Icon: DarkIcon   },
+  { id: 'system', label: 'System', Icon: SystemIcon },
 ] as const
 
 function ThemeSection() {
@@ -54,7 +59,7 @@ function ThemeSection() {
                   : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
               }`}
             >
-              <span className="text-xl">{opt.icon}</span>
+              <opt.Icon size={18} />
               <span className={`text-xs font-medium ${
                 active ? 'text-accent-700 dark:text-accent-300' : 'text-slate-600 dark:text-slate-400'
               }`}>
@@ -163,8 +168,8 @@ export function getStoredDefaultView(): DefaultView {
 }
 
 const VIEW_OPTIONS = [
-  { id: 'list' as const,     label: 'List',     icon: '☰',  desc: 'All active tasks sorted by urgency' },
-  { id: 'upcoming' as const, label: 'Upcoming', icon: '📅', desc: 'Tasks laid out day-by-day on a calendar' },
+  { id: 'list' as const,     label: 'List',     Icon: ListIcon,     desc: 'All active tasks sorted by urgency' },
+  { id: 'upcoming' as const, label: 'Upcoming', Icon: CalendarIcon, desc: 'Tasks laid out day-by-day on a calendar' },
 ]
 
 function DefaultViewSection() {
@@ -196,7 +201,7 @@ function DefaultViewSection() {
                   : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
               }`}
             >
-              <span className="text-xl">{opt.icon}</span>
+              <opt.Icon size={18} />
               <span className={`text-xs font-medium ${
                 active ? 'text-accent-700 dark:text-accent-300' : 'text-slate-600 dark:text-slate-400'
               }`}>
@@ -259,7 +264,7 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
         /* Not connected */
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-            <span className="text-xl">📅</span>
+            <CalendarIcon size={18} />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Not connected</p>
               <p className="text-xs text-slate-400">Connect to see events and schedule focus blocks</p>
@@ -282,7 +287,7 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
         /* Connected but only read-only scope — needs upgrade for scheduling */
         <div className="flex flex-col gap-3">
           <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
-            <span className="text-base mt-0.5">⚠️</span>
+            <WarningIcon size={15} className="mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Read-only access</p>
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
@@ -309,7 +314,7 @@ function GoogleCalendarSection({ connected, hasWriteScope, connectedAt }: GCalSe
         /* Connected with full write scope */
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30">
-            <span className="text-xl">✅</span>
+            <DoneIcon size={18} className="text-accent-500" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-green-700 dark:text-green-300">Connected</p>
               <p className="text-xs text-green-600 dark:text-green-500 mt-0.5">
@@ -550,57 +555,85 @@ interface SettingsViewProps {
   relevance:        RelevanceConfig
 }
 
+/**
+ * Which half of Settings is showing.
+ *
+ * Tabs rather than two routes: Settings is one sidebar entry, and a second one
+ * for "Settings (advanced)" would put the split in the navigation where it
+ * would be read on every page rather than only here. Remembered, because
+ * whichever half you use is the half you keep coming back to.
+ */
+const TAB_KEY = 'planner.settings.tab'
+type SettingsTab = 'simple' | 'advanced'
+
+function storedTab(): SettingsTab {
+  if (typeof window === 'undefined') return 'simple'
+  try { return localStorage.getItem(TAB_KEY) === 'advanced' ? 'advanced' : 'simple' }
+  catch { return 'simple' }
+}
+
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
   workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
   relevance,
 }: SettingsViewProps) {
+  const tab = useStored(storedTab, 'simple' as SettingsTab)
+
   return (
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
-      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
-        <div className="px-6 py-3">
+        <div className="px-6 py-3 flex items-center justify-between gap-4">
           <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Settings</h1>
+          <Segmented
+            value={tab}
+            onChange={v => writeStored(() => localStorage.setItem(TAB_KEY, v))}
+            options={[
+              { id: 'simple',   label: 'Simple'   },
+              { id: 'advanced', label: 'Advanced' },
+            ]}
+          />
         </div>
       </header>
 
-      {/* Settings fill the panel.
-          max-w-lg with no mx-auto pinned every control to the left edge and
-          left the rest of the width blank — the same thing Projects and
-          Analytics were doing. Sections are cards in a grid that breaks into
-          two columns as the panel grows, rather than one column stretched to
-          whatever the window is: a 1400px-wide row of radio buttons "fills the
-          panel" and reads worse than the 512px it replaced.
+      {/* Sections are cards in a grid that breaks into two columns as the panel
+          grows, rather than one column stretched to whatever the window is: a
+          1400px-wide row of radio buttons "fills the panel" and reads worse
+          than the 512px it replaced.
 
-          The dividers went with the change. A horizontal rule between sections
-          only reads as a separator while they are in one stack; in a grid it is
-          a line across the middle of nothing. The card edges do that job now.
-
-          Scheduling spans both columns — it holds a week grid and an hours
-          table, and was laid out to be wide. */}
+          items-start, unlike Analytics: these cards have genuinely different
+          amounts in them, and stretching a three-option radio group to match a
+          working-hours table gives it a field of empty space rather than a
+          matching neighbour. */}
       <div className="px-6 py-6 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <Card><ThemeSection /></Card>
-        <Card><AccentSection /></Card>
-        <Card><DefaultViewSection /></Card>
-        <Card><TaskLayoutSection /></Card>
-        <Card><RelevanceSection relevance={relevance} /></Card>
-        <Card>
-          <GoogleCalendarSection
-            connected={gcalConnected}
-            hasWriteScope={gcalHasWriteScope}
-            connectedAt={gcalConnectedAt}
-          />
-        </Card>
-        <Card className="xl:col-span-2">
-          <SchedulingSettings
-            workingHours={workingHours}
-            energySchedule={energySchedule}
-            maxSession={maxSession}
-            bufferMinutes={bufferMinutes}
-            weekStartDay={weekStartDay}
-            breaks={breaks}
-          />
-        </Card>
+        {tab === 'simple' ? (
+          <>
+            <Card><ThemeSection /></Card>
+            <Card><AccentSection /></Card>
+            <Card><DefaultViewSection /></Card>
+            <Card><TaskLayoutSection /></Card>
+            <Card className="xl:col-span-2">
+              <GoogleCalendarSection
+                connected={gcalConnected}
+                hasWriteScope={gcalHasWriteScope}
+                connectedAt={gcalConnectedAt}
+              />
+            </Card>
+          </>
+        ) : (
+          <>
+            <Card className="xl:col-span-2"><RelevanceSection relevance={relevance} /></Card>
+            <Card className="xl:col-span-2">
+              <SchedulingSettings
+                workingHours={workingHours}
+                energySchedule={energySchedule}
+                maxSession={maxSession}
+                bufferMinutes={bufferMinutes}
+                weekStartDay={weekStartDay}
+                breaks={breaks}
+              />
+            </Card>
+          </>
+        )}
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { CalendarIcon, FocusIcon, WarningIcon } from '@/components/icons'
 import { confirmSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import ScheduleWeekCalendar, { type CalendarBlock } from '@/components/ScheduleWeekCalendar'
 import type { SchedulerTask } from '@/lib/scheduler'
@@ -243,7 +244,7 @@ export default function SchedulePreviewModal({ loading = false, blocks, unschedu
                             className="flex items-center gap-3 px-3 py-2 rounded-xl border border-dashed border-slate-200 dark:border-slate-700 opacity-70"
                           >
                             <span className="w-4 shrink-0 text-center text-[10px] text-slate-400">
-                              {r.item.kind === 'event' ? '📅' : '🎯'}
+                              {r.item.kind === 'event' ? <CalendarIcon size={12} /> : <FocusIcon size={12} />}
                             </span>
                             <span className="text-xs font-mono text-slate-400 shrink-0 w-24">
                               {formatTime(r.startISO)} – {formatTime(r.endISO)}
@@ -288,7 +289,9 @@ export default function SchedulePreviewModal({ loading = false, blocks, unschedu
                             </span>
                           )}
                           {!b.energyMatch && (
-                            <span title="Energy mismatch — scheduled anyway" className="text-[10px] text-amber-400 shrink-0">⚡?</span>
+                            <WarningIcon size={11} className="text-amber-400 shrink-0">
+                              <title>Energy mismatch — scheduled anyway</title>
+                            </WarningIcon>
                           )}
                           <span className="text-[10px] text-accent-500 shrink-0 font-medium">new</span>
                         </label>

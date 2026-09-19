@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef } from 'react'
+import { EnergyIcon } from '@/components/icons'
 import { useStored } from '@/lib/use-stored'
 import {
   saveWorkingHours,
@@ -272,7 +273,7 @@ function EnergyGrid({ initial, weekStartDay }: { initial: EnergyScheduleEntry[];
                         className={`w-full px-1 py-1 rounded border text-[10px] font-medium transition-colors ${ENERGY_COLORS[level]}`}
                         title={`${DAYS[dow]} ${block.label}: ${level}`}
                       >
-                        {level === 'low' ? '🌿' : level === 'medium' ? '⚡' : '🔥'}
+                        <EnergyIcon level={level} size={12} />
                       </button>
                     </td>
                   )

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition, useEffect, useRef, useCallback } from 'react'
+import { AccurateIcon, InaccurateIcon } from '@/components/icons'
 import { completeTask } from '@/app/actions/tasks'
 import { Task } from '@/types'
 
@@ -140,7 +141,10 @@ export default function MicroReflection({ task, onClose, onDone }: Props) {
                     : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300'
                 }`}
               >
-                {val ? '👍 Yes' : '👎 Off'}
+                <span className="flex items-center justify-center gap-1.5">
+                  {val ? <AccurateIcon size={12} /> : <InaccurateIcon size={12} />}
+                  {val ? 'Yes' : 'Off'}
+                </span>
               </button>
             ))}
           </div>

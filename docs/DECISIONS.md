@@ -859,6 +859,38 @@ What stays disabled is the handful the rules genuinely cannot distinguish: reset
 
 `varsIgnorePattern: '^_'` exempts the deliberate strip-fields-by-destructuring idiom (`const { id: _id, ...shape } = row`) and nothing else. Twelve genuinely dead bindings were hiding behind the un-narrowed rule — unused imports, a superseded `useState`, a prop `ProjectCard` never read — and were deleted.
 
+## Icons
+
+`lucide-react`, reached only through `src/components/icons.tsx`.
+
+Emoji were doing this job and doing it badly for anything ordinal. The five energy faces (😴 😔 😐 😊 ⚡) are five unrelated pictures the reader has to rank from memory, and whether 😔 reads as lower than 😐 depends on the platform's font — poor encoding for a value whose entire meaning is its order. They also sat at whatever size the surrounding text happened to be, so the same meaning was a different weight in each of the six files `ENERGY_ICON` had been copied into.
+
+**One module is the whole dependency surface.** Nothing else imports `lucide-react` except for a handful of one-off glyphs, and icons are re-exported under the app's own names — `RecurringIcon`, not `Repeat` — so a call site reads in this app's vocabulary rather than the icon set's. If the set is ever swapped, that file is the diff.
+
+**Ordinal values get a ramp, not a set.** The 1–5 energy scale is one glyph at five opacities (`ENERGY_RAMP`), which is ordinal by construction and matches what Analytics already does with the same numbers (`ENERGY_OPACITY`). The three-level task scale keeps Leaf → Zap → Flame, because that reading was already in people's heads from 🌿 ⚡ 🔥.
+
+### What is not an icon
+
+**The typographic marks stay**: `✓ ✕ ↻ ↗ ⌂ ◎ ↳ ↵`. They are a deliberate language, they align on the text baseline in a way an SVG does not, and they are not pictographs pretending to be data. A global replace caught the location options (`◎ ⌂ ↗`) by accident once — they are marks, not emoji.
+
+**The Google Calendar prefixes stay emoji**: `🎯` for planned work, `✓` for a finished session. They are the *title text of a real calendar event*, rendered by Google's clients — an SVG cannot go there, and changing the glyph would leave every event written afterwards inconsistent with the ones already in the calendar.
+
+## Settings: simple and advanced
+
+Two tabs, not two routes. Settings is one sidebar entry, and a second one for "Settings (advanced)" would put the split in the navigation — read on every page, to answer a question you only have while inside Settings. The choice is remembered, because whichever half you use is the half you keep returning to.
+
+The split is **how it looks** against **how it decides**:
+
+| Simple | Advanced |
+|---|---|
+| Appearance, colour theme | Relevant tasks |
+| Default view, task layout | Working hours, energy grid |
+| Google Calendar connection | Session length, buffers, breaks, week start |
+
+Google Calendar sits in Simple despite being the most technical thing there: it is a *setup* step you do once and then never touch, which is exactly what Simple is for. Relevance sits in Advanced despite being two numbers, because changing it silently changes what the task list shows — the kind of thing that should be somewhere you went on purpose.
+
+Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
+
 ## Task Row Layouts
 
 The task list draws a row four ways, chosen in **Settings → Task list layout** and stored per browser in `localStorage['planner-task-layout']`.

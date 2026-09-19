@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useTransition } from 'react'
+import { SquareCheck as CheckSquare, Square } from 'lucide-react'
 import { Task } from '@/types'
 import { logHabitSession } from '@/app/actions/tasks'
 import { addDays } from '@/lib/day'
@@ -214,7 +215,7 @@ export default function LogHabitModal({
                   : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-violet-300'
             }`}
           >
-            <span className="text-sm shrink-0">{toCalendar && gcalWriteEnabled ? '☑' : '☐'}</span>
+            {toCalendar && gcalWriteEnabled ? <CheckSquare size={15} className="shrink-0" /> : <Square size={15} className="shrink-0" />}
             <span className="text-xs leading-snug">
               {gcalWriteEnabled
                 ? 'Put it on my Google Calendar, where it happened'

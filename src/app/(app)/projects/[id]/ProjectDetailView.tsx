@@ -1,8 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import { EnergyIcon, EditIcon, ArchiveIcon } from '@/components/icons'
+import { Flame } from 'lucide-react'
 import Link from 'next/link'
-import { Task, Project, EstimationProfile, HabitStreak, EnergyLevel } from '@/types'
+import { Task, Project, EstimationProfile, HabitStreak } from '@/types'
 
 function priorityCircleClass(priority: 1 | 2 | 3 | 4) {
   switch (priority) {
@@ -22,7 +24,6 @@ import ProjectModal from '@/components/ProjectModal'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const ENERGY_ICON: Record<EnergyLevel, string> = { low: '🌿', medium: '⚡', high: '🔥' }
 
 function fmt(m: number | null) {
   if (!m) return '—'
@@ -114,7 +115,7 @@ function ActiveTaskRow({ task, streak, onDone, onClick, pendingDone }: TaskRowPr
           )}
         </div>
         <div className="flex items-center gap-2.5 mt-0.5 flex-wrap">
-          <span className="text-xs text-slate-400">{ENERGY_ICON[task.energy_required]}</span>
+          <EnergyIcon level={task.energy_required} className="text-slate-400" />
           {est && <span className="text-xs text-slate-400 font-mono">{fmt(est)}</span>}
           {due.text && <span className={`text-xs ${due.cls}`}>{due.text}</span>}
           {isHabit && task.rrule && (
@@ -130,7 +131,7 @@ function ActiveTaskRow({ task, streak, onDone, onClick, pendingDone }: TaskRowPr
             <span className="text-base font-bold font-mono text-violet-500 dark:text-violet-400 leading-none tabular-nums">
               {streak.current_streak}
             </span>
-            {streak.current_streak >= 7 && <span className="text-sm">🔥</span>}
+            {streak.current_streak >= 7 && <Flame size={13} className="text-orange-500" />}
           </div>
         ) : (
           <span className={`text-xs font-semibold font-mono tabular-nums ${
@@ -253,14 +254,14 @@ export default function ProjectDetailView({
                   onClick={() => setShowEdit(true)}
                   className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                 >
-                  ✏️ Edit
+                  <span className="flex items-center gap-2"><EditIcon size={12} /> Edit</span>
                 </button>
                 <button
                   onClick={handleArchive}
                   disabled={archiving}
                   className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors disabled:opacity-50"
                 >
-                  📦 Archive
+                  <span className="flex items-center gap-2"><ArchiveIcon size={12} /> Archive</span>
                 </button>
                 <button
                   onClick={() => setShowAdd(true)}

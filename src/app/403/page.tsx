@@ -1,10 +1,11 @@
 import { signOut } from '@/app/actions/auth'
+import { LockedIcon } from '@/components/icons'
 
 export default function ForbiddenPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
       <div className="text-center max-w-sm px-6">
-        <p className="text-4xl mb-4">🔒</p>
+        <LockedIcon size={36} className="mx-auto mb-4 text-slate-400" />
         <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">
           Access restricted
         </h1>
