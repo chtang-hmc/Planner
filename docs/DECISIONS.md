@@ -833,6 +833,26 @@ It is deliberately *not* folded into `due_date`. That column is a `timestamptz` 
 
 Minutes-past-midnight is also the right *type*. A wall-clock time is timezone-independent by nature: "due at 5pm" means 5pm after a move or a DST change, which an instant would not. `formatDue` appends it and deliberately does not let it affect the tone — a task due at 9am today reads as due today at half past nine, not overdue. The scheduler does not yet treat it as a fixed appointment; that is a separate decision about pinning.
 
+### `p1` is Critical — the typed convention beats the stored one
+
+`pN` follows **Todoist**: `p1` is the most urgent and stores priority 4; `p4` stores 1. The inversion lives in one table, `PRIORITY_FROM_TOKEN`, so there is exactly one place to look when the two numbers disagree.
+
+This was decided the other way first, and changed. The argument for matching the stored scale was real: the add-task form numbers its priority buttons 1–4 with 4 as Critical, so typing `p1` now lights up the button marked `4`. But `pN` is a *borrowed* idiom, and people arrive with `p1` meaning "drop everything" — a grammar that silently means the opposite of the habit it borrows is a worse trap than a number disagreeing with a button elsewhere in the same form.
+
+The help page states the mapping outright rather than leaving it to be discovered, and the token chip shows the *stored* word ("Critical") rather than echoing the digit, so the inversion is visible before the task is created rather than after.
+
+**The button labels are the remaining inconsistency.** Showing `Low / Med / High / Crit` instead of `1 2 3 4` would remove it at the source; the numbers are currently only a tooltip away from their names.
+
+### `#project` never creates a project
+
+Matching is case-insensitive, and a unique prefix is enough — `#teach` finds Teaching. Two things deliberately do *not* happen: an ambiguous prefix does not pick one, and a name that matches nothing does not create it. Both leave the token in the title, visibly doing nothing, which is the same contract the rest of the grammar keeps (`feb 30` is declined rather than rounded).
+
+Creating on a typo would be worse here than elsewhere: the add flow has no undo, so a mistyped `#Tecahing` would leave a permanent second project behind. `#{Public Policy}` handles a name with spaces, since otherwise there is no way to tell where the name stops and the task resumes.
+
+### Metadata is scanned before the date grammar
+
+The same discipline as recurrence-before-date, for the same reason. `#{4th floor}` contains an ordinal the monthly-repeat rule would claim; `for 2h` contains a bare number. Each pass masks its span before the next runs, so no later rule can read a digit that already belongs to something else.
+
 ### Staged
 
 Dates, times and recurrence are in, and both are now stored. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.

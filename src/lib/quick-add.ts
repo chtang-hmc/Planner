@@ -66,6 +66,21 @@ export interface QuickAddResult {
    * it: it is a property of how *this app* advances a chain, not of the rule.
    */
   recurrenceFromCompletion: boolean
+  /**
+   * A project *name* as typed after `#`, matched against the list passed in
+   * `opts.projects`. Null when nothing matched — the token then stays in the
+   * title rather than becoming a project that does not exist.
+   */
+  projectId: string | null
+  /**
+   * The stored priority, 1–4, where 4 is Critical.
+   *
+   * Note this is **not** the number typed: `p1` is Todoist's most urgent and
+   * resolves to 4 here. See `PRIORITY_FROM_TOKEN`.
+   */
+  priority: 1 | 2 | 3 | 4 | null
+  /** `for 45m`, `for 2h` — minutes. */
+  estimateMinutes: number | null
 }
 
 export interface QuickAddOptions {
@@ -77,6 +92,12 @@ export interface QuickAddOptions {
   dateOrder?: 'MDY' | 'DMY'
   /** Used only by `next <weekday>` and `next week`. */
   weekStart?: WeekStartDay
+  /**
+   * Projects `#name` can match. Omitted, `#foo` is left in the title — the
+   * grammar never invents a project, because a typo would otherwise create one
+   * silently and there is no undo for that in the add flow.
+   */
+  projects?: { id: string; name: string }[]
 }
 
 // ── Vocabulary ───────────────────────────────────────────────────────────────
@@ -446,6 +467,74 @@ const RECURRENCE_RULES: { re: RegExp; resolve: (m: RegExpMatchArray) => Recurren
     } },
 ]
 
+// ── Project, priority and estimate ───────────────────────────────────────────
+
+/**
+ * `#Project`, matched against the projects that exist.
+ *
+ * Case-insensitive, and a unique prefix is enough — `#pub` finds "Public
+ * Policy" as long as nothing else starts that way. Ambiguity does not guess: two
+ * projects matching means no match, and the token stays in the title where you
+ * can see it went nowhere.
+ *
+ * A name with spaces needs braces — `#{Public Policy}` — because otherwise
+ * there is no way to tell where the name stops and the task resumes.
+ */
+const PROJECT_RE = /#(?:\{([^}]{1,60})\}|([\p{L}\p{N}_-]{1,40}))/u
+
+function matchProject(
+  raw: string,
+  projects: { id: string; name: string }[],
+): { id: string; name: string } | null {
+  const q = raw.trim().toLowerCase()
+  if (!q) return null
+
+  const exact = projects.filter(p => p.name.toLowerCase() === q)
+  if (exact.length === 1) return exact[0]
+  // An exact tie is unresolvable; a prefix tie is too.
+  if (exact.length > 1) return null
+
+  const prefix = projects.filter(p => p.name.toLowerCase().startsWith(q))
+  return prefix.length === 1 ? prefix[0] : null
+}
+
+/**
+ * `p1`–`p4`, on **Todoist's** scale: p1 is the most urgent.
+ *
+ * So the token inverts on the way in — `p1` stores priority 4 (Critical), `p4`
+ * stores 1 (Low). This is a deliberate choice of the typed convention over the
+ * stored one: `pN` is a Todoist idiom, people arrive with `p1` meaning "drop
+ * everything", and a grammar that silently means the opposite of the habit it
+ * borrows is worse than one that disagrees with a number elsewhere in the form.
+ *
+ * It does leave a visible inconsistency: the add-task form numbers its priority
+ * buttons 1–4 with 4 as Critical, so typing `p1` lights up the button marked
+ * `4`. The help page states the mapping outright rather than leaving that to be
+ * discovered.
+ */
+const PRIORITY_RE = /\bp([1-4])\b/i
+
+/**
+ * Typed token → stored priority. The inversion lives here, in one table, so
+ * there is exactly one place to look when the two numbers disagree.
+ */
+export const PRIORITY_FROM_TOKEN: Record<1 | 2 | 3 | 4, 1 | 2 | 3 | 4> = {
+  1: 4,  // p1 — Critical
+  2: 3,  // p2 — High
+  3: 2,  // p3 — Medium
+  4: 1,  // p4 — Low
+}
+
+/** `for 45m`, `for 2h`, `for 1h30m`, `for 90 minutes`. */
+const ESTIMATE_RE =
+  /\bfor\s+(?:(\d{1,3})\s*(?:h|hr|hrs|hours?)\s*(?:(\d{1,2})\s*(?:m|min|mins|minutes?)?)?|(\d{1,4})\s*(?:m|min|mins|minutes?))\b/i
+
+function estimateFrom(m: RegExpMatchArray): number | null {
+  const [, h, hm, mins] = m
+  const total = h ? Number(h) * 60 + (hm ? Number(hm) : 0) : Number(mins)
+  return Number.isFinite(total) && total > 0 && total <= 24 * 60 ? total : null
+}
+
 // ── Scanning ─────────────────────────────────────────────────────────────────
 
 interface Hit { start: number; end: number; text: string }
@@ -493,6 +582,18 @@ export function formatDayLabel(day: string, today: string): string {
   return sameYear ? `${d} ${MON_NAMES[m - 1]}` : `${d} ${MON_NAMES[m - 1]} ${y}`
 }
 
+/** The app's own priority names — 1 is Low here, not urgent. */
+export const PRIORITY_NAME: Record<1 | 2 | 3 | 4, string> = {
+  1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical',
+}
+
+/** "45m", "2h", "1h 30m" — the same shape `formatMinutes` uses on a task row. */
+export function formatEstimateLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`
+  const h = Math.floor(minutes / 60), m = minutes % 60
+  return m ? `${h}h ${m}m` : `${h}h`
+}
+
 /** 12-hour clock, which is how the rest of the app shows times. */
 export function formatTimeLabel(minutes: number): string {
   const h24 = Math.floor(minutes / 60), min = minutes % 60
@@ -521,7 +622,59 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
   let dueDay: string | null = null
   let timeMinutes: number | null = null
   let recurrence: Recurrence | null = null
+  let projectId: string | null = null
+  let priority: 1 | 2 | 3 | 4 | null = null
+  let estimateMinutes: number | null = null
   let rest = text
+
+  /**
+   * The metadata tokens go first, before any of the date grammar.
+   *
+   * `#4th-floor` contains an ordinal the monthly rule would claim, `p1` is two
+   * characters that no date pattern wants but the *estimate* might if it grew,
+   * and `for 2h` contains a bare number. Scanning them first and masking each
+   * span keeps every later pass looking only at text nobody has spoken for —
+   * the same discipline recurrence-before-date already follows.
+   */
+  const projectMatch = rest.match(PROJECT_RE)
+  if (projectMatch && projectMatch.index !== undefined) {
+    const raw   = projectMatch[1] ?? projectMatch[2] ?? ''
+    const found = matchProject(raw, opts.projects ?? [])
+    if (found) {
+      projectId = found.id
+      const start = projectMatch.index, end = start + projectMatch[0].length
+      rest = mask(rest, start, end)
+      tokens.push({ start, end, type: 'project', text: projectMatch[0], label: found.name })
+    }
+    // No match: the token stays in the title, visibly doing nothing, rather
+    // than becoming a project that does not exist.
+  }
+
+  const priorityMatch = rest.match(PRIORITY_RE)
+  if (priorityMatch && priorityMatch.index !== undefined) {
+    const typed = Number(priorityMatch[1]) as 1 | 2 | 3 | 4
+    priority = PRIORITY_FROM_TOKEN[typed]
+    const start = priorityMatch.index, end = start + priorityMatch[0].length
+    rest = mask(rest, start, end)
+    tokens.push({
+      start, end, type: 'priority', text: priorityMatch[0],
+      label: PRIORITY_NAME[priority],
+    })
+  }
+
+  const estimateMatch = rest.match(ESTIMATE_RE)
+  if (estimateMatch && estimateMatch.index !== undefined) {
+    const mins = estimateFrom(estimateMatch)
+    if (mins !== null) {
+      estimateMinutes = mins
+      const start = estimateMatch.index, end = start + estimateMatch[0].length
+      rest = mask(rest, start, end)
+      tokens.push({
+        start, end, type: 'duration', text: estimateMatch[0],
+        label: formatEstimateLabel(mins),
+      })
+    }
+  }
 
   /**
    * Recurrence first, and this order is load-bearing: "every monday" contains a
@@ -598,5 +751,8 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
     timeMinutes,
     rrule: recurrence?.rrule ?? null,
     recurrenceFromCompletion: recurrence?.fromCompletion ?? false,
+    projectId,
+    priority,
+    estimateMinutes,
   }
 }

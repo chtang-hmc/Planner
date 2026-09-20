@@ -572,3 +572,178 @@ describe('recurrence: what it declines', () => {
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project, priority and estimate
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROJECTS = [
+  { id: 'pp',    name: 'Public Policy' },
+  { id: 'teach', name: 'Teaching' },
+  { id: 'clin',  name: 'Clinic' },
+  { id: 'course', name: 'Coursework' },
+]
+const withProjects = (text: string, projects = PROJECTS) =>
+  parseQuickAdd(text, { tz: LA, now: NOW, projects })
+
+describe('#project', () => {
+  it('matches an exact name, case-insensitively', () => {
+    expect(withProjects('Read Dahl #Teaching').projectId).toBe('teach')
+    expect(withProjects('Read Dahl #teaching').projectId).toBe('teach')
+  })
+
+  it('matches a unique prefix', () => {
+    expect(withProjects('Read Dahl #teach').projectId).toBe('teach')
+    expect(withProjects('Read Dahl #cli').projectId).toBe('clin')
+  })
+
+  it('declines an ambiguous prefix rather than guessing', () => {
+    // "c" starts both Clinic and Coursework.
+    const r = withProjects('Read Dahl #c')
+    expect(r.projectId).toBeNull()
+    expect(r.title).toBe('Read Dahl #c')
+  })
+
+  it('takes a multi-word name in braces', () => {
+    expect(withProjects('Read Dahl #{Public Policy}').projectId).toBe('pp')
+    expect(withProjects('Read Dahl #{Public Policy}').title).toBe('Read Dahl')
+  })
+
+  it('never invents a project that does not exist', () => {
+    const r = withProjects('Read Dahl #Nonsense')
+    expect(r.projectId).toBeNull()
+    expect(r.title).toBe('Read Dahl #Nonsense')
+  })
+
+  it('does nothing when no projects were supplied', () => {
+    expect(p('Read Dahl #Teaching').projectId).toBeNull()
+    expect(p('Read Dahl #Teaching').title).toBe('Read Dahl #Teaching')
+  })
+
+  it('leaves the title clean when it does match', () => {
+    expect(withProjects('Read Dahl #Teaching').title).toBe('Read Dahl')
+    expect(withProjects('#Teaching Read Dahl').title).toBe('Read Dahl')
+  })
+})
+
+describe('p1–p4', () => {
+  /**
+   * Todoist's scale: p1 is the most urgent, so the token inverts on the way in.
+   * `p1` stores priority 4 (Critical), `p4` stores 1 (Low).
+   *
+   * This deliberately disagrees with the add-task form, which numbers its
+   * priority buttons 1–4 with 4 as Critical — typing `p1` lights up the button
+   * marked `4`. `pN` is a borrowed idiom and people arrive with `p1` meaning
+   * "drop everything"; a grammar that silently meant the opposite would be the
+   * worse of the two inconsistencies.
+   */
+  it('inverts the typed number, Todoist-style', () => {
+    expect(p('Fix bug p1').priority).toBe(4)
+    expect(p('Fix bug p2').priority).toBe(3)
+    expect(p('Fix bug p3').priority).toBe(2)
+    expect(p('Fix bug p4').priority).toBe(1)
+  })
+
+  it('labels it with the stored meaning, not the typed digit', () => {
+    // The chip has to say Critical, or the inversion is invisible until the
+    // task is already created.
+    expect(p('Fix bug p1').tokens.find(t => t.type === 'priority')?.label).toBe('Critical')
+    expect(p('Fix bug p4').tokens.find(t => t.type === 'priority')?.label).toBe('Low')
+  })
+
+  it('is its own inverse across the scale', () => {
+    // Nothing collapses: four tokens, four distinct stored values.
+    const stored = [1, 2, 3, 4].map(n => p(`x p${n}`).priority)
+    expect(new Set(stored).size).toBe(4)
+  })
+
+  it('is case-insensitive and leaves the title clean', () => {
+    expect(p('Fix bug P3').priority).toBe(2)
+    expect(p('Fix bug P3').title).toBe('Fix bug')
+  })
+
+  it('declines anything outside 1–4', () => {
+    expect(p('Fix bug p0').priority).toBeNull()
+    expect(p('Fix bug p5').priority).toBeNull()
+    expect(p('Fix bug p9').title).toBe('Fix bug p9')
+  })
+
+  it('does not fire inside a word', () => {
+    expect(p('Ship p1x').priority).toBeNull()
+    expect(p('Review pp1 draft').priority).toBeNull()
+  })
+})
+
+describe('for <duration>', () => {
+  it('reads minutes and hours', () => {
+    expect(p('Draft memo for 45m').estimateMinutes).toBe(45)
+    expect(p('Draft memo for 90 minutes').estimateMinutes).toBe(90)
+    expect(p('Draft memo for 2h').estimateMinutes).toBe(120)
+    expect(p('Draft memo for 2 hours').estimateMinutes).toBe(120)
+  })
+
+  it('reads a combined form', () => {
+    expect(p('Draft memo for 1h30m').estimateMinutes).toBe(90)
+    expect(p('Draft memo for 1h 30').estimateMinutes).toBe(90)
+  })
+
+  it('labels it the way a task row would', () => {
+    expect(p('x for 45m').tokens.find(t => t.type === 'duration')?.label).toBe('45m')
+    expect(p('x for 2h').tokens.find(t => t.type === 'duration')?.label).toBe('2h')
+    expect(p('x for 1h30m').tokens.find(t => t.type === 'duration')?.label).toBe('1h 30m')
+  })
+
+  it('leaves the title clean', () => {
+    expect(p('Draft memo for 45m').title).toBe('Draft memo')
+  })
+
+  it('declines a duration longer than a day, or zero', () => {
+    expect(p('x for 0m').estimateMinutes).toBeNull()
+    expect(p('x for 2000m').estimateMinutes).toBeNull()
+  })
+
+  it('does not claim "for" on its own', () => {
+    expect(p('Cook for the family').estimateMinutes).toBeNull()
+    expect(p('Cook for the family').title).toBe('Cook for the family')
+  })
+})
+
+describe('metadata alongside the date grammar', () => {
+  it('reads everything in one string', () => {
+    const r = withProjects('Draft the memo #Teaching p3 for 90m tomorrow at 2pm')
+    expect(r.title).toBe('Draft the memo')
+    expect(r.projectId).toBe('teach')
+    expect(r.priority).toBe(2)   // p3 → Medium
+    expect(r.estimateMinutes).toBe(90)
+    expect(r.dueDay).toBe('2026-09-17')
+    expect(r.timeMinutes).toBe(14 * 60)
+  })
+
+  it('keeps token offsets pointing at the source', () => {
+    const text = 'Draft the memo #Teaching p3 for 90m tomorrow at 2pm'
+    const r = parseQuickAdd(text, { tz: LA, now: NOW, projects: PROJECTS })
+    for (const t of r.tokens) expect(text.slice(t.start, t.end)).toBe(t.text)
+    expect(r.tokens.map(t => t.type)).toEqual(['project', 'priority', 'duration', 'date', 'time'])
+  })
+
+  it('does not let the date grammar claim a project name containing an ordinal', () => {
+    // "#4th-floor" holds "4th", which the monthly-repeat rule would take.
+    const r = withProjects('Check the lights #{4th floor}', [{ id: 'f4', name: '4th floor' }])
+    expect(r.projectId).toBe('f4')
+    expect(r.rrule).toBeNull()
+    expect(r.title).toBe('Check the lights')
+  })
+
+  it('does not let an estimate be read as a time of day', () => {
+    const r = p('Draft memo for 2h')
+    expect(r.estimateMinutes).toBe(120)
+    expect(r.timeMinutes).toBeNull()
+  })
+
+  it('is null for all three when nothing was typed', () => {
+    const r = p('Refactor the scheduler')
+    expect(r.projectId).toBeNull()
+    expect(r.priority).toBeNull()
+    expect(r.estimateMinutes).toBeNull()
+  })
+})

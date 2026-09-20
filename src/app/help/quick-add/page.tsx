@@ -12,7 +12,7 @@ import QuickAddDocs from '@/components/QuickAddDocs'
 
 export const metadata: Metadata = {
   title: 'Quick add syntax — Planner',
-  description: 'Natural-language dates, times and repeats you can type straight into the task field.',
+  description: 'Natural-language dates, times, repeats, projects and priorities you can type straight into the task field.',
 }
 
 export default function QuickAddHelpPage() {
@@ -34,7 +34,8 @@ export default function QuickAddHelpPage() {
               Email Rosner tomorrow at 5pm
             </code>{' '}
             becomes a task called <strong className="font-medium text-slate-800 dark:text-slate-200">Email
-            Rosner</strong>, due tomorrow.
+            Rosner</strong>, due tomorrow. Project, priority and an estimate come from the same
+            line: <Code>#Teaching</Code>, <Code>p3</Code>, <Code>for 90m</Code>.
           </p>
         </header>
 
@@ -87,6 +88,25 @@ export default function QuickAddHelpPage() {
             fixed appointment; it shows on the task and the day is what drives urgency.
           </Note>
 
+          <Note title="p1 is the most urgent — and the buttons count the other way">
+            <Code>p1</Code> is Critical, <Code>p4</Code> is Low, the way Todoist numbers them.
+            The add-task form numbers its priority buttons the other way round, so typing{' '}
+            <Code>p1</Code> lights up the button marked <strong className="font-medium text-slate-800 dark:text-slate-200">4</strong>.
+            That is the mapping, not a bug — <Code>pN</Code> is a borrowed idiom and it keeps the
+            meaning people arrive with:
+            <span className="block mt-2 font-mono text-[12px] text-slate-500 dark:text-slate-400">
+              p1 Critical · p2 High · p3 Medium · p4 Low
+            </span>
+          </Note>
+
+          <Note title="A project has to already exist">
+            <Code>#Teaching</Code> files the task; a unique prefix like <Code>#teach</Code> is
+            enough, and <Code>#{'{'}Public Policy{'}'}</Code> handles a name with spaces. What it
+            will never do is create one — a typo would otherwise leave a new project behind with
+            no undo, so an unmatched <Code>#foo</Code> simply stays in the title where you can see
+            it did nothing. An ambiguous prefix is treated the same way.
+          </Note>
+
           <Note title="every! restarts the clock when you finish">
             <Code>every 3 days</Code> counts from the due date, so falling a fortnight behind
             hands you back a date already in the past — right for rent, wrong for plants.{' '}
@@ -94,28 +114,6 @@ export default function QuickAddHelpPage() {
             is three days from now however long the last gap was. Everything else about the
             repeat is identical.
           </Note>
-        </section>
-
-        {/* ── Not yet ──────────────────────────────────────────────────── */}
-        <section className="mt-14">
-          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 mb-2">
-            Not yet
-          </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-            Planned, and not currently recognised — these stay in the title if you type them.
-          </p>
-          <ul className="flex flex-col gap-2.5 text-sm">
-            {[
-              ['#project', 'File it as you type.'],
-              ['p1 – p4',  'Priority.'],
-              ['for 45m',  'An estimate.'],
-            ].map(([syntax, what]) => (
-              <li key={syntax} className="flex gap-3">
-                <Code>{syntax}</Code>
-                <span className="text-slate-500 dark:text-slate-400">{what}</span>
-              </li>
-            ))}
-          </ul>
         </section>
 
         <footer className="mt-16 pt-6 border-t border-slate-200 dark:border-slate-800">

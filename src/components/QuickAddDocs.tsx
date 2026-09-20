@@ -66,10 +66,29 @@ const REPEAT_ROWS: Row[] = [
   { syntax: ['every! 3 days'], note: 'The bang counts from when you finish, not from when it was due.' },
 ]
 
+/**
+ * The docs page has no real projects to match against, so it shows the grammar
+ * working over a small fixed set. Naming them here rather than borrowing the
+ * reader's own keeps the page identical for everyone.
+ */
+const DEMO_PROJECTS = [
+  { id: 'pp',    name: 'Public Policy' },
+  { id: 'teach', name: 'Teaching' },
+  { id: 'home',  name: 'Home' },
+]
+
+const META_ROWS: Row[] = [
+  { syntax: ['#Teaching'], note: 'Files it. A unique prefix is enough — #teach finds Teaching.' },
+  { syntax: ['#{Public Policy}'], note: 'Braces for a name with spaces.' },
+  { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Todoist order — p1 is Critical, p4 is Low. The form\u2019s buttons count the other way.' },
+  { syntax: ['for 45m', 'for 2h', 'for 1h30m'], note: 'An estimate.' },
+]
+
 const PREFIX_ROWS: Row[] = [
   { syntax: ['Pay rent by friday'], note: 'by, on, before and due attach to the date and leave the title clean.' },
   { syntax: ['Email Rosner tomorrow at 5pm'], note: 'A date and a time, in either order.' },
   { syntax: ['Standup every weekday starting monday'], note: 'starting and from set the first occurrence.' },
+  { syntax: ['Draft the memo #Teaching p3 for 90m tomorrow at 2pm'], note: 'All of it at once, in any order.' },
 ]
 
 const EXAMPLES = [
@@ -80,6 +99,7 @@ const EXAMPLES = [
   'Draft the memo in 3 days',
   'Gym every mon, wed and fri',
   'Water plants every! 3 days',
+  'Draft the memo #Teaching p3 for 90m tomorrow at 2pm',
   'Buy Tomorrowland tickets',
 ]
 
@@ -90,7 +110,8 @@ export default function QuickAddDocs() {
   }, [])
 
   const [text, setText] = useState('Email Rosner tomorrow at 5pm')
-  const quick = useMemo(() => parseQuickAdd(text, { tz }), [text, tz])
+  const quick = useMemo(
+    () => parseQuickAdd(text, { tz, projects: DEMO_PROJECTS }), [text, tz])
 
   /**
    * A repeat sets a due day without producing a date *token* — nothing in the
@@ -143,6 +164,27 @@ export default function QuickAddDocs() {
           <dd className="text-slate-800 dark:text-slate-200">
             {quick.timeMinutes === null ? <Dash /> : formatTimeLabel(quick.timeMinutes)}
           </dd>
+          <dt className="text-slate-400">Project</dt>
+          <dd className="text-slate-800 dark:text-slate-200">
+            {quick.tokens.find(t => t.type === 'project')?.label ?? <Dash />}
+          </dd>
+          <dt className="text-slate-400">Priority</dt>
+          <dd className="text-slate-800 dark:text-slate-200">
+            {/* The token's own source text, not the stored number. Echoing the
+                stored value here printed "Medium p2" for a typed `p3`, which
+                is the inversion showing through in the one place it should be
+                hidden. */}
+            {quick.priority
+              ? <>{quick.tokens.find(t => t.type === 'priority')?.label}
+                  <span className="text-slate-400 font-mono text-xs ml-2">
+                    {quick.tokens.find(t => t.type === 'priority')?.text}
+                  </span></>
+              : <Dash />}
+          </dd>
+          <dt className="text-slate-400">Estimate</dt>
+          <dd className="text-slate-800 dark:text-slate-200">
+            {quick.tokens.find(t => t.type === 'duration')?.label ?? <Dash />}
+          </dd>
           <dt className="text-slate-400">Repeats</dt>
           <dd className="text-slate-800 dark:text-slate-200">
             {quick.rrule
@@ -177,6 +219,14 @@ export default function QuickAddDocs() {
       </section>
 
       <section className="flex flex-col gap-3">
+        <SectionHead
+          title="Project, priority and estimate"
+          sub={`Matched against ${DEMO_PROJECTS.map(p => p.name).join(', ')} on this page; against your own projects in the app.`}
+        />
+        <RefTable rows={META_ROWS} tz={tz} kind="meta" />
+      </section>
+
+      <section className="flex flex-col gap-3">
         <SectionHead title="In a sentence" sub="Tokens can sit anywhere; the rest becomes the title." />
         <RefTable rows={PREFIX_ROWS} tz={tz} kind="full" />
       </section>
@@ -200,7 +250,7 @@ function SectionHead({ title, sub }: { title: string; sub?: string }) {
 function RefTable({ rows, tz, kind = 'date' }: {
   rows: Row[]
   tz: string
-  kind?: 'date' | 'time' | 'repeat' | 'full'
+  kind?: 'date' | 'time' | 'repeat' | 'meta' | 'full'
 }) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -211,8 +261,16 @@ function RefTable({ rows, tz, kind = 'date' }: {
             // strip — otherwise "today" alone yields an empty title and reads
             // oddly next to the others.
             const probe  = kind === 'full' ? row.syntax[0] : `Task ${row.syntax[0]}`
-            const parsed = parseQuickAdd(probe, { tz })
+            const parsed = parseQuickAdd(probe, { tz, projects: DEMO_PROJECTS })
+            const meta = kind !== 'meta' ? null
+              : [
+                  parsed.tokens.find(t => t.type === 'project')?.label,
+                  parsed.tokens.find(t => t.type === 'priority')?.label,
+                  parsed.tokens.find(t => t.type === 'duration')?.label,
+                ].filter(Boolean).join(' · ') || null
+
             const resolved =
+              kind === 'meta' ? meta :
               kind === 'time'
                 ? (parsed.timeMinutes === null ? null : formatTimeLabel(parsed.timeMinutes))
                 : kind === 'repeat'
