@@ -35,6 +35,8 @@ interface Props {
   allDayEvents:      { id: string; title: string }[]
   tasks:             TaskRow[]
   habits:            TaskRow[]
+  /** Ids among `habits` already logged today — drawn ticked, not hidden. */
+  habitsDoneToday:   string[]
   streaks:           Record<string, HabitStreak>
   projects:          Project[]
   gcalWriteEnabled:  boolean
@@ -56,7 +58,7 @@ function agoLabel(iso: string | null): string | null {
 }
 
 export default function HomeView({
-  data, dayStr, tz, allDayEvents, tasks, habits, streaks, projects,
+  data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
   gcalWriteEnabled, calendarConnected, lastSyncedISO,
 }: Props) {
   const router = useRouter()
@@ -191,7 +193,14 @@ export default function HomeView({
   })()
 
   const syncAge = agoLabel(lastSyncedISO)
-  const pendingHabitRows = habits.filter(h => !doneIds.has(h.id))
+
+  /**
+   * Today's habits stay on the page once logged, ticked rather than removed.
+   * Dropping them made the section empty by the evening, which reads as "no
+   * habits today" — the opposite of what a finished day should look like.
+   * `habitsDoneToday` is the server's answer; `doneIds` covers taps since load.
+   */
+  const habitDone = (id: string) => doneIds.has(id) || habitsDoneToday.includes(id)
 
   return (
     <>
@@ -264,14 +273,15 @@ export default function HomeView({
               onDone={markDone}
             />
 
-            {pendingHabitRows.length > 0 && (
-              <HabitList count={pendingHabitRows.length} className="">
-                {pendingHabitRows.map(h => (
+            {habits.length > 0 && (
+              <HabitList count={habits.filter(h => !habitDone(h.id)).length} className="">
+                {habits.map(h => (
                   <HabitRow
                     key={h.id}
                     task={h}
                     streak={streaks[h.id] ?? null}
                     pending={pendingHabits.has(h.id)}
+                    doneToday={habitDone(h.id)}
                     onOpen={() => setDetail({ ...h, project: h.project ?? INBOX_PROJECT })}
                     onDone={e => { e.stopPropagation(); void logHabit(h) }}
                     onLogTime={e => { e.stopPropagation(); setLoggingHabit(h) }}

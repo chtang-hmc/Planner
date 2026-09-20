@@ -1284,6 +1284,31 @@ at 10:00am and a free stretch starting at 10:00pm — printed identically.
 `formatClock` returns "10:00pm", lowercase and unspaced so it stays a time
 rather than a sentence.
 
+### A habit is a family of rows, not a row
+
+`src/lib/habits.ts` owns "today's habits" and "how far through the week", and
+both pages call it. Home originally read `habit_streaks.completions_this_week`
+straight from the table, which is keyed by `task_id` — and completing a habit
+closes its row and spawns the next occurrence with a fresh id, so the count
+belongs to a row that is no longer on screen. Checked on 2026-09-20 there was
+no `habit_streaks` row at all for any of the five open habit rows, and Home
+showed Piano at 0/7 in a week it had been played six times.
+
+The only identifier a habit keeps across a week is its **title**, so weekly
+progress is counted as distinct local completion days per title since the
+configured week start. `/habits` had worked this out and said so in a comment;
+a comment asking the next reader to remember is not a mechanism, which is why
+this is a function now.
+
+Two things came with the extraction, both of which Home had wrong:
+
+- **Tomorrow's spawned occurrence stays hidden** until its local day begins.
+  Without the cutoff, logging a habit made it reappear immediately as unticked.
+- **A habit done today stays on the page, ticked** rather than disappearing.
+  Dropping it made the section empty by the evening, which reads as "no habits
+  today" — the opposite of what a finished day should look like. `HabitRow`
+  takes a `doneToday` prop, default false, so the task list is unchanged.
+
 ### One place to bust the task views
 
 `revalidateTaskViews()` in `src/lib/revalidate.ts` replaces twenty-six

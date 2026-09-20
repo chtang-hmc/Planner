@@ -84,10 +84,16 @@ export function Toggle({ on, onClick, title, children }: {
  * This was a violet-bordered card, which made habits look like a different app
  * bolted onto the list.
  */
-export function HabitRow({ task, streak, pending, onOpen, onDone, onLogTime }: {
+export function HabitRow({ task, streak, pending, doneToday = false, onOpen, onDone, onLogTime }: {
   task: Task & { project: Project }
   streak?: HabitStreak | null
   pending: boolean
+  /**
+   * Already logged today. Filled circle, no second tap — the same state
+   * `/habits` draws. Optional and false by default: the task list does not
+   * know it, because completing a habit there removes the row.
+   */
+  doneToday?: boolean
   onOpen: () => void
   onDone: (e: React.MouseEvent) => void
   onLogTime: (e: React.MouseEvent) => void
@@ -103,15 +109,19 @@ export function HabitRow({ task, streak, pending, onOpen, onDone, onLogTime }: {
     >
       <button
         onClick={onDone}
-        disabled={pending}
-        title="Log for today"
-        aria-label={`Log ${task.title} for today`}
-        className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors ${
-          pending
-            ? 'border-accent-400 bg-accent-100 dark:bg-accent-900 animate-pulse'
-            : 'border-slate-300 dark:border-slate-600 hover:border-accent-500 hover:bg-accent-50 dark:hover:bg-accent-950'
+        disabled={pending || doneToday}
+        title={doneToday ? 'Done for today' : 'Log for today'}
+        aria-label={doneToday ? `${task.title} is done for today` : `Log ${task.title} for today`}
+        className={`w-4 h-4 rounded-full border-2 shrink-0 transition-colors flex items-center justify-center ${
+          doneToday
+            ? 'bg-accent-500 border-accent-500 cursor-default'
+            : pending
+              ? 'border-accent-400 bg-accent-100 dark:bg-accent-900 animate-pulse'
+              : 'border-slate-300 dark:border-slate-600 hover:border-accent-500 hover:bg-accent-50 dark:hover:bg-accent-950'
         }`}
-      />
+      >
+        {doneToday && <span className="text-white text-[8px] leading-none font-bold">✓</span>}
+      </button>
 
       <div className="min-w-0 flex-1">
         <span className="text-[13px] font-medium text-slate-800 dark:text-slate-100">{task.title}</span>
