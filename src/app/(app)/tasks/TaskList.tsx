@@ -46,11 +46,13 @@ interface Props {
    * a row.
    */
   freeByDay: Record<string, { before: number; after: number }>
+  /** The gaps themselves, for Upcoming's inline free slots. */
+  gapsByDay: Record<string, [number, number][]>
 }
 
 export default function TaskList({
   tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay,
-  relevance = RELEVANCE_DEFAULT, todayStr, freeByDay,
+  relevance = RELEVANCE_DEFAULT, todayStr, freeByDay, gapsByDay,
 }: Props) {
   const { query } = useSearch()
   /**
@@ -512,6 +514,7 @@ export default function TaskList({
             onAddTask={dueDate => openAddTask(dueDate)}
             weekStartDay={weekStartDay}
             freeByDay={freeByDay}
+            gapsByDay={gapsByDay}
             todayStr={todayStr}
           />
         )}

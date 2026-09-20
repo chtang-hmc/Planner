@@ -38,6 +38,7 @@ import HomeView from '@/app/(app)/HomeView'
 import TaskList from '@/app/(app)/tasks/TaskList'
 import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
 import { CapacityBand } from '@/components/ds/CapacityBand'
+import { DaySection } from '@/components/ds/DaySection'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
@@ -747,9 +748,70 @@ function TaskListPreview() {
               i % 7 === 0 ? { before: 105, after: 210 } : { before: 240 + (i % 3) * 60, after: 120 },
             ]),
           )}
+          /* Two free blocks a day, so the inline slots have somewhere to sit. */
+          gapsByDay={Object.fromEntries(
+            Array.from({ length: 15 }, (_, i) => {
+              const day = addDaysStr(today, i)
+              const noon = Date.parse(day + 'T12:00:00Z')
+              return [day, [
+                [noon, noon + 75 * 60_000],
+                [noon + 6 * 3_600_000, noon + 6 * 3_600_000 + 60 * 60_000],
+              ] as [number, number][]]
+            }),
+          )}
         />
       </div>
     </TimerProvider>
+  )
+}
+
+/**
+ * A day on Upcoming, in the three shapes it takes.
+ *
+ * Expanded and over capacity, expanded with slack, and collapsed — which is
+ * what every day beyond tomorrow looks like until you open it.
+ */
+function DaySectionSpecimen() {
+  const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const base = Date.parse(todayIn(tzName) + 'T09:00:00Z')
+  const at = (h: number) => base + h * 3_600_000
+
+  const rows = [
+    { key: 'a', startMs: at(1), endMs: at(3), title: 'Meeting w/ Alan', color: null, minutes: 120 },
+    { key: 'b', startMs: at(3), endMs: at(4), title: 'Big E&M Tutoring Prep', color: '#2B7570',
+      minutes: 60, chip: 'covers 1 task' },
+    { key: 'c', startMs: at(4), endMs: at(7), title: 'Big E&M Tutoring', color: '#2B7570', minutes: 180 },
+    { key: 'd', startMs: at(4.5), endMs: at(5.5), title: 'Piano Lesson', color: '#A63A66',
+      minutes: 60, clashes: true },
+  ]
+  const slots = [
+    { key: 's1', startMs: at(7), minutes: 30, reason: 'Clinic Work Log + Organize Laundry fit exactly' },
+    { key: 's2', startMs: at(8.75), minutes: 75, reason: '4 tasks fit' },
+  ]
+
+  return (
+    <div className="flex flex-col gap-3">
+      <DaySection
+        label="Sunday 20" weekday="Sun" isToday tz={tzName}
+        capacity={{ dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 }}
+        rows={rows} slots={slots} expanded conflictCount={1}
+        unplacedCount={7} unplacedMinutes={335}
+        action="Triage 5h 35m"
+      />
+      <DaySection
+        label="Monday 21" weekday="Mon" isToday={false} tz={tzName}
+        capacity={{ dueTotal: 210, freeBeforeCutoff: 290, freeAfterCutoff: 0 }}
+        rows={rows.slice(0, 2)} slots={slots.slice(1)} expanded conflictCount={0}
+        unplacedCount={0} unplacedMinutes={0}
+        action="Move 1h 20m here from today"
+      />
+      <DaySection
+        label="Tuesday 22" weekday="Tue" isToday={false} tz={tzName}
+        capacity={{ dueTotal: 45, freeBeforeCutoff: 300, freeAfterCutoff: 120 }}
+        rows={rows.slice(0, 1)} slots={[]} expanded={false} conflictCount={0}
+        unplacedCount={0} unplacedMinutes={0} action={null}
+      />
+    </div>
   )
 }
 
@@ -838,6 +900,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <BandSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Upcoming — a day section</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <DaySectionSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
