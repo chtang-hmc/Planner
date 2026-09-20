@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { freeGaps, localMidnight, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
+import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
   buildHome, rankForGap, rightNowFrom, resolveAgainstParent, edgeBuffer, collapseChains, formatClock,
   type HomeTask, type HomeEvent,
@@ -359,5 +359,39 @@ describe('needs attention collapses a chain', () => {
       task({ id: 'loud',  urgencyScore: 99, dueDay: DAY }),
     ])
     expect(rows.map(r => r.title)).toEqual(['loud', 'quiet'])
+  })
+})
+
+describe('a working day is not a calendar day', () => {
+  // The real configuration: 10:00 → 01:30, every day.
+  const lateHours = (): WorkingHours[] => Array.from({ length: 7 }, (_, d) => ({
+    day_of_week: d, start_hour: 10, start_minute: 0,
+    end_hour: 1, end_minute: 30, enabled: true,
+  }))
+
+  it('runs the window ninety minutes into the next day', () => {
+    const win = workWindowFor(localMidnight(DAY, TZ), lateHours(), TZ)
+    expect(win![0]).toBe(at('10:00'))
+    expect(win![1]).toBe(at('1:30', '2026-09-17'))   // the following morning
+  })
+
+  it('subtracts an event that starts after midnight', () => {
+    // This is what the page was never fetching: bounding the event query at
+    // local midnight left the 00:15 meeting out of `busy` entirely, so Home
+    // offered 22:00–01:30 as free with a meeting inside it.
+    const gaps = freeGaps({
+      dayStr: DAY, tz: TZ, workingHours: lateHours(),
+      busy: [[at('0:15', '2026-09-17'), at('1:00', '2026-09-17')]],
+      minMinutes: 15,
+    })
+    expect(gaps).toEqual([
+      [at('10:00'),            at('0:15', '2026-09-17')],
+      [at('1:00', '2026-09-17'), at('1:30', '2026-09-17')],
+    ])
+  })
+
+  it('is one unbroken stretch when that tail is clear', () => {
+    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: lateHours(), busy: [], minMinutes: 15 })
+    expect(gaps).toEqual([[at('10:00'), at('1:30', '2026-09-17')]])
   })
 })
