@@ -35,6 +35,8 @@ import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
 import HomeView from '@/app/(app)/HomeView'
+import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
+import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
 import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
 import { todayStr as todayIn } from '@/lib/day'
@@ -574,6 +576,70 @@ function TokenSpecimen() {
   )
 }
 
+/** A list container, so the rows sit on the surface they will live on. */
+function Surface({ children, width }: { children: React.ReactNode; width?: number }) {
+  return (
+    <div
+      className="rounded-xl border border-line bg-surface overflow-hidden"
+      style={width ? { width } : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
+/**
+ * The row and the header, at both widths, against the states that break them.
+ *
+ * A long title, a task with no estimate, an overdue one, a chained one, and a
+ * group that fits beside a group that does not. These are the cases a layout
+ * gets wrong, so they are the ones worth being able to look at.
+ */
+function RowSpecimen() {
+  const rows: TaskRowModel[] = [
+    { id: '1', title: 'Update Resume', color: '#B25A12', project: 'Jobs', minutes: 60, urgency: 92, lateLabel: '2 days late' },
+    { id: '2', title: 'Claremont City Council Recording and Transcription Review', color: null, project: 'Inbox', minutes: 150, urgency: 71 },
+    { id: '3', title: 'Clinic SOW', color: '#2E5FA3', project: 'Clinic', minutes: 60, urgency: 64, chip: 'scheduled 5:45pm' },
+    { id: '4', title: 'Wash Sheets', color: '#A63A66', project: 'Personal', minutes: 20, urgency: 22, chip: '3 steps' },
+    { id: '5', title: 'Buy stuff from Amazon', color: null, project: 'Inbox', minutes: null, urgency: 10 },
+  ]
+
+  const over: Capacity  = { dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 }
+  const fits: Capacity  = { dueTotal: 210, freeBeforeCutoff: 290, freeAfterCutoff: 0 }
+  const tight: Capacity = { dueTotal: 240, freeBeforeCutoff: 60,  freeAfterCutoff: 210 }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Surface>
+        <GroupHeader label="Today" count={9} capacity={over} action={{ label: 'Triage 5h 35m', onClick: () => {} }} />
+        {rows.map(t => <TaskRow key={t.id} task={t} />)}
+        <GroupHeader label="Tomorrow · Mon 21" count={3} capacity={fits} action={{ label: 'Pull forward 1h 20m', onClick: () => {} }} />
+        {rows.slice(2, 4).map(t => <TaskRow key={`b${t.id}`} task={t} />)}
+        <GroupHeader label="Tuesday 22" count={2} capacity={tight} />
+        {rows.slice(0, 1).map(t => <TaskRow key={`c${t.id}`} task={t} />)}
+        <GroupHeader label="No date" count={1} />
+        {rows.slice(4).map(t => <TaskRow key={`d${t.id}`} task={t} />)}
+      </Surface>
+
+      <div className="flex items-start gap-4 flex-wrap">
+        <div>
+          <p className="text-eyebrow uppercase tracking-wider text-ink-faint mb-1.5">Narrow — 390px</p>
+          <Surface width={390}>
+            <GroupHeader label="Today" count={9} capacity={over} narrow action={{ label: 'Triage', onClick: () => {} }} />
+            {rows.map(t => <TaskRow key={`n${t.id}`} task={t} narrow />)}
+          </Surface>
+        </div>
+        <p className="text-micro text-ink-muted max-w-[16rem] leading-relaxed">
+          Two lines, 56px, no fixed columns — the wide row&rsquo;s 170px of right-hand
+          furniture leaves about two words of title at this width, so it is deleted
+          rather than compressed. The urgency meter goes with it: its length
+          duplicates the sort order.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -638,6 +704,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <TokenSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Task row and group header</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <RowSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
