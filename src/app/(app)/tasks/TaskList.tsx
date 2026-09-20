@@ -17,7 +17,8 @@ import UpcomingView from './UpcomingView'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
-import { formatMinutes, localDateStr } from '@/lib/task-format'
+import { formatMinutes } from '@/lib/task-format'
+import { addDays } from '@/lib/day'
 import { isRelevant, relevanceHint, RELEVANCE_DEFAULT, type RelevanceConfig } from '@/lib/relevance'
 
 
@@ -33,16 +34,30 @@ interface Props {
   weekStartDay: number
   /** The two numbers behind the Relevant toggle, from Settings. */
   relevance?: RelevanceConfig
+  /** Today in the configured timezone, from the server — see the filter below. */
+  todayStr: string
 }
 
 export default function TaskList({
   tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay,
-  relevance = RELEVANCE_DEFAULT,
+  relevance = RELEVANCE_DEFAULT, todayStr,
 }: Props) {
   const { query } = useSearch()
-  const [view, setView] = useState<'list' | 'upcoming'>(() =>
-    typeof window !== 'undefined' ? getStoredDefaultView() : 'list'
-  )
+  /**
+   * Which view opens. The choice lives in localStorage, so the server cannot
+   * know it — and a `typeof window` branch inside a useState initialiser is not
+   * a way around that. It renders `list` on the server and `upcoming` on the
+   * client for anyone who changed the setting, which is a hydration mismatch:
+   * React discards the server tree and rebuilds it, and the console says so.
+   *
+   * `useStored` is the same read done in one pass React knows about. The
+   * override holds a choice made since load, so the stored value wins on
+   * arrival and the toggle wins afterwards. Settings already reads it this way.
+   */
+  const storedView = useStored<'list' | 'upcoming'>(getStoredDefaultView, 'list')
+  const [viewOverride, setViewOverride] = useState<'list' | 'upcoming' | null>(null)
+  const view = viewOverride ?? storedView
+  const setView = setViewOverride
   const [energyFilter, setEnergyFilter]   = useState<EnergyLevel | 'all'>('all')
   const [projectFilter, setProjectFilter] = useState<string>('all')
   const [showSomeday, setShowSomeday]     = useState(false)
@@ -130,12 +145,15 @@ export default function TaskList({
     )
   }
 
-  // Date bounds for the relevance filter, in local time — the same local-date
-  // string comparison formatDue uses, for the same reason.
-  const todayStr   = localDateStr(new Date())
-  const horizonStr = (() => {
-    const d = new Date(); d.setDate(d.getDate() + relevance.windowDays); return localDateStr(d)
-  })()
+  // Date bounds for the relevance filter.
+  //
+  // `today` comes from the server, computed against the configured timezone,
+  // rather than from `new Date()` here. Reading the clock during render is the
+  // same hydration hazard as reading localStorage: deployed, the server runs in
+  // UTC and the browser does not, so for part of every day the two disagree
+  // about what day it is — and the row count in the header above is built from
+  // this filter. The horizon is then pure string arithmetic on that day.
+  const horizonStr = addDays(todayStr, relevance.windowDays)
 
   // Split habits from regular tasks
   const habits  = tasks.filter(t => t.type === 'habit' && !doneIds.has(t.id) && matchesSearch(t))
