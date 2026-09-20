@@ -52,13 +52,22 @@ export function slack(c: Capacity): number {
 }
 
 /**
- * The bar, as three widths that sum to 1.
+ * The bar, as three widths of work against a track.
  *
- * Proportions of **total work due**, not of the day — the question is "how much
- * of what I owe fits", and a bar scaled to the day answers a different one.
+ * Scaled to `max(due, free)` — one model running in both directions:
  *
- * A day with nothing due has no bar. Returning zeroes rather than null would
- * make an empty track look like a finding.
+ * - **due > free.** The bar is the work. The segments fill it and the track
+ *   never shows; the red tail is what has nowhere to go.
+ * - **free > due.** The bar is the free time. The segments are still the work,
+ *   and the track showing through at the end **is the slack**.
+ *
+ * Scaling to `due` alone was wrong in the second direction: a day with two
+ * hours spare rendered as a completely full bar, so the one number worth
+ * seeing — the room you have left — was the one the bar could not show.
+ *
+ * Nothing due and free time known draws an empty track, which reads as "all of
+ * this is yours" beside a headline that says nothing is due. Null only when
+ * there is no ratio at all to draw.
  */
 export interface CapacitySegments {
   /** Fits before the cutoff. Solid. */
@@ -69,18 +78,23 @@ export interface CapacitySegments {
   overflow: number
 }
 
+/** What the three segments leave: slack, drawn as bare track. 0 when over. */
+export function slackWidth(seg: CapacitySegments): number {
+  return Math.max(0, 1 - seg.fits - seg.fitsLate - seg.overflow)
+}
+
 export function capacitySegments(c: Capacity): CapacitySegments | null {
-  if (c.dueTotal <= 0) return null
+  // Whichever is larger sets the scale. A day with no work and no time has no
+  // ratio to draw; a day off has one but should not draw it, and that is the
+  // band's call rather than this function's.
+  const scale = Math.max(c.dueTotal, freeTotal(c))
+  if (scale <= 0) return null
 
   const fits     = Math.min(c.dueTotal, c.freeBeforeCutoff)
   const fitsLate = Math.min(c.dueTotal - fits, c.freeAfterCutoff)
   const overflow = c.dueTotal - fits - fitsLate
 
-  return {
-    fits:     fits     / c.dueTotal,
-    fitsLate: fitsLate / c.dueTotal,
-    overflow: overflow / c.dueTotal,
-  }
+  return { fits: fits / scale, fitsLate: fitsLate / scale, overflow: overflow / scale }
 }
 
 export type CapacityTone = 'over' | 'tight' | 'ok' | 'empty'

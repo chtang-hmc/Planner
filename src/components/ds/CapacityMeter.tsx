@@ -20,8 +20,9 @@ export function CapacityMeter({ capacity, height = 6, className = '' }: {
 }) {
   const seg = capacitySegments(capacity)
 
-  // A group with nothing due gets no meter. An empty track would read as a
-  // finding, and there is not one.
+  // No work and no time is no ratio to draw. A day off has one — a full red
+  // bar — and should not draw it either, but that is the band's call: it knows
+  // why the free time is zero and this does not.
   if (!seg) return null
 
   const pct = (n: number) => `${(n * 100).toFixed(2)}%`
