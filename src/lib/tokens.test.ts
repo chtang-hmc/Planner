@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 
 /**
  * Every custom property a component names must be defined.
@@ -12,13 +12,17 @@ import { readFileSync } from 'node:fs'
  * in a browser — CSS fails silently, so nothing else will catch this.
  */
 const css = readFileSync('src/app/globals.css', 'utf8')
-const SOURCES = [
-  'src/components/ds/CapacityBand.tsx',
-  'src/components/ds/CapacityMeter.tsx',
-  'src/components/ds/Timeline.tsx',
-  'src/components/ds/UnplacedRail.tsx',
-  'src/components/ds/TaskRow.tsx',
-]
+
+/**
+ * Read from the directory, never a list.
+ *
+ * The first version of this named five files, and the very next component
+ * added — `WeekStrip` — referenced two undefined tokens and was not checked,
+ * because it was not on the list. A hardcoded inventory has exactly the
+ * failure mode it is here to prevent.
+ */
+const DIR = 'src/components/ds'
+const SOURCES = readdirSync(DIR).filter(f => f.endsWith('.tsx')).map(f => `${DIR}/${f}`)
 
 /** Tokens Tailwind generates from @theme, so they never appear as --name:. */
 const FROM_THEME = /^(text|color|font|spacing)-/
@@ -42,5 +46,12 @@ describe('the design tokens components use are defined', () => {
     expect(defined.has('accent-tint')).toBe(true)
     expect(defined.has('gap-target')).toBe(true)
     expect(defined.has('tap-min')).toBe(true)
+    expect(defined.has('today-fill')).toBe(true)
+  })
+
+  it('is looking at every component in the directory', () => {
+    // If this ever finds fewer files than exist, the glob has broken and the
+    // suite is passing on an empty set.
+    expect(SOURCES.length).toBeGreaterThanOrEqual(6)
   })
 })

@@ -511,6 +511,8 @@ export default function TaskList({
             onTaskDone={(task, e) => handleDone(task, e)}
             onAddTask={dueDate => openAddTask(dueDate)}
             weekStartDay={weekStartDay}
+            freeByDay={freeByDay}
+            todayStr={todayStr}
           />
         )}
 

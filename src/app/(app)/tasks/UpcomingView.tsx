@@ -8,6 +8,8 @@ import { useSearch } from '@/contexts/SearchContext'
 import { updateTask } from '@/app/actions/tasks'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
+import { WeekStrip } from '@/components/ds/WeekStrip'
+import { buildWeekStrip, stripFinding } from '@/lib/week-strip'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -73,10 +75,15 @@ interface Props {
   onTaskDone:    (task: Task & { project: Project }, e: React.MouseEvent) => void
   onAddTask:     (dueDate: string) => void
   weekStartDay:  number
+  /** Free minutes per day, for the strip's bars. Missing = a day off. */
+  freeByDay:     Record<string, { before: number; after: number }>
+  /** Today in the configured timezone, from the server. */
+  todayStr:      string
 }
 
 export default function UpcomingView({
   tasks, events, projectFilter, doneIds, onTaskClick, onTaskDone, onAddTask, weekStartDay,
+  freeByDay, todayStr: serverToday,
 }: Props) {
   const { query } = useSearch()
   const q = query.trim().toLowerCase()
@@ -142,6 +149,21 @@ export default function UpcomingView({
   const allDays = Array.from({ length: totalDays }, (_, i) => addDays(today, i))
 
   const anchorDate  = visibleDate >= todayStr ? startOfDay(new Date(visibleDate + 'T00:00:00')) : today
+  /**
+   * The fourteen-day strip, from today forward.
+   *
+   * Due is summed here from the tasks already on screen, so the bars and the
+   * day sections below cannot disagree — the same reason the list's group
+   * headers count their own rows.
+   */
+  const dueByDay: Record<string, number> = {}
+  for (const t of tasks) {
+    if (!t.due_date || doneIds.has(t.id)) continue
+    const day = t.due_date.slice(0, 10)
+    dueByDay[day] = (dueByDay[day] ?? 0) + (t.adjusted_minutes ?? t.estimated_minutes ?? 0)
+  }
+  const strip = buildWeekStrip({ todayStr: serverToday, freeByDay, dueByDay })
+
   const stripStart  = addDays(anchorDate, -daysSinceWeekStart(anchorDate.getDay(), weekStartDay))
   const stripDays   = Array.from({ length: 7 }, (_, i) => addDays(stripStart, i))
 
@@ -382,45 +404,19 @@ export default function UpcomingView({
           </div>
         </div>
 
-        {/* Week strip */}
-        <div className="px-6 pb-3 grid grid-cols-7 gap-1">
-          {stripDays.map(d => {
-            const ds       = toDateStr(d)
-            const isToday  = ds === todayStr
-            const isPast   = d < today
-            const isActive = ds === visibleDate
-            const hasSection = !isPast || dayEvents(d).length > 0 || dayTasks(d).length > 0
+        {/* The strip, rebuilt.
 
-            return (
-              <button
-                key={ds}
-                onClick={hasSection ? () => scrollToDate(ds) : undefined}
-                disabled={!hasSection}
-                className={`flex flex-col items-center gap-1 rounded-lg py-1 transition-colors ${
-                  hasSection
-                    ? 'hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer'
-                    : 'opacity-30 cursor-default'
-                }`}
-              >
-                <span className={`text-xs font-medium transition-colors ${
-                  isActive && !isToday
-                    ? 'text-slate-700 dark:text-slate-200'
-                    : 'text-slate-400 dark:text-slate-500'
-                }`}>
-                  {DAY_ABBR[d.getDay()]}
-                </span>
-                <span className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                  isToday
-                    ? 'bg-red-500 text-white'
-                    : isActive
-                    ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100 font-semibold'
-                    : 'text-slate-600 dark:text-slate-300'
-                }`}>
-                  {d.getDate()}
-                </span>
-              </button>
-            )
-          })}
+            It ran Monday to Sunday with today at the far right, so a view
+            called Upcoming showed mostly the past — and its bars carried no
+            scale, so there was nothing to read across columns. Fourteen days
+            from today, two bars each, one shared scale. */}
+        <div className="px-6 pb-3">
+          <WeekStrip
+            strip={strip}
+            finding={stripFinding(strip)}
+            selected={visibleDate}
+            onPick={scrollToDate}
+          />
         </div>
       </div>
 

@@ -739,10 +739,14 @@ function TaskListPreview() {
           weekStartDay={1}
           relevance={{ windowDays: 7, minPriority: 3 }}
           todayStr={today}
-          freeByDay={{
-            [today]:               { before: 105, after: 210 },
-            [addDaysStr(today, 1)]: { before: 290, after: 0 },
-          }}
+          /* Two weeks, because the strip draws fourteen columns and a fixture
+             that stops at tomorrow makes twelve of them look like days off. */
+          freeByDay={Object.fromEntries(
+            Array.from({ length: 15 }, (_, i) => [
+              addDaysStr(today, i),
+              i % 7 === 0 ? { before: 105, after: 210 } : { before: 240 + (i % 3) * 60, after: 120 },
+            ]),
+          )}
         />
       </div>
     </TimerProvider>
