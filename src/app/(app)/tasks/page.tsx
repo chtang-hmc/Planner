@@ -102,6 +102,8 @@ export default async function TasksPage() {
     .map(t => [Date.parse(t.scheduled_start!), Date.parse(t.scheduled_end!)])
 
   const freeByDay: Record<string, { before: number; after: number }> = {}
+  /** The gaps themselves, so Upcoming can put free slots where they fall. */
+  const gapsByDay: Record<string, Interval[]> = {}
   for (let i = 0; i < HORIZON_DAYS; i++) {
     const day = addDays(today, i)
     const win = workWindowFor(localMidnight(day, tz), workingHours, tz)
@@ -115,6 +117,7 @@ export default async function TasksPage() {
     const { gaps } = freeGaps({ dayStr: day, tz, workingHours, busy, breaks, minMinutes: MIN_GAP_MINUTES })
     const c = capacityFromGaps({ gaps, dayStr: day, tz, dueMinutes: 0 })
     freeByDay[day] = { before: c.freeBeforeCutoff, after: c.freeAfterCutoff }
+    gapsByDay[day] = gaps
   }
 
   const gcalWriteEnabled = (integration?.scopes ?? []).includes(
@@ -144,6 +147,7 @@ export default async function TasksPage() {
           relevance={relevance}
           todayStr={today}
           freeByDay={freeByDay}
+          gapsByDay={gapsByDay}
         />
     </div>
   )

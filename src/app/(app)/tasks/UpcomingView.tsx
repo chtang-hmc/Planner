@@ -77,14 +77,22 @@ interface Props {
   weekStartDay:  number
   /** Free minutes per day, for the strip's bars. Missing = a day off. */
   freeByDay:     Record<string, { before: number; after: number }>
+  /** The gaps themselves, so free slots sit where they actually fall. */
+  gapsByDay:     Record<string, [number, number][]>
   /** Today in the configured timezone, from the server. */
   todayStr:      string
 }
 
 export default function UpcomingView({
   tasks, events, projectFilter, doneIds, onTaskClick, onTaskDone, onAddTask, weekStartDay,
-  freeByDay, todayStr: serverToday,
+  freeByDay, gapsByDay, todayStr: serverToday,
 }: Props) {
+  // Threaded through and not yet drawn: `DaySection` replaces the day blocks
+  // below in the next change, and the gaps are what put its free slots where
+  // they actually fall. Accepted here now so the page and the list are not
+  // touched again for it.
+  void gapsByDay
+
   const { query } = useSearch()
   const q = query.trim().toLowerCase()
   const today    = startOfDay(new Date())
