@@ -37,11 +37,6 @@ export async function proxy(request: NextRequest) {
 
   if (isStaticFile) return supabaseResponse
 
-  // Redirect bare root to /tasks
-  if (pathname === '/') {
-    return NextResponse.redirect(new URL('/tasks', request.url))
-  }
-
   // Send unauthenticated users to login
   if (!user && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
@@ -53,9 +48,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/403', request.url))
   }
 
-  // Send already-logged-in, allowed users away from login
+  // Send already-logged-in, allowed users away from login — to Home, which is
+  // now a real page rather than a redirect to /tasks.
   if (user && pathname === '/login') {
-    return NextResponse.redirect(new URL('/tasks', request.url))
+    return NextResponse.redirect(new URL('/', request.url))
   }
 
   return supabaseResponse

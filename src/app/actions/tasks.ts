@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { revalidateTaskViews } from '@/lib/revalidate'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
@@ -362,7 +363,7 @@ export async function completeTask(
     }
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/habits')
 }
 
@@ -429,7 +430,7 @@ export async function duplicateTask(taskId: string): Promise<{ id?: string; erro
     if (subErr) console.error('duplicateTask: subtasks failed:', subErr.message)
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   revalidatePath('/habits')
   return { id: copy.id }
@@ -586,7 +587,7 @@ export async function deleteHabit(title: string): Promise<{ error?: string }> {
   if (error) return { error: error.message }
 
   revalidatePath('/habits')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/analytics')
   return {}
 }
@@ -824,7 +825,7 @@ export async function logHabitSession(
   if (opts.addToCalendar) {
     const token = await getValidToken()
     if (!token) {
-      if (!opts.quiet) { revalidatePath('/habits'); revalidatePath('/tasks') }
+      if (!opts.quiet) { revalidatePath('/habits'); revalidateTaskViews() }
       return { dateStr, error: "Logged, but Google Calendar isn't connected" }
     }
     try {
@@ -841,14 +842,14 @@ export async function logHabitSession(
     } catch (e) {
       console.error('logHabitSession: calendar write failed', e)
       // The log itself succeeded — say what didn't rather than failing it all.
-      if (!opts.quiet) { revalidatePath('/habits'); revalidatePath('/tasks') }
+      if (!opts.quiet) { revalidatePath('/habits'); revalidateTaskViews() }
       return { dateStr, onCalendar: false, error: 'Logged, but could not add it to your calendar' }
     }
   }
 
   if (!opts.quiet) {
     revalidatePath('/habits')
-    revalidatePath('/tasks')
+    revalidateTaskViews()
     revalidatePath('/analytics')
   }
   return { dateStr, onCalendar }
@@ -982,7 +983,7 @@ async function runHabitSweep(): Promise<{
 
   if (logged.length > 0) {
     revalidatePath('/habits')
-    revalidatePath('/tasks')
+    revalidateTaskViews()
   }
   return { logged }
 }
@@ -1003,7 +1004,7 @@ export async function setTaskPlacement(
     console.error('setTaskPlacement:', error.message)
     return { error: 'Could not save — run migrations 0009 and 0010 first.' }
   }
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/habits')
   return {}
 }
@@ -1074,7 +1075,7 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
     await db.from('tasks').update(cascade).eq('parent_id', taskId)
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   revalidatePath('/habits')   // habits are edited from /habits via TaskDetail
 }
@@ -1124,7 +1125,7 @@ export async function triageTask(taskId: string, action: TriageAction) {
     if (subErr) console.error(`triageTask(${action}): could not close subtasks:`, subErr.message)
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/review')
 }
 
@@ -1250,7 +1251,7 @@ export async function createTask(data: {
     .select()
     .single()
   if (error) throw new Error(error.message)
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   if (resolvedType === 'habit') revalidatePath('/habits')
   return task
@@ -1343,7 +1344,7 @@ export async function createSubtask(
   })
   if (error) throw new Error(error.message)
   if (estimatedMinutes) await recalcParentEstimate(parentId)
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
 
 export async function updateSubtaskFields(
@@ -1355,7 +1356,7 @@ export async function updateSubtaskFields(
   const { error } = await db.from('tasks').update(patch).eq('id', subtaskId)
   if (error) throw new Error(error.message)
   await recalcParentEstimate(parentId)
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
 
 export async function toggleSubtask(subtaskId: string, done: boolean) {

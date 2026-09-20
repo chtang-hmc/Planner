@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { revalidateTaskViews } from '@/lib/revalidate'
 import { blockLabel } from '@/lib/scheduler'
 import { createServiceClient } from '@/lib/supabase/server'
 import {
@@ -14,13 +15,13 @@ import { markScheduleManual } from '@/app/actions/scheduling'
 
 export async function triggerCalendarSync() {
   await syncCalendarEvents()
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
 
 export async function disconnectCalendar() {
   const db = createServiceClient()
   await db.from('user_integrations').delete().eq('provider', 'google')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
 
 // ── Task scheduling ───────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ export async function scheduleTask(
     return { error: err instanceof Error ? err.message : 'GCal error' }
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   revalidatePath('/habits')
   return {}
@@ -118,7 +119,7 @@ export async function unscheduleTask(taskId: string): Promise<{ error?: string }
     .update({ gcal_event_id: null, scheduled_start: null, scheduled_end: null })
     .eq('id', taskId)
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   revalidatePath('/habits')
   return {}

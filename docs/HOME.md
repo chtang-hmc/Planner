@@ -1,6 +1,9 @@
 # Home / Today — spec
 
-Status: **agreed, not built.**
+Status: **built 2026-09-19.** Live at `/`. This file is kept as the reasoning
+behind the page; the decisions taken while building it are in
+[`DECISIONS.md`](DECISIONS.md) under *Home / Today*, and where the build
+departed from this text is recorded at the bottom.
 
 ## What it is
 
@@ -168,3 +171,37 @@ Keep the Google call off it.
 
 **Removing Plan Day is a one-way door in muscle-memory terms.** If Home does not
 land, putting the modal back is easy; changing the habit twice is not.
+
+---
+
+## What shipped differently
+
+*Written 2026-09-19, against the code as merged.*
+
+**`planDay` was deleted, not kept.** This text said it would stay as the action
+behind the write-to-calendar button. It could not: with the ranking done
+locally, the attack-list half of `planDay` had no reader, and the block-writing
+half is `proposeSchedule(1, …)` — which `planDay` was calling anyway. The button
+runs that directly and opens `SchedulePreviewModal`, the surface "Schedule week"
+already uses. `buildAttackList` went with it.
+
+**Gaps and the shape are allocated, not ranked independently.** The section
+above describes each gap saying what fits in it. Built that way, every gap said
+the same thing, because the most urgent task fits everywhere. `buildHome` now
+spends each suggestion once as it walks the day.
+
+**Times carry am/pm.** The mock-up above writes them bare. On the real schedule
+that is ambiguous — see DECISIONS.
+
+**A "synced Nh ago" needed a column.** Nothing recorded when the calendar was
+last pulled, so the mitigation this document asks for was unmeasurable.
+Migration 0018 adds `user_integrations.last_synced_at`.
+
+**All-day events are held out of the busy set** and listed on their own line.
+Google marks them free, and a fourteen-hour "birthday" block would leave the day
+with no gaps at all. This case is not mentioned above.
+
+**Away-task compatibility is the buffer, doubled.** The section on ranking says
+an *away* task should not be offered a 30-minute slot between two classes but
+does not say how that is decided. It is decided by charging the transition twice
+at each end — out and back.

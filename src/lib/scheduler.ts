@@ -290,7 +290,7 @@ function localPartsAt(ms: number, tz: string): { dow: number; hour: number } {
   return { dow: DOW_MAP[weekdayStr] ?? 0, hour }
 }
 
-function slotEnergyLevel(
+export function slotEnergyLevel(
   slotStartMs: number,
   energySchedule: EnergyScheduleEntry[],
   tz: string,
@@ -305,7 +305,7 @@ function slotEnergyLevel(
  * Subtract busy intervals from free intervals.
  * All values are ms timestamps. Returns sorted, non-overlapping result.
  */
-function subtractIntervals(free: Interval[], busy: Interval[]): Interval[] {
+export function subtractIntervals(free: Interval[], busy: Interval[]): Interval[] {
   let result: Interval[] = [...free]
   for (const [bS, bE] of busy) {
     const next: Interval[] = []
@@ -320,6 +320,108 @@ function subtractIntervals(free: Interval[], busy: Interval[]): Interval[] {
     result = next
   }
   return result.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0])
+}
+
+// ── Day shape: working window, breaks, free gaps ─────────────────────────────
+//
+// Lifted out of runScheduler so a page can ask what a day looks like without
+// running the scheduler — and, more to the point, without the Google round trip
+// that comes with it. runScheduler calls exactly these, so the Home page and a
+// proposed schedule can never disagree about where the free time is.
+
+/**
+ * The working window for the day beginning at `dayMs`, as [start, end].
+ *
+ * An end at or before the start means the window runs past midnight —
+ * "10:00 to 01:30" is a fifteen-and-a-half hour day ending next morning, not
+ * a negative one. Returns null when the day is switched off.
+ */
+export function workWindowFor(
+  dayMs: number,
+  workingHours: WorkingHours[],
+  tz: string,
+): Interval | null {
+  const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
+  const wh = workingHours.find(w => w.day_of_week === dow)
+  if (!wh || !wh.enabled) return null
+
+  const startOff = (wh.start_hour * 60 + wh.start_minute) * 60_000
+  let   endOff   = (wh.end_hour   * 60 + wh.end_minute)   * 60_000
+  if (endOff <= startOff) endOff += 24 * 60 * 60_000      // spills into the next day
+  return [dayMs + startOff, dayMs + endOff]
+}
+
+/**
+ * Where each break lands on the day beginning at `dayMs`.
+ *
+ * A break is a duration that must fit somewhere inside a window, not a fixed
+ * appointment: it takes the earliest free slot in its window that it fits in.
+ * Only real calendar events compete — this runs before anything is placed.
+ */
+export function placeBreaks(
+  dayMs: number,
+  breaks: BreakWindow[],
+  busy: Interval[],
+): { reserved: Interval[]; cooldowns: Interval[] } {
+  const reserved:  Interval[] = []
+  const cooldowns: Interval[] = []
+
+  for (const br of breaks) {
+    const winStart = dayMs + (br.startHour * 60 + br.startMinute) * 60_000
+    const winEnd   = dayMs + (br.endHour   * 60 + br.endMinute)   * 60_000
+    const needMs   = br.durationMinutes * 60_000
+    if (winEnd - winStart < needMs) continue
+
+    const free = subtractIntervals(
+      [[winStart, winEnd]],
+      busy.filter(([s, e]) => s < winEnd && e > winStart),
+    )
+    const slot = free.find(([fS, fE]) => fE - fS >= needMs)
+    if (!slot) continue          // window fully booked that day — skip it
+
+    const start = slot[0]
+    const end   = start + needMs
+    reserved.push([start, end])
+    if (br.cooldownMinutes > 0) {
+      cooldowns.push([end, end + br.cooldownMinutes * 60_000])
+    }
+  }
+
+  return { reserved, cooldowns }
+}
+
+/**
+ * The free stretches of one local day: the working window, minus everything
+ * already on it.
+ *
+ * **Overlapping events must not be flattened.** A real day has them — Fall Fest
+ * 11:00–13:15 runs under ENTR 179A 11:00–12:15 — and the free time after that
+ * pair starts at 13:15, not 12:15. `subtractIntervals` removes each busy span
+ * from what is left of the day rather than walking events pairwise, so a span
+ * nested inside a longer one takes nothing away that the longer one had not
+ * already taken. That is the whole correctness trap in this file, and
+ * `freeGaps` is where it is pinned by a test.
+ */
+export function freeGaps(opts: {
+  dayStr:       string
+  tz:           string
+  workingHours: WorkingHours[]
+  busy:         Interval[]
+  breaks?:      BreakWindow[]
+  /** Drop gaps shorter than this. 0 keeps every sliver. */
+  minMinutes?:  number
+}): Interval[] {
+  const { dayStr, tz, workingHours, busy, breaks = [], minMinutes = 0 } = opts
+  const dayMs = localMidnight(dayStr, tz)
+  const win   = workWindowFor(dayMs, workingHours, tz)
+  if (!win) return []
+
+  const [winStart, winEnd] = win
+  const relevant = busy.filter(([s, e]) => s < winEnd && e > winStart)
+  const { reserved } = placeBreaks(dayMs, breaks, busy)
+
+  return subtractIntervals([[winStart, winEnd]], [...relevant, ...reserved])
+    .filter(([s, e]) => e - s >= minMinutes * 60_000)
 }
 
 // ── Main algorithm ────────────────────────────────────────────────────────────
@@ -375,27 +477,9 @@ export function runScheduler(
   const cooldownIntervals: Interval[] = []   // busy only for avoidAfterBreaks tasks
 
   for (const dayMs of days) {
-    for (const br of config.breaks ?? []) {
-      const winStart = dayMs + (br.startHour * 60 + br.startMinute) * 60_000
-      const winEnd   = dayMs + (br.endHour   * 60 + br.endMinute)   * 60_000
-      const needMs   = br.durationMinutes * 60_000
-      if (winEnd - winStart < needMs) continue
-
-      // Only real calendar events compete here; nothing is placed yet.
-      const free = subtractIntervals(
-        [[winStart, winEnd]],
-        busyIntervals.filter(([s, e]) => s < winEnd && e > winStart),
-      )
-      const slot = free.find(([fS, fE]) => fE - fS >= needMs)
-      if (!slot) continue          // window fully booked that day — skip it
-
-      const start = slot[0]
-      const end   = start + needMs
-      breakIntervals.push([start, end])
-      if (br.cooldownMinutes > 0) {
-        cooldownIntervals.push([end, end + br.cooldownMinutes * 60_000])
-      }
-    }
+    const { reserved, cooldowns } = placeBreaks(dayMs, config.breaks ?? [], busyIntervals)
+    breakIntervals.push(...reserved)
+    cooldownIntervals.push(...cooldowns)
   }
 
   const scheduled:     ProposedBlock[] = []
@@ -412,23 +496,8 @@ export function runScheduler(
   // start when work that must happen elsewhere is already booked inside its span.
   const placedLoc: { start: number; end: number; loc: TaskLocation }[] = []
 
-  /**
-   * The working window for the day beginning at `dayMs`, as [start, end].
-   *
-   * An end at or before the start means the window runs past midnight —
-   * "10:00 to 01:30" is a fifteen-and-a-half hour day ending next morning, not
-   * a negative one. Returns null when the day is switched off.
-   */
-  function workWindow(dayMs: number): Interval | null {
-    const { dow } = localPartsAt(dayMs + 60_000, tz)  // +1min: avoid DST edge at midnight
-    const wh = workingHours.find(w => w.day_of_week === dow)
-    if (!wh || !wh.enabled) return null
-
-    const startOff = (wh.start_hour * 60 + wh.start_minute) * 60_000
-    let   endOff   = (wh.end_hour   * 60 + wh.end_minute)   * 60_000
-    if (endOff <= startOff) endOff += 24 * 60 * 60_000      // spills into the next day
-    return [dayMs + startOff, dayMs + endOff]
-  }
+  /** This run's working hours and timezone, bound to the shared helper. */
+  const workWindow = (dayMs: number) => workWindowFor(dayMs, workingHours, tz)
 
   /**
    * Free intervals across the horizon for work with these constraints.
@@ -815,86 +884,4 @@ export function runScheduler(
   scheduled.sort((a, b) => a.start.getTime() - b.start.getTime())
 
   return { scheduled, unschedulable }
-}
-
-// ── Attack list for "Plan my day" ─────────────────────────────────────────────
-
-export interface AttackItem {
-  taskId:           string
-  taskTitle:        string
-  priority:         number
-  urgencyScore:     number
-  durationMinutes:  number | null
-  energyRequired:   EnergyLevel
-  scheduledStart:   Date | null
-  isScheduled:      boolean
-  energyMatchNow:   boolean   // does it match your current time-of-day energy?
-  rank:             number
-}
-
-/**
- * Build a ranked attack list for today.
- * Scheduled tasks are placed at their scheduled times; unscheduled tasks are
- * inserted where they best fit energetically.
- */
-export function buildAttackList(
-  todaysTasks:    SchedulerTask[],
-  scheduledToday: Array<{ taskId: string; start: Date; end: Date }>,
-  energySchedule: EnergyScheduleEntry[],
-  timezone:       string,
-): AttackItem[] {
-  const nowMs = Date.now()
-  const currentEnergy = slotEnergyLevel(nowMs, energySchedule, timezone)
-
-  const items: AttackItem[] = todaysTasks.map(task => {
-    const block       = scheduledToday.find(b => b.taskId === task.id)
-    const isScheduled = !!block
-    const energyMatchNow = ENERGY_RANK[currentEnergy] >= ENERGY_RANK[task.energy_required]
-
-    return {
-      taskId:         task.id,
-      taskTitle:      task.title,
-      priority:       task.priority,
-      urgencyScore:   task.urgency_score,
-      durationMinutes: task.duration_minutes,
-      energyRequired: task.energy_required,
-      scheduledStart: block?.start ?? null,
-      isScheduled,
-      energyMatchNow,
-      rank: 0,  // filled below
-    }
-  })
-
-  // Sort: scheduled tasks by their time; unscheduled by urgency + energy match
-  const scheduled   = items.filter(i => i.isScheduled).sort((a, b) =>
-    (a.scheduledStart?.getTime() ?? 0) - (b.scheduledStart?.getTime() ?? 0)
-  )
-  const unscheduled = items.filter(i => !i.isScheduled).sort((a, b) => {
-    // Energy match now is a strong signal for what to do right now
-    const aScore = a.urgencyScore + (a.energyMatchNow ? 10 : 0)
-    const bScore = b.urgencyScore + (b.energyMatchNow ? 10 : 0)
-    return bScore - aScore
-  })
-
-  // Interleave: scheduled tasks stay in time order; an unscheduled task appears
-  // before a scheduled block only when its urgency+energy score exceeds that block's.
-  // This preserves calendar commitments while surfacing high-urgency free work.
-  const merged: AttackItem[] = []
-  let ui = 0
-  for (const s of scheduled) {
-    const sScore = s.urgencyScore + (s.energyMatchNow ? 10 : 0)
-    while (ui < unscheduled.length) {
-      const uScore = unscheduled[ui].urgencyScore + (unscheduled[ui].energyMatchNow ? 10 : 0)
-      if (uScore > sScore) {
-        merged.push(unscheduled[ui++])
-      } else {
-        break
-      }
-    }
-    merged.push(s)
-  }
-  // Remaining unscheduled go after all scheduled blocks
-  while (ui < unscheduled.length) merged.push(unscheduled[ui++])
-
-  return merged.map((item, i) => ({ ...item, rank: i + 1 }))
 }

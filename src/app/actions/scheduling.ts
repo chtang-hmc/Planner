@@ -1,12 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { revalidateTaskViews } from '@/lib/revalidate'
 import { RELEVANT_WINDOW_MIN, RELEVANT_WINDOW_MAX } from '@/lib/relevance'
 import { createServiceClient } from '@/lib/supabase/server'
 import { getValidToken, createTaskBlock, deleteTaskBlock, listAutoScheduledEvents } from '@/lib/google-calendar'
 import {
   runScheduler,
-  buildAttackList,
   localMidnight,
   type WorkingHours,
   type EnergyScheduleEntry,
@@ -119,18 +119,6 @@ export interface SerializedBlock {
   energyMatch:   boolean
 }
 
-export interface SerializedAttackItem {
-  taskId:            string
-  taskTitle:         string
-  priority:          number
-  urgencyScore:      number
-  durationMinutes:   number | null
-  energyRequired:    string
-  scheduledStartISO: string | null
-  isScheduled:       boolean
-  energyMatchNow:    boolean
-  rank:              number
-}
 
 // ── Habit sessions ────────────────────────────────────────────────────────────
 
@@ -615,7 +603,7 @@ export async function confirmSchedule(
       .in('id', clearedIds)
   }
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/projects')
   return { confirmed, failed }
 }
@@ -629,109 +617,6 @@ export async function confirmSchedule(
 export async function markScheduleManual(taskId: string): Promise<void> {
   const db = createServiceClient()
   await db.from('tasks').update({ scheduled_by: 'manual' }).eq('id', taskId)
-}
-
-// ── planDay ───────────────────────────────────────────────────────────────────
-
-export interface DayPlan {
-  /** Already on the day — context for the calendar view. */
-  existing:       ExistingItem[]
-  proposedBlocks: SerializedBlock[]
-  attackList:     SerializedAttackItem[]
-  unschedulable:  SchedulerTask[]
-  error?:         string
-}
-
-/**
- * Plan my day: schedule today's unscheduled tasks AND return a ranked attack
- * list of everything to work on today (scheduled + unscheduled in order).
- */
-export async function planDay(timezone: string = 'UTC', dateStr?: string): Promise<DayPlan> {
-  const db = createServiceClient()
-
-  const dayStr = dateStr ?? new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
-
-  // Propose blocks for the chosen day (internally fetches scheduling inputs)
-  const { scheduled, unschedulable, existing, error } = await proposeSchedule(1, timezone, dayStr)
-  if (error) return { existing: [], proposedBlocks: [], attackList: [], unschedulable: [], error }
-
-  // Fetch only the energy schedule for buildAttackList — avoids double-fetching
-  // working hours and config that proposeSchedule already consumed above.
-  const { data: esRows } = await db.from('user_energy_schedule').select('*')
-  const energySchedule: EnergyScheduleEntry[] = (esRows ?? []).map(r => ({
-    day_of_week:  r.day_of_week,
-    time_block:   r.time_block as TimeBlockId,
-    energy_level: r.energy_level as 'low' | 'medium' | 'high',
-  }))
-
-  // Candidates for the day's ranked list.
-  //
-  // This used to filter `due_date <= day`, which silently dropped two whole
-  // categories: anything with no due date — every habit — and anything the
-  // scheduler pulled forward from later to fill the day. The blocks above
-  // already include both, so the list disagreed with the plan beside it.
-  //
-  // Now: due today or earlier, or undated, or scheduled today. Far-future work
-  // stays out unless it actually earned a block.
-  const { data: allTasks } = await db
-    .from('tasks')
-    .select('*')
-    .in('status', ['inbox', 'active'])
-    .is('parent_id', null)
-    .order('urgency_score', { ascending: false })
-
-  const dayCutoff   = dayStr + 'T00:00:00Z'
-  const blockedToday = new Set(scheduled.map(b => b.taskId))
-
-  const schedulerTasks: SchedulerTask[] = (allTasks ?? [])
-    .filter(t => !t.due_date || t.due_date <= dayCutoff || blockedToday.has(t.id))
-    .map(t => ({
-      id:               t.id,
-      title:            t.title,
-      priority:         t.priority,
-      // Habits store 0 — they aren't deadline work — which would bury them at
-      // the bottom of the list. Same baseline the scheduler gives them.
-      urgency_score:    t.type === 'habit' ? t.priority * 10 : t.urgency_score,
-      energy_required:  t.energy_required,
-      duration_minutes: t.adjusted_minutes ?? t.estimated_minutes ?? 30,
-      due_date:         t.due_date,
-      dueTimeMinutes:   t.due_time_minutes ?? null,
-    }))
-
-  // All scheduled blocks for today (already in DB + newly proposed)
-  const { data: existingScheduled } = await db
-    .from('tasks')
-    .select('id, scheduled_start, scheduled_end')
-    .in('status', ['inbox', 'active'])
-    .not('scheduled_start', 'is', null)
-    .gte('scheduled_start', dayStr + 'T00:00:00Z')
-    .lte('scheduled_start', dayStr + 'T23:59:59Z')
-
-  const scheduledToday = [
-    ...(existingScheduled ?? []).map(t => ({
-      taskId: t.id,
-      start:  new Date(t.scheduled_start!),
-      end:    new Date(t.scheduled_end!),
-    })),
-    ...scheduled.map(b => ({ taskId: b.taskId, start: new Date(b.startISO), end: new Date(b.endISO) })),
-  ]
-
-  const rawAttack = buildAttackList(schedulerTasks, scheduledToday, energySchedule, timezone)
-
-  const attackList: SerializedAttackItem[] = rawAttack.map(item => ({
-    taskId:            item.taskId,
-    taskTitle:         item.taskTitle,
-    priority:          item.priority,
-    urgencyScore:      item.urgencyScore,
-    durationMinutes:   item.durationMinutes,
-    energyRequired:    item.energyRequired,
-    scheduledStartISO: item.scheduledStart?.toISOString() ?? null,
-    isScheduled:       item.isScheduled,
-    energyMatchNow:    item.energyMatchNow,
-    rank:              item.rank,
-  }))
-
-  return { existing, proposedBlocks: scheduled, attackList, unschedulable, error: undefined }
 }
 
 // ── Settings actions ──────────────────────────────────────────────────────────
@@ -749,7 +634,7 @@ export async function saveWorkingHours(
     day_of_week, start_hour, start_minute, end_hour, end_minute, enabled,
   }, { onConflict: 'day_of_week' })
   revalidatePath('/settings')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
 
 export async function saveEnergyLevel(
@@ -860,7 +745,7 @@ export async function saveTimezone(tz: string): Promise<{ error?: string; change
   }
 
   revalidatePath('/habits')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   revalidatePath('/settings')
   return { changed: true }
 }
@@ -886,7 +771,7 @@ export async function saveWeekStartDay(day: number): Promise<{ error?: string }>
 
   revalidatePath('/settings')
   revalidatePath('/habits')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   return {}
 }
 
@@ -925,7 +810,7 @@ export async function saveRelevanceSettings(
   }
 
   revalidatePath('/settings')
-  revalidatePath('/tasks')
+  revalidateTaskViews()
   return {}
 }
 
@@ -958,5 +843,5 @@ export async function updateSubtask(
   const { data: sub } = await db.from('tasks').select('parent_id').eq('id', id).single()
   if (sub?.parent_id) await recalcParentEstimate(sub.parent_id)
 
-  revalidatePath('/tasks')
+  revalidateTaskViews()
 }
