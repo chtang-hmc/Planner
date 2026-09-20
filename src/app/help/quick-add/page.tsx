@@ -88,12 +88,15 @@ export default function QuickAddHelpPage() {
             fixed appointment; it shows on the task and the day is what drives urgency.
           </Note>
 
-          <Note title="p1 is Low here, not urgent">
-            This is the opposite of Todoist, and it is deliberate: the add-task form beside this
-            field offers priority as four buttons numbered <Code>1</Code> to <Code>4</Code>, with{' '}
-            <Code>4</Code> as Critical. <Code>p1</Code> meaning something other than the button
-            marked <Code>1</Code>, in the same form, would be a trap. If you came from Todoist,
-            this is the one habit to unlearn.
+          <Note title="p1 is the most urgent — and the buttons count the other way">
+            <Code>p1</Code> is Critical, <Code>p4</Code> is Low, the way Todoist numbers them.
+            The add-task form numbers its priority buttons the other way round, so typing{' '}
+            <Code>p1</Code> lights up the button marked <strong className="font-medium text-slate-800 dark:text-slate-200">4</strong>.
+            That is the mapping, not a bug — <Code>pN</Code> is a borrowed idiom and it keeps the
+            meaning people arrive with:
+            <span className="block mt-2 font-mono text-[12px] text-slate-500 dark:text-slate-400">
+              p1 Critical · p2 High · p3 Medium · p4 Low
+            </span>
           </Note>
 
           <Note title="A project has to already exist">

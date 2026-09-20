@@ -628,23 +628,37 @@ describe('#project', () => {
 
 describe('p1–p4', () => {
   /**
-   * The app's own scale: 1 = Low, 4 = Critical. This is the opposite of
-   * Todoist, and it is the right way round here — the add-task modal beside
-   * this field offers priority as four buttons labelled 1 2 3 4 where 4 is
-   * Critical, so `p1` meaning anything other than that button would be a trap.
+   * Todoist's scale: p1 is the most urgent, so the token inverts on the way in.
+   * `p1` stores priority 4 (Critical), `p4` stores 1 (Low).
+   *
+   * This deliberately disagrees with the add-task form, which numbers its
+   * priority buttons 1–4 with 4 as Critical — typing `p1` lights up the button
+   * marked `4`. `pN` is a borrowed idiom and people arrive with `p1` meaning
+   * "drop everything"; a grammar that silently meant the opposite would be the
+   * worse of the two inconsistencies.
    */
-  it('reads the number as the app numbers priority', () => {
-    expect(p('Fix bug p1').priority).toBe(1)
-    expect(p('Fix bug p4').priority).toBe(4)
+  it('inverts the typed number, Todoist-style', () => {
+    expect(p('Fix bug p1').priority).toBe(4)
+    expect(p('Fix bug p2').priority).toBe(3)
+    expect(p('Fix bug p3').priority).toBe(2)
+    expect(p('Fix bug p4').priority).toBe(1)
   })
 
-  it('labels it with the app word, not the number', () => {
-    expect(p('Fix bug p1').tokens.find(t => t.type === 'priority')?.label).toBe('Low')
-    expect(p('Fix bug p4').tokens.find(t => t.type === 'priority')?.label).toBe('Critical')
+  it('labels it with the stored meaning, not the typed digit', () => {
+    // The chip has to say Critical, or the inversion is invisible until the
+    // task is already created.
+    expect(p('Fix bug p1').tokens.find(t => t.type === 'priority')?.label).toBe('Critical')
+    expect(p('Fix bug p4').tokens.find(t => t.type === 'priority')?.label).toBe('Low')
+  })
+
+  it('is its own inverse across the scale', () => {
+    // Nothing collapses: four tokens, four distinct stored values.
+    const stored = [1, 2, 3, 4].map(n => p(`x p${n}`).priority)
+    expect(new Set(stored).size).toBe(4)
   })
 
   it('is case-insensitive and leaves the title clean', () => {
-    expect(p('Fix bug P3').priority).toBe(3)
+    expect(p('Fix bug P3').priority).toBe(2)
     expect(p('Fix bug P3').title).toBe('Fix bug')
   })
 
@@ -699,7 +713,7 @@ describe('metadata alongside the date grammar', () => {
     const r = withProjects('Draft the memo #Teaching p3 for 90m tomorrow at 2pm')
     expect(r.title).toBe('Draft the memo')
     expect(r.projectId).toBe('teach')
-    expect(r.priority).toBe(3)
+    expect(r.priority).toBe(2)   // p3 → Medium
     expect(r.estimateMinutes).toBe(90)
     expect(r.dueDay).toBe('2026-09-17')
     expect(r.timeMinutes).toBe(14 * 60)

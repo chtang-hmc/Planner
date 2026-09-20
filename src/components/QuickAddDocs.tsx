@@ -80,7 +80,7 @@ const DEMO_PROJECTS = [
 const META_ROWS: Row[] = [
   { syntax: ['#Teaching'], note: 'Files it. A unique prefix is enough — #teach finds Teaching.' },
   { syntax: ['#{Public Policy}'], note: 'Braces for a name with spaces.' },
-  { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Priority, the way the buttons are numbered: 1 is Low, 4 is Critical.' },
+  { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Todoist order — p1 is Critical, p4 is Low. The form\u2019s buttons count the other way.' },
   { syntax: ['for 45m', 'for 2h', 'for 1h30m'], note: 'An estimate.' },
 ]
 
@@ -170,9 +170,15 @@ export default function QuickAddDocs() {
           </dd>
           <dt className="text-slate-400">Priority</dt>
           <dd className="text-slate-800 dark:text-slate-200">
+            {/* The token's own source text, not the stored number. Echoing the
+                stored value here printed "Medium p2" for a typed `p3`, which
+                is the inversion showing through in the one place it should be
+                hidden. */}
             {quick.priority
               ? <>{quick.tokens.find(t => t.type === 'priority')?.label}
-                  <span className="text-slate-400 font-mono text-xs ml-2">p{quick.priority}</span></>
+                  <span className="text-slate-400 font-mono text-xs ml-2">
+                    {quick.tokens.find(t => t.type === 'priority')?.text}
+                  </span></>
               : <Dash />}
           </dd>
           <dt className="text-slate-400">Estimate</dt>

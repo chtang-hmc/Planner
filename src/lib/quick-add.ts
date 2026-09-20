@@ -72,7 +72,12 @@ export interface QuickAddResult {
    * title rather than becoming a project that does not exist.
    */
   projectId: string | null
-  /** 1–4, the app's own scale: 1 = Low, 4 = Critical. */
+  /**
+   * The stored priority, 1–4, where 4 is Critical.
+   *
+   * Note this is **not** the number typed: `p1` is Todoist's most urgent and
+   * resolves to 4 here. See `PRIORITY_FROM_TOKEN`.
+   */
   priority: 1 | 2 | 3 | 4 | null
   /** `for 45m`, `for 2h` — minutes. */
   estimateMinutes: number | null
@@ -494,16 +499,31 @@ function matchProject(
 }
 
 /**
- * `p1`–`p4`, on **this app's** scale: 1 = Low, 4 = Critical.
+ * `p1`–`p4`, on **Todoist's** scale: p1 is the most urgent.
  *
- * This is the opposite of Todoist, where p1 is the most urgent — and it is the
- * right way round here, because the add-task modal sitting beside this very
- * field offers priority as four buttons labelled 1 2 3 4, where 4 is Critical.
- * Typing `p1` and getting something different from clicking `1`, in the same
- * modal, would be indefensible. The help page says so in as many words, since
- * the Todoist habit is the one people arrive with.
+ * So the token inverts on the way in — `p1` stores priority 4 (Critical), `p4`
+ * stores 1 (Low). This is a deliberate choice of the typed convention over the
+ * stored one: `pN` is a Todoist idiom, people arrive with `p1` meaning "drop
+ * everything", and a grammar that silently means the opposite of the habit it
+ * borrows is worse than one that disagrees with a number elsewhere in the form.
+ *
+ * It does leave a visible inconsistency: the add-task form numbers its priority
+ * buttons 1–4 with 4 as Critical, so typing `p1` lights up the button marked
+ * `4`. The help page states the mapping outright rather than leaving that to be
+ * discovered.
  */
 const PRIORITY_RE = /\bp([1-4])\b/i
+
+/**
+ * Typed token → stored priority. The inversion lives here, in one table, so
+ * there is exactly one place to look when the two numbers disagree.
+ */
+export const PRIORITY_FROM_TOKEN: Record<1 | 2 | 3 | 4, 1 | 2 | 3 | 4> = {
+  1: 4,  // p1 — Critical
+  2: 3,  // p2 — High
+  3: 2,  // p3 — Medium
+  4: 1,  // p4 — Low
+}
 
 /** `for 45m`, `for 2h`, `for 1h30m`, `for 90 minutes`. */
 const ESTIMATE_RE =
@@ -632,7 +652,8 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
 
   const priorityMatch = rest.match(PRIORITY_RE)
   if (priorityMatch && priorityMatch.index !== undefined) {
-    priority = Number(priorityMatch[1]) as 1 | 2 | 3 | 4
+    const typed = Number(priorityMatch[1]) as 1 | 2 | 3 | 4
+    priority = PRIORITY_FROM_TOKEN[typed]
     const start = priorityMatch.index, end = start + priorityMatch[0].length
     rest = mask(rest, start, end)
     tokens.push({

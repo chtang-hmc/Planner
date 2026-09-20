@@ -833,11 +833,15 @@ It is deliberately *not* folded into `due_date`. That column is a `timestamptz` 
 
 Minutes-past-midnight is also the right *type*. A wall-clock time is timezone-independent by nature: "due at 5pm" means 5pm after a move or a DST change, which an instant would not. `formatDue` appends it and deliberately does not let it affect the tone — a task due at 9am today reads as due today at half past nine, not overdue. The scheduler does not yet treat it as a fixed appointment; that is a separate decision about pinning.
 
-### `p1` is Low here, and that is the opposite of Todoist
+### `p1` is Critical — the typed convention beats the stored one
 
-Todoist's `p1` is its most urgent. This app's priority 1 is Low and 4 is Critical, and the grammar follows **this app**, because the add-task form sitting beside the quick-add field offers priority as four buttons labelled `1 2 3 4` with `4` as Critical. `p1` meaning something other than the button marked `1`, in the same form, would be a trap set for the one person using it.
+`pN` follows **Todoist**: `p1` is the most urgent and stores priority 4; `p4` stores 1. The inversion lives in one table, `PRIORITY_FROM_TOKEN`, so there is exactly one place to look when the two numbers disagree.
 
-The help page says so in as many words, since the Todoist habit is what people arrive with.
+This was decided the other way first, and changed. The argument for matching the stored scale was real: the add-task form numbers its priority buttons 1–4 with 4 as Critical, so typing `p1` now lights up the button marked `4`. But `pN` is a *borrowed* idiom, and people arrive with `p1` meaning "drop everything" — a grammar that silently means the opposite of the habit it borrows is a worse trap than a number disagreeing with a button elsewhere in the same form.
+
+The help page states the mapping outright rather than leaving it to be discovered, and the token chip shows the *stored* word ("Critical") rather than echoing the digit, so the inversion is visible before the task is created rather than after.
+
+**The button labels are the remaining inconsistency.** Showing `Low / Med / High / Crit` instead of `1 2 3 4` would remove it at the source; the numbers are currently only a tooltip away from their names.
 
 ### `#project` never creates a project
 
