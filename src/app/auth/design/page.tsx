@@ -468,6 +468,12 @@ function HomePreview() {
           calendarConnected
           syncAge="2h ago"
           freeTime={{ observed: true }}
+          band={{
+            reason: 'available',
+            capacity: { dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 },
+            gaps, dueCount: 10, smallestTaskMinutes: 15,
+            start: { title: 'Reimbursement form', gapMinutes: 75, beforeTitle: 'CSCI 134' },
+          }}
         />
       </div>
     </TimerProvider>

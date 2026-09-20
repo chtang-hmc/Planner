@@ -20,11 +20,13 @@ import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import LogHabitModal from '@/components/LogHabitModal'
 import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
+import { CapacityBand } from '@/components/ds/CapacityBand'
+import { bandKind, type BandInput } from '@/lib/band'
 import { completeTask } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
 import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type FreeTimeBasis, type HomeData, type Suggestion } from '@/lib/home'
+import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type FreeTimeBasis, type HomeData } from '@/lib/home'
 
 type TaskRow = Task & { project: Project }
 
@@ -63,11 +65,13 @@ interface Props {
    * presenting a number it cannot stand behind.
    */
   freeTime:          FreeTimeBasis
+  /** Everything the day-level headline needs — see `bandCopy`. */
+  band:              BandInput
 }
 
 export default function HomeView({
   data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
-  gcalWriteEnabled, calendarConnected, syncAge, freeTime,
+  gcalWriteEnabled, calendarConnected, syncAge, freeTime, band,
 }: Props) {
   const router = useRouter()
   const timer = useTimer()
@@ -153,6 +157,30 @@ export default function HomeView({
       setPendingHabits(prev => { const n = new Set(prev); n.delete(task.id); return n })
     }
   }
+
+  /**
+   * What the band's primary button does, which is a different thing per state.
+   *
+   * Undefined where the action is Triage, which is not built: `CapacityBand`
+   * then renders no button rather than a dead one. `Start` is the only state
+   * whose action exists today, and it is the one the ranking already computes.
+   */
+  const bandPrimary = (() => {
+    // Asked rather than re-derived: the state machine lives in one place and
+    // a second copy of "is this the day that fits" would drift from it.
+    switch (bandKind(band)) {
+      case 'unknown':
+        return () => router.push('/settings')
+      case 'fitsWithSlack': {
+        const pick = data.suggestions[0]
+        return pick ? () => startWork(pick.taskIds[0]) : undefined
+      }
+      // overCapacity and dayOff both lead to Triage; fragmented and nothingDue
+      // have no primary by design.
+      default:
+        return undefined
+    }
+  })()
 
   function refreshCalendar() {
     setSyncing(true)
@@ -320,16 +348,20 @@ export default function HomeView({
         {/* ── Body ───────────────────────────────────────────────────────── */}
         <div className="flex-1 px-6 py-5 grid gap-5 lg:grid-cols-5 auto-rows-min">
 
-          {/* Left: everything you act on, in the order you act on it. */}
-          <div className="lg:col-span-3 flex flex-col gap-5 min-w-0">
-            <DoThisNow
-              suggestions={data.suggestions}
-              onOpen={openTask}
-              onStart={startWork}
-              onDone={markDone}
-              timerBusy={timer.phase !== 'idle'}
-            />
+          {/* The day-level headline, above everything it describes. The
+              "Right now" sentence stays in the subhead above: that answers
+              what am I in right now, this answers does today work, and one
+              sentence carrying both across thirty state combinations is how
+              you get a sentence that says neither. */}
+          <div className="lg:col-span-5">
+            <CapacityBand input={band} onPrimary={bandPrimary} />
+          </div>
 
+          {/* Left: everything you act on, in the order you act on it.
+              "Do this now" is gone — the recommendation survives distributed
+              into the free slots of Today's shape, which is where it can name
+              the gap it fits. A card beside them said it twice. */}
+          <div className="lg:col-span-3 flex flex-col gap-5 min-w-0">
             <NeedsAttention
               overdue={data.overdue}
               dueToday={data.dueToday}
@@ -431,112 +463,17 @@ function Section({ title, count, children }: {
   )
 }
 
-/**
- * The recommendation: one primary, two alternates, each carrying why it was
- * picked. A suggestion without a reason is an oracle, and an oracle that is
- * wrong once stops being trusted.
+/*
+ * `DoThisNow` lived here: a card with one primary pick and two alternates.
+ * It is gone rather than moved. The recommendation survives distributed into
+ * the free slots of Today's shape, where it can name the gap it fits — "two
+ * tasks fit exactly", "best window before Piano" — and a card beside them was
+ * the same answer given twice, once without the context that made it good.
+ *
+ * The band above carries what is left: on a day with slack its primary is
+ * `Start [task]`, which is this card's job reduced to the one case where there
+ * is a single obvious answer.
  */
-function DoThisNow({ suggestions, onOpen, onStart, onDone, timerBusy }: {
-  suggestions: Suggestion[]
-  onOpen:  (id: string) => void
-  onStart: (id: string) => void
-  onDone:  (id: string) => void
-  timerBusy: boolean
-}) {
-  if (suggestions.length === 0) {
-    return (
-      <Section title="Do this now">
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-6 text-center">
-          <p className="text-sm text-slate-500 dark:text-slate-400">Nothing fits the time you have left today.</p>
-          <p className="text-xs text-slate-400 mt-1">
-            Free time, an estimate on a task, or a longer working day would each change that.
-          </p>
-        </div>
-      </Section>
-    )
-  }
-
-  const [primary, ...alternates] = suggestions
-
-  return (
-    <Section title="Do this now">
-      <div className="rounded-xl border border-accent-200 dark:border-accent-800 bg-white dark:bg-slate-900 overflow-hidden">
-        {/* Primary */}
-        <div className="px-4 py-3.5 bg-accent-50/60 dark:bg-accent-950/30">
-          <div className="flex items-start justify-between gap-4">
-            <button onClick={() => onOpen(primary.taskIds[0])} className="min-w-0 text-left group">
-              {primary.parentTitle && (
-                <p className="text-[11px] text-slate-400 truncate">{primary.parentTitle}</p>
-              )}
-              <p className="text-base font-semibold text-slate-900 dark:text-slate-100 leading-snug group-hover:text-accent-600 dark:group-hover:text-accent-400 transition-colors">
-                {primary.title}
-              </p>
-            </button>
-            <span className="text-xs text-slate-400 font-mono tabular-nums shrink-0 pt-1">
-              {formatGapMinutes(primary.minutes)}
-            </span>
-          </div>
-
-          <Reasons reasons={primary.reasons} />
-
-          <div className="flex items-center gap-2 mt-3">
-            <button
-              onClick={() => onStart(primary.taskIds[0])}
-              disabled={timerBusy}
-              title={timerBusy ? 'A timer is already running' : 'Start a focus session'}
-              className="flex items-center gap-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-medium px-3 h-7 rounded-lg hover:opacity-80 disabled:opacity-40 transition-opacity"
-            >
-              <FocusIcon size={12} /> Start
-            </button>
-            <button
-              onClick={() => onDone(primary.taskIds[0])}
-              className={`${CONTROL} px-2.5 font-medium text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400`}
-            >
-              Done
-            </button>
-            <button
-              onClick={() => onOpen(primary.taskIds[0])}
-              className={`${CONTROL} px-2.5 font-medium text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400`}
-            >
-              Open
-            </button>
-          </div>
-        </div>
-
-        {/* Alternates — same information, less room */}
-        {alternates.length > 0 && (
-          <div className="divide-y divide-slate-100 dark:divide-slate-800 border-t border-slate-100 dark:border-slate-800">
-            {alternates.map(s => (
-              <button
-                key={s.key}
-                onClick={() => onOpen(s.taskIds[0])}
-                className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors group"
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-[13px] font-medium text-slate-700 dark:text-slate-200 truncate group-hover:text-accent-600 dark:group-hover:text-accent-400 transition-colors">
-                    {s.title}
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono tabular-nums shrink-0">
-                    {formatGapMinutes(s.minutes)}
-                  </span>
-                </div>
-                <Reasons reasons={s.reasons} small />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </Section>
-  )
-}
-
-function Reasons({ reasons, small = false }: { reasons: string[]; small?: boolean }) {
-  return (
-    <p className={`${small ? 'text-[11px] mt-0.5' : 'text-xs mt-1.5'} text-slate-500 dark:text-slate-400`}>
-      {reasons.join(' · ')}
-    </p>
-  )
-}
 
 // ── Section 3: Today's shape ─────────────────────────────────────────────────
 
