@@ -71,8 +71,12 @@ export function CapacityBand({ input, onPrimary, onSecondary }: {
           )}
         </div>
 
+        {/* A control is rendered only when something can happen. Two of the
+            six states lead to Triage, which does not exist yet, and a button
+            that does nothing teaches people not to press buttons — the band's
+            job is to say what is true, and it does that without them. */}
         <div className="flex items-center gap-3 shrink-0">
-          {copy.primary && (
+          {copy.primary && onPrimary && (
             <button
               onClick={onPrimary}
               className="bg-accent-600 text-white text-[13px] font-medium px-4 rounded-ctrl
@@ -82,17 +86,17 @@ export function CapacityBand({ input, onPrimary, onSecondary }: {
               {copy.primary}
             </button>
           )}
-          {copy.secondary && (
+          {copy.secondary && onSecondary && (
             /* Always a link when there is a primary beside it — an app that
                fills every gap is a machine for burning people out, so the
                default has to be that you keep your slack. Where there is no
                primary it carries the weight of a bordered control instead. */
             <button
               onClick={onSecondary}
-              className={copy.primary
+              className={copy.primary && onPrimary
                 ? 'text-[13px] text-accent-600 hover:text-accent-700 hover:underline underline-offset-2 px-1'
                 : 'text-[13px] text-ink-2 border border-line-strong rounded-ctrl px-4 hover:border-accent-400 transition-colors'}
-              style={{ minHeight: 'var(--tap-min)', marginLeft: copy.primary ? 'var(--gap-target)' : 0 }}
+              style={{ minHeight: 'var(--tap-min)', marginLeft: copy.primary && onPrimary ? 'var(--gap-target)' : 0 }}
             >
               {copy.secondary}
             </button>

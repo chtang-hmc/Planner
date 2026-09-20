@@ -23,9 +23,12 @@ import {
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
 import {
-  buildHome, dayReason, describeAge, freeTimeBasis, resolveAgainstParent, MIN_GAP_MINUTES,
-  type HomeEvent, type HomeTask,
+  buildHome, dayReason, describeAge, freeTimeBasis, isCandidate, resolveAgainstParent,
+  MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
 } from '@/lib/home'
+import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
+import type { BandInput } from '@/lib/band'
+import { dayOfWeek } from '@/lib/day'
 import { Task, Project, INBOX_PROJECT } from '@/types'
 import HomeView from './HomeView'
 
@@ -64,6 +67,7 @@ export default async function HomePage() {
     { data: taskRows },
     { data: projectRows },
     { data: integration },
+    { data: confirmedLinks },
   ] = await Promise.all([
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
@@ -84,6 +88,10 @@ export default async function HomePage() {
     // select('*') so a pre-0018 database still returns the row; last_synced_at
     // is then undefined, which reads as "unknown" rather than "never".
     db.from('user_integrations').select('*').eq('provider', 'google').maybeSingle(),
+    // Confirmed only. A title-similarity guess never moves a number — see
+    // `suggestTaskEventLinks`. Missing table (pre-0019) resolves to null.
+    db.from('task_event_links').select('task_id').eq('status', 'confirmed')
+      .then(r => r, () => ({ data: null })),
   ])
 
   const workingHours: WorkingHours[] = (whRows ?? []).map(r => ({
@@ -229,6 +237,83 @@ export default async function HomePage() {
     reason: dayReason(basis, dayGaps),
   })
 
+  // ── The band ────────────────────────────────────────────────────────────────
+  //
+  // Everything the headline needs that capacity alone cannot say. `fragmented`
+  // is the reason `smallestTaskMinutes` is here: a day of 45-minute holes is
+  // only a failure relative to what is left to place, so the gaps cannot tell
+  // you on their own.
+  const coveredTaskIds = new Set<string>(
+    ((confirmedLinks ?? []) as { task_id: string }[]).map(l => l.task_id),
+  )
+
+  const dueToday  = tasks.filter(t => t.dueDay != null && t.dueDay <= today && !coveredTaskIds.has(t.id))
+  const unplaced  = tasks.filter(t => isCandidate(t, today) && !coveredTaskIds.has(t.id))
+  const smallest  = unplaced.reduce<number | null>(
+    (m, t) => (t.minutes == null ? m : m == null ? t.minutes : Math.min(m, t.minutes)), null)
+
+  const capacity = capacityFromGaps({
+    gaps, dayStr: today, tz,
+    dueMinutes: dueMinutesFor(tasks, today, coveredTaskIds),
+  })
+
+  /**
+   * The next day whose working hours are switched on, within a week.
+   *
+   * Named rather than counted, because "Move it all to Monday" has to be a day
+   * you recognise. Its free time is only reported when it falls inside the
+   * events already fetched; beyond that the clause is dropped rather than
+   * guessed, and `bandCopy` handles the null.
+   */
+  const nextWorking = (() => {
+    for (let i = 1; i <= 7; i++) {
+      const day = addDays(today, i)
+      const wh = workingHours.find(w => w.day_of_week === dayOfWeek(day))
+      if (!wh?.enabled) continue
+      const label = new Date(day + 'T12:00:00Z')
+        .toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
+      if (i > 1) return { label, free: null }
+      const win = workWindowFor(localMidnight(day, tz), workingHours, tz)
+      const r = freeGaps({ dayStr: day, tz, workingHours, busy, breaks, minMinutes: MIN_GAP_MINUTES })
+      return {
+        label,
+        free: win ? r.gaps.reduce((m, [gS, gE]) => m + (gE - gS) / 60_000, 0) : null,
+      }
+    }
+    return null
+  })()
+
+  /** The next thing due after today, for the nothing-due line. */
+  const nextDue = tasks
+    .filter(t => t.dueDay != null && t.dueDay > today && t.minutes != null)
+    .sort((a, b) => a.dueDay!.localeCompare(b.dueDay!))[0]
+
+  const band: BandInput = {
+    reason: dayReason(basis, dayGaps),
+    capacity,
+    gaps,
+    dueCount: dueToday.length,
+    smallestTaskMinutes: smallest,
+    nextWorkingDay: nextWorking?.label ?? null,
+    nextWorkingDayFree: nextWorking?.free ?? null,
+    start: data.suggestions[0] && data.rightNow.gap
+      ? {
+          title: data.suggestions[0].title,
+          gapMinutes: data.rightNow.gap.minutes,
+          beforeTitle: data.rightNow.nextEvent?.title ?? null,
+        }
+      : null,
+    nextDue: nextDue
+      ? {
+          title: nextDue.title,
+          when: nextDue.dueDay === addDays(today, 1)
+            ? 'tomorrow'
+            : `on ${new Date(nextDue.dueDay + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })}`,
+          minutes: nextDue.minutes!,
+        }
+      : null,
+  }
+
   // ── Habits ──────────────────────────────────────────────────────────────────
   //
   // Not filtered out of `rows`: a habit is a family of rows, not a row, so
@@ -273,6 +358,7 @@ export default async function HomePage() {
       gcalWriteEnabled={gcalWriteEnabled}
       calendarConnected={!!integration}
       syncAge={syncAge}
+      band={band}
       freeTime={basis}
     />
   )
