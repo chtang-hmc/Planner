@@ -24,7 +24,7 @@ import { completeTask } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
 import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { formatClock, formatGapMinutes, type AttentionRow, type HomeData, type Suggestion } from '@/lib/home'
+import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type HomeData, type Suggestion } from '@/lib/home'
 
 type TaskRow = Task & { project: Project }
 
@@ -183,21 +183,7 @@ export default function HomeView({
 
   // ── Right now ──────────────────────────────────────────────────────────────
 
-  const { rightNow } = data
-  const rightNowText = (() => {
-    const { inEvent, gap, nextEvent, doneForToday } = rightNow
-    if (inEvent) {
-      return gap
-        ? `In ${inEvent.title} until ${clock(inEvent.endMs)}. Next free: ${formatGapMinutes(gap.minutes)} at ${clock(gap.startMs)}.`
-        : `In ${inEvent.title} until ${clock(inEvent.endMs)}. Nothing free after it today.`
-    }
-    if (doneForToday) return 'No working time left today.'
-    if (gap && nextEvent) {
-      return `${formatGapMinutes(gap.minutes)} free until ${nextEvent.title} at ${clock(nextEvent.startMs)}.`
-    }
-    if (gap) return `${formatGapMinutes(gap.minutes)} free until ${clock(gap.endMs)}.`
-    return 'Nothing on today.'
-  })()
+  const rightNowText = rightNowSentence(data.rightNow, tz)
 
 
   /**

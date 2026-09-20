@@ -82,6 +82,12 @@ export interface HomeInput {
   tz:             string
   /** Free stretches of the working day, from `freeGaps`. */
   gaps:           Interval[]
+  /**
+   * The working window itself, from `workWindowFor`. Null on a day that is
+   * switched off. Needed only to tell "the day has not started" from "you are
+   * between things", which the gaps alone cannot say.
+   */
+  workWindow?:    Interval | null
   events:         HomeEvent[]
   tasks:          HomeTask[]
   energySchedule: EnergyScheduleEntry[]
@@ -114,10 +120,28 @@ export type ShapeRow =
 export interface RightNow {
   /** The event you are inside, if any. Overlaps resolve to the one ending last. */
   inEvent:   { title: string; endMs: number } | null
-  /** The free stretch you are in, or the next one today. */
-  gap:       { startMs: number; endMs: number; minutes: number } | null
+  /**
+   * The free stretch you are in, or the next one today.
+   *
+   * `hasStarted` is the difference between "you have an hour" and "you will
+   * have an hour". Without it the header announced the first gap of the day as
+   * though it were current: at 08:00 against a 10:00 start it read "1h free
+   * until ENTR 179A at 11:00am", offering time that had not arrived.
+   *
+   * `minutes` is what is left of it either way — the remainder for a gap in
+   * progress, the whole of it for one still to come.
+   */
+  gap:       { startMs: number; endMs: number; minutes: number; hasStarted: boolean } | null
   /** What closes that gap. Null when nothing follows it today. */
   nextEvent: { title: string; startMs: number } | null
+  /**
+   * When the working day opens, if it has not yet.
+   *
+   * Distinguishes the two ways a gap can be in the future: the day has not
+   * begun, or it has and you are inside something carved out of it — a meal
+   * break, which is not an event and so leaves no `inEvent` behind.
+   */
+  dayStartsMs: number | null
   /** True when the working day has no free time left — or never had any. */
   doneForToday: boolean
 }
@@ -376,8 +400,8 @@ export function rankForGap(
 // ── The page ─────────────────────────────────────────────────────────────────
 
 /** Where you are in the day, from the gaps and what bounds them. */
-export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events'>): RightNow {
-  const { nowMs, gaps, events } = input
+export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events' | 'workWindow'>): RightNow {
+  const { nowMs, gaps, events, workWindow } = input
 
   // Overlaps resolve to the event that ends last: with Fall Fest 11:00–13:15
   // running under ENTR 179A 11:00–12:15, you are not free at 12:15.
@@ -386,8 +410,14 @@ export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events'>
     .sort((a, b) => b.endMs - a.endMs)[0] ?? null
 
   const gap = gaps.find(([, gapEnd]) => gapEnd > nowMs) ?? null
+  const from = gap ? Math.max(gap[0], nowMs) : 0
   const gapPart = gap
-    ? { startMs: Math.max(gap[0], nowMs), endMs: gap[1], minutes: Math.round((gap[1] - Math.max(gap[0], nowMs)) / 60_000) }
+    ? {
+        startMs:    from,
+        endMs:      gap[1],
+        minutes:    Math.round((gap[1] - from) / 60_000),
+        hasStarted: gap[0] <= nowMs,
+      }
     : null
 
   const nextEvent = gap
@@ -398,8 +428,45 @@ export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events'>
     inEvent:      current ? { title: current.title, endMs: current.endMs } : null,
     gap:          gapPart,
     nextEvent:    nextEvent ? { title: nextEvent.title, startMs: nextEvent.startMs } : null,
+    dayStartsMs:  workWindow && nowMs < workWindow[0] ? workWindow[0] : null,
     doneForToday: gapPart === null,
   }
+}
+
+/**
+ * The one sentence at the top of Home, as words.
+ *
+ * Here rather than in the view because it is the page's whole thesis in a
+ * single line, and every clause of it is a decision: whether a gap that has
+ * not opened counts as time you have, whether a break is worth naming, what to
+ * say when the day is over. Those are pinned by tests now, so the copy cannot
+ * drift without someone choosing to change it.
+ */
+export function rightNowSentence(rn: RightNow, tz: string): string {
+  const clock = (ms: number) => formatClock(ms, tz)
+  const { inEvent, gap, nextEvent, dayStartsMs, doneForToday } = rn
+
+  if (inEvent) {
+    return gap
+      ? `In ${inEvent.title} until ${clock(inEvent.endMs)}. Next free: ${fmtMinutes(gap.minutes)} at ${clock(gap.startMs)}.`
+      : `In ${inEvent.title} until ${clock(inEvent.endMs)}. Nothing free after it today.`
+  }
+
+  if (doneForToday) return 'No working time left today.'
+  if (!gap) return 'Nothing on today.'
+
+  // A gap that has not opened yet is not time you have. Two ways to be here:
+  // the working day has not begun, or it has and you are inside something
+  // carved out of it — a meal break leaves no event behind to report.
+  if (!gap.hasStarted) {
+    return dayStartsMs != null
+      ? `Your day starts at ${clock(dayStartsMs)} — ${fmtMinutes(gap.minutes)} free then.`
+      : `Nothing free until ${clock(gap.startMs)}, then ${fmtMinutes(gap.minutes)}.`
+  }
+
+  return nextEvent
+    ? `${fmtMinutes(gap.minutes)} free until ${nextEvent.title} at ${clock(nextEvent.startMs)}.`
+    : `${fmtMinutes(gap.minutes)} free until ${clock(gap.endMs)}.`
 }
 
 /**

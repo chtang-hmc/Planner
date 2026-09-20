@@ -35,8 +35,8 @@ import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
 import HomeView from '@/app/(app)/HomeView'
-import { buildHome, resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
-import { freeGaps, localMidnight, type Interval, type WorkingHours } from '@/lib/scheduler'
+import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
+import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
 import { todayStr as todayIn } from '@/lib/day'
 import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { AnalyticsData } from '@/app/(app)/analytics/page'
@@ -413,8 +413,41 @@ function HomePreview() {
   }))
   rows.forEach((r, i) => { (r as { id: string }).id = homeTasks[i].id })
 
+  /**
+   * Every state the one-line answer can be in, at the hour that produces it.
+   * The wording is the page's thesis, so it is worth being able to read all of
+   * it at once rather than waiting until 8am to see one branch.
+   */
+  const sentences = [
+    ['08:00', 'before the day opens'],
+    ['12:00', 'inside an event'],
+    ['13:30', 'inside a gap'],
+    ['21:30', 'last gap of the day'],
+    // 02:00 is the case the old code got wrong: last night's window closed at
+    // 01:30 and today's has not opened, so it used to read as free-now.
+    ['02:00', 'after midnight, before 10am'],
+  ].map(([hhmm, note]) => {
+    const [h, m] = hhmm.split(':').map(Number)
+    return {
+      hhmm, note,
+      text: rightNowSentence(
+        rightNowFrom({ nowMs: at(h, m), gaps, events, workWindow: workWindowFor(localMidnight(today, tz), workingHours, tz) }),
+        tz,
+      ),
+    }
+  })
+
   return (
     <TimerProvider>
+      <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+        {sentences.map(s => (
+          <div key={s.hhmm} className="flex items-baseline gap-3 px-4 py-2">
+            <span className="text-[11px] font-mono tabular-nums text-slate-400 w-10 shrink-0">{s.hhmm}</span>
+            <span className="text-[13px] text-slate-700 dark:text-slate-200 flex-1">{s.text}</span>
+            <span className="text-[10px] text-slate-400 shrink-0">{s.note}</span>
+          </div>
+        ))}
+      </div>
       <div className="h-[46rem] overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
         <HomeView
           data={data}

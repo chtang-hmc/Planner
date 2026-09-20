@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
-  buildHome, rankForGap, rightNowFrom, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge,
+  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge,
   type HomeTask, type HomeEvent,
 } from '@/lib/home'
 
@@ -218,9 +218,10 @@ describe('formatClock keeps the half of the day', () => {
 describe('right now', () => {
   const gaps: [number, number][] = [[at('9:00'), at('11:00')], [at('13:15'), at('14:45')]]
   const events = [event('Fall Fest', '11:00', '13:15'), event('ENTR 179A', '11:00', '12:15'), event('CSCI 134', '14:45', '16:00')]
+  const window: [number, number] = [at('9:00'), at('22:00')]
 
   it('reports the overlapping event that ends last', () => {
-    const rn = rightNowFrom({ nowMs: at('12:30'), gaps, events })
+    const rn = rightNowFrom({ nowMs: at('12:30'), gaps, events, workWindow: window })
     expect(rn.inEvent?.title).toBe('Fall Fest')
     expect(rn.gap?.startMs).toBe(at('13:15'))
     expect(rn.gap?.minutes).toBe(90)
@@ -228,16 +229,57 @@ describe('right now', () => {
   })
 
   it('measures a gap you are already inside from now', () => {
-    const rn = rightNowFrom({ nowMs: at('13:45'), gaps, events })
+    const rn = rightNowFrom({ nowMs: at('13:45'), gaps, events, workWindow: window })
     expect(rn.inEvent).toBeNull()
     expect(rn.gap?.minutes).toBe(60)
+    expect(rn.gap?.hasStarted).toBe(true)
     expect(rn.doneForToday).toBe(false)
   })
 
   it('knows when the day has no free time left', () => {
-    const rn = rightNowFrom({ nowMs: at('21:00'), gaps, events })
+    const rn = rightNowFrom({ nowMs: at('21:00'), gaps, events, workWindow: window })
     expect(rn.gap).toBeNull()
     expect(rn.doneForToday).toBe(true)
+  })
+})
+
+describe('a gap that has not opened is not time you have', () => {
+  // The bug: the header announced the first gap of the day as though it were
+  // current. At 08:00 against a 09:00 start it read "2h free until Fall Fest
+  // at 11:00am", offering an hour that had not arrived.
+  const gaps: [number, number][] = [[at('9:00'), at('11:00')], [at('13:15'), at('14:45')]]
+  const events = [event('Fall Fest', '11:00', '13:15')]
+  const window: [number, number] = [at('9:00'), at('22:00')]
+
+  it('says the day has not started, and when it does', () => {
+    const rn = rightNowFrom({ nowMs: at('8:00'), gaps, events, workWindow: window })
+    expect(rn.gap?.hasStarted).toBe(false)
+    expect(rn.dayStartsMs).toBe(at('9:00'))
+    // The whole gap, not a remainder — none of it has been spent.
+    expect(rn.gap?.minutes).toBe(120)
+    expect(rn.gap?.startMs).toBe(at('9:00'))
+  })
+
+  it('distinguishes a break from a day that has not begun', () => {
+    // 11:00–13:15 is Fall Fest, so at 12:00 you are in an event. Take the
+    // event away and the same hole is a carved-out break: inside the working
+    // day, nothing to report being "in", and the next gap still to come.
+    const rn = rightNowFrom({ nowMs: at('12:00'), gaps, events: [], workWindow: window })
+    expect(rn.inEvent).toBeNull()
+    expect(rn.gap?.hasStarted).toBe(false)
+    expect(rn.dayStartsMs).toBeNull()      // the day is open; this is not its start
+    expect(rn.gap?.startMs).toBe(at('13:15'))
+  })
+
+  it('reports nothing about a day start once the day is open', () => {
+    const rn = rightNowFrom({ nowMs: at('13:45'), gaps, events, workWindow: window })
+    expect(rn.dayStartsMs).toBeNull()
+  })
+
+  it('treats a day with no window as simply having no start to name', () => {
+    const rn = rightNowFrom({ nowMs: at('8:00'), gaps, events, workWindow: null })
+    expect(rn.dayStartsMs).toBeNull()
+    expect(rn.gap?.hasStarted).toBe(false)
   })
 })
 
@@ -427,5 +469,41 @@ describe('describeAge', () => {
 
   it('refuses a timestamp from the future rather than saying "-1m ago"', () => {
     expect(describeAge(new Date(T + 600_000).toISOString(), T)).toBeNull()
+  })
+})
+
+describe('the sentence at the top of the page', () => {
+  const gaps: [number, number][] = [[at('9:00'), at('11:00')], [at('13:15'), at('14:45')]]
+  const events = [event('Fall Fest', '11:00', '13:15'), event('CSCI 134', '14:45', '16:00')]
+  const window: [number, number] = [at('9:00'), at('22:00')]
+  const say = (hhmm: string, over: { events?: HomeEvent[]; gaps?: [number, number][] } = {}) =>
+    rightNowSentence(rightNowFrom({
+      nowMs: at(hhmm), gaps: over.gaps ?? gaps, events: over.events ?? events, workWindow: window,
+    }), TZ)
+
+  it('names the start before the day opens', () => {
+    expect(say('8:00')).toBe('Your day starts at 9:00am — 2h free then.')
+  })
+
+  it('reports the time you actually have once it has opened', () => {
+    expect(say('13:45')).toBe('1h free until CSCI 134 at 2:45pm.')
+  })
+
+  it('reports the event you are in, and what follows', () => {
+    expect(say('12:00')).toBe('In Fall Fest until 1:15pm. Next free: 1h 30m at 1:15pm.')
+  })
+
+  it('does not claim a day start when the day is already open', () => {
+    // 11:00–13:15 with no event over it is a carved-out break, not a closed day.
+    expect(say('12:00', { events: [] })).toBe('Nothing free until 1:15pm, then 1h 30m.')
+  })
+
+  it('says so when the day is spent', () => {
+    expect(say('21:00')).toBe('No working time left today.')
+  })
+
+  it('says so when an event is the last thing on the day', () => {
+    expect(say('12:00', { gaps: [[at('9:00'), at('11:00')]] }))
+      .toBe('In Fall Fest until 1:15pm. Nothing free after it today.')
   })
 })

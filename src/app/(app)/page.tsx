@@ -124,8 +124,8 @@ export default async function HomePage() {
    * is the other end: the hours after midnight that the window covers.
    */
   const dayStartMs = Date.parse(startISO)
-  const winEndMs   = workWindowFor(localMidnight(today, tz), workingHours, tz)?.[1] ?? 0
-  const horizonMs  = Math.max(Date.parse(endISO), winEndMs)
+  const workWindow = workWindowFor(localMidnight(today, tz), workingHours, tz)
+  const horizonMs  = Math.max(Date.parse(endISO), workWindow?.[1] ?? 0)
 
   const overlapsHorizon = (startMs: number, endMs: number) =>
     startMs < horizonMs && endMs > dayStartMs
@@ -213,7 +213,7 @@ export default async function HomePage() {
     // keeps "1h 30m free" from being an hour old.
     // eslint-disable-next-line react-hooks/purity
     nowMs: Date.now(), todayStr: today, tz,
-    gaps, events, tasks, energySchedule, bufferMinutes,
+    gaps, workWindow, events, tasks, energySchedule, bufferMinutes,
   })
 
   // ── Habits ──────────────────────────────────────────────────────────────────
