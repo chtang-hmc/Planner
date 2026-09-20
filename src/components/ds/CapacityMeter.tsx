@@ -32,10 +32,12 @@ export function CapacityMeter({ capacity, height = 6, className = '' }: {
       className={`flex rounded-full overflow-hidden bg-track ${className}`}
       style={{ height }}
       role="img"
+      /* Not "today's" — the same meter draws a group header for Tomorrow and,
+         shortly, a day header on Upcoming. It describes whatever it was handed. */
       aria-label={
         seg.overflow > 0
-          ? `${Math.round((seg.fits + seg.fitsLate) * 100)}% of today's work fits`
-          : 'all of today’s work fits'
+          ? `${Math.round((seg.fits + seg.fitsLate) * 100)}% of the work fits`
+          : 'all of the work fits'
       }
     >
       {seg.fits     > 0 && <div style={{ width: pct(seg.fits), background: 'var(--ok)' }} />}
