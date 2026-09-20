@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { formatDuration } from '@/lib/duration'
 import {
-  capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor,
+  capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor, slackWidth,
   deficit, slack, freeTotal, NO_CAPACITY, type Capacity,
 } from '@/lib/capacity'
 import { freeGaps, localMidnight, type WorkingHours } from '@/lib/scheduler'
@@ -49,27 +49,46 @@ describe('capacity arithmetic', () => {
   })
 })
 
-describe('the bar is three segments of what is due, not of the day', () => {
-  it('splits what fits from what fits only late from what does not', () => {
+describe('the bar scales to whichever is larger, due or free', () => {
+  it('fills completely when the work is larger, so the track never shows', () => {
     const s = capacitySegments(cap({ dueTotal: 600, freeBeforeCutoff: 120, freeAfterCutoff: 180 }))!
     expect(s.fits).toBeCloseTo(0.2)
     expect(s.fitsLate).toBeCloseTo(0.3)
     expect(s.overflow).toBeCloseTo(0.5)
+    expect(slackWidth(s)).toBeCloseTo(0)
   })
 
-  it('always sums to one, so the bar is full', () => {
+  it('sums to one whenever there is a deficit', () => {
     const s = capacitySegments(cap({ dueTotal: 137, freeBeforeCutoff: 41, freeAfterCutoff: 63 }))!
     expect(s.fits + s.fitsLate + s.overflow).toBeCloseTo(1)
   })
 
-  it('never lets free time beyond what is due inflate a segment', () => {
-    const s = capacitySegments(cap({ dueTotal: 60, freeBeforeCutoff: 600, freeAfterCutoff: 300 }))!
-    expect(s).toEqual({ fits: 1, fitsLate: 0, overflow: 0 })
+  it('leaves the slack as bare track when the time is larger', () => {
+    // Scaling to `due` alone rendered a day with hours spare as a completely
+    // full bar — so the one number worth seeing was the one it could not show.
+    const s = capacitySegments(cap({ dueTotal: 60, freeBeforeCutoff: 180 }))!
+    expect(s.fits).toBeCloseTo(1 / 3)
+    expect(slackWidth(s)).toBeCloseTo(2 / 3)
   })
 
-  it('has no bar at all when nothing is due', () => {
-    // An empty track would read as a finding. There isn't one.
-    expect(capacitySegments(cap({ freeBeforeCutoff: 300 }))).toBeNull()
+  it('keeps the late segment hatched on a day with slack', () => {
+    const s = capacitySegments(cap({ dueTotal: 240, freeBeforeCutoff: 60, freeAfterCutoff: 210 }))!
+    expect(s.fits).toBeCloseTo(60 / 270)
+    expect(s.fitsLate).toBeCloseTo(180 / 270)
+    expect(slackWidth(s)).toBeCloseTo(30 / 270)
+  })
+
+  it('draws an empty track when nothing is due', () => {
+    // Beside a headline saying nothing is due, an empty track reads as "all of
+    // this is yours" — which is the state, not a missing finding.
+    const s = capacitySegments(cap({ freeBeforeCutoff: 300 }))!
+    expect(s).toEqual({ fits: 0, fitsLate: 0, overflow: 0 })
+    expect(slackWidth(s)).toBe(1)
+  })
+
+  it('draws nothing at all when there is no ratio', () => {
+    // A day off with nothing due: no work, no time, no bar.
+    expect(capacitySegments(NO_CAPACITY)).toBeNull()
   })
 })
 
