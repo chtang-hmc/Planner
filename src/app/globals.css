@@ -283,6 +283,12 @@ body {
      urgency meter in four colours, but the meter's fill length already encodes
      the score and the list is sorted by it. Three encodings of one variable,
      and the third cost two hues that collided with two project colours. */
+  /* The accent as a surface and as ink on it — the link-suggestion strip, an
+     active filter chip. Derived from the ramp rather than fixed, so they
+     follow the preset and pick up its dark values. */
+  --accent-tint: var(--accent-50);
+  --accent-ink:  var(--accent-700);
+
   --ok:           #3D6B3F;
   --ok-tint:      #E9F0E9;
   --danger:       #A32B21;
@@ -315,6 +321,9 @@ body {
     --line-strong: var(--n-700);
 
     /* Lightened to clear 4.5:1 on the dark ground; the tints become shades. */
+    --accent-tint: var(--accent-950);
+    --accent-ink:  var(--accent-300);
+
     --ok:           #7FA981;
     --ok-tint:      #1E2A1F;
     --danger:       #D98B82;
@@ -343,6 +352,9 @@ body {
     --line-strong: var(--n-700);
 
     /* Lightened to clear 4.5:1 on the dark ground; the tints become shades. */
+    --accent-tint: var(--accent-950);
+    --accent-ink:  var(--accent-300);
+
     --ok:           #7FA981;
     --ok-tint:      #1E2A1F;
     --danger:       #D98B82;
@@ -359,9 +371,14 @@ body {
   --h-row-table:   34px;
   --h-control:     38px;
   --h-nav:         34px;
-  /* Smallest interactive target. The redesign's own wide energy control fails
-     this at 22x12, which is why it is written down rather than assumed. */
+  /* Smallest interactive *target* — the hit area, not the mark drawn inside
+     it. A 24px tick with a 34px hit area passes; the redesign's own wide
+     energy control, at 22x12 with no padding, does not.
+     Two adjacent targets that mean opposite things get --gap-target between
+     them, and the one with the durable consequence gets the heavier
+     treatment: confirming a link changes capacity(), rejecting is reversible. */
   --tap-min:       34px;
+  --gap-target:     8px;
 
   --bp-narrow:  640px;   /* below: two-line task rows, tab bar, no sidebar */
   --bp-mid:     900px;   /* below: the project table sheds columns */
@@ -450,6 +467,8 @@ body {
   --color-line-soft:   var(--line-soft);
   --color-line-strong: var(--line-strong);
 
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-ink:  var(--accent-ink);
   --color-ok:          var(--ok);
   --color-ok-tint:     var(--ok-tint);
   --color-danger:      var(--danger);

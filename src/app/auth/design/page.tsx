@@ -368,7 +368,9 @@ function HomePreview() {
   // Fall Fest runs under ENTR 179A: the free block after them starts at 13:15,
   // not 12:15. If the preview ever shows a gap at 12:15, the trap is back.
   const events: HomeEvent[] = [
-    { id: 'entr', title: 'ENTR 179A', startMs: at(11), endMs: at(12, 15) },
+    { id: 'entr', title: 'ENTR 179A', startMs: at(11), endMs: at(12, 15),
+      // The day's one link question, so the chip is on the board.
+      suggestion: { taskId: 'resume', taskTitle: 'Prep for ENTR 179A' } },
     { id: 'fest', title: 'Fall Fest', startMs: at(11), endMs: at(13, 15) },
     { id: 'csci', title: 'CSCI 134',  startMs: at(14, 45), endMs: at(16) },
     { id: 'piano', title: 'Piano',    startMs: at(16), endMs: at(17) },
