@@ -18,7 +18,7 @@ import { addDays, fetchTimezone, todayStr as todayIn, localDayRange, startOfLoca
 import { fetchWeekStartDay } from '@/lib/week'
 import { fetchTodaysHabits } from '@/lib/habits'
 import {
-  freeGaps,
+  freeGaps, localMidnight, workWindowFor,
   type BreakWindow, type EnergyScheduleEntry, type Interval,
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
@@ -36,6 +36,24 @@ export default async function HomePage() {
   const tz = await fetchTimezone(db)
   const today = todayIn(tz)
   const { startISO, endISO } = localDayRange(today, tz)
+
+  /**
+   * How far past today the event query has to reach.
+   *
+   * A working day is not a calendar day. "10:00 to 01:30" ends ninety minutes
+   * into tomorrow, and an event at 00:15 sits squarely inside it — but bounding
+   * the query at local midnight never fetched one, so `freeGaps` had nothing to
+   * subtract and Home offered a booked stretch as free. Ten events on this
+   * calendar between 2026-09-01 and 09-20 started between midnight and 2am.
+   *
+   * Forty-eight hours rather than the window itself, because the window is not
+   * known until `user_working_hours` has been read, and making the event query
+   * wait on that turns one round trip into two on the landing path. A window
+   * can start at 23:59 and run a full day, so it can end at most 47h59m after
+   * local midnight; 48 hours covers every case. The surplus is filtered out
+   * below rather than passed to the arithmetic.
+   */
+  const fetchUntilISO = startOfLocalDay(addDays(today, 2), tz).toISOString()
 
   const [
     { data: whRows },
@@ -55,7 +73,7 @@ export default async function HomePage() {
     db.from('user_daily_breaks').select('*').order('start_hour').then(r => r, () => ({ data: null })),
     db.from('calendar_events')
       .select('*')
-      .lt('start_time', endISO)
+      .lt('start_time', fetchUntilISO)
       .gt('end_time', startISO)
       .order('start_time'),
     db.from('tasks')
@@ -97,7 +115,24 @@ export default async function HomePage() {
   // All-day events are held out of the busy set. Google marks them free, and
   // treating "Chengyi's birthday" as a fourteen-hour block would leave the day
   // with no gaps at all. They get their own line instead.
-  const allEvents = (eventRows ?? [])
+  /**
+   * The stretch this page is about: today, extended to wherever the working
+   * window actually ends.
+   *
+   * Events before the window opens still belong to the day and still show — an
+   * 8am meeting is part of today even when work starts at ten. What this adds
+   * is the other end: the hours after midnight that the window covers.
+   */
+  const dayStartMs = Date.parse(startISO)
+  const winEndMs   = workWindowFor(localMidnight(today, tz), workingHours, tz)?.[1] ?? 0
+  const horizonMs  = Math.max(Date.parse(endISO), winEndMs)
+
+  const overlapsHorizon = (startMs: number, endMs: number) =>
+    startMs < horizonMs && endMs > dayStartMs
+
+  const allEvents = (eventRows ?? []).filter(e =>
+    overlapsHorizon(Date.parse(e.start_time), Date.parse(e.end_time))
+  )
   const allDay = allEvents.filter(e => e.all_day).map(e => ({ id: e.id as string, title: e.title as string }))
 
   const timedEvents: HomeEvent[] = allEvents
@@ -111,8 +146,7 @@ export default async function HomePage() {
   // and the work in it should not be offered again in the gap beside it.
   const bookedBlocks: HomeEvent[] = rows
     .filter(t => t.scheduled_start && t.scheduled_end
-              && Date.parse(t.scheduled_start) < Date.parse(endISO)
-              && Date.parse(t.scheduled_end)   > Date.parse(startISO))
+              && overlapsHorizon(Date.parse(t.scheduled_start), Date.parse(t.scheduled_end)))
     .map(t => ({
       id: `task:${t.id}`, title: t.title, taskId: t.id,
       startMs: Date.parse(t.scheduled_start!), endMs: Date.parse(t.scheduled_end!),
