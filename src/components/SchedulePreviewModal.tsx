@@ -24,6 +24,15 @@ interface Props {
   unschedulable: SchedulerTask[]
   /** Already on the calendar — shown for context, never modified here. */
   existing:      ExistingItem[]
+  /**
+   * Why the proposal came back empty, when it did.
+   *
+   * `proposeSchedule` *returns* its failures rather than throwing — "Google
+   * Calendar not connected" arrives as a field beside three empty arrays. Both
+   * callers used to drop it, so a broken connection rendered as a day with
+   * nothing to schedule, which is a different and much more reassuring claim.
+   */
+  error?:        string | null
   onClose:       () => void
   onConfirmed:   () => void
 }
@@ -52,7 +61,7 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-export default function SchedulePreviewModal({ loading = false, blocks, unschedulable, existing, onClose, onConfirmed }: Props) {
+export default function SchedulePreviewModal({ loading = false, blocks, unschedulable, existing, error = null, onClose, onConfirmed }: Props) {
   const [, startTransition] = useTransition()
   const [confirming, setConfirming] = useState(false)
   const [result, setResult]         = useState<{ confirmed: number; failed: number } | null>(null)
@@ -183,7 +192,15 @@ export default function SchedulePreviewModal({ loading = false, blocks, unschedu
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {loading ? (
+          {error ? (
+            <div className="py-8 text-center">
+              <WarningIcon size={18} className="mx-auto text-amber-500 mb-2" />
+              <p className="text-sm text-slate-700 dark:text-slate-200">{error}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Nothing was scheduled. <a href="/settings" className="underline hover:text-accent-500">Check your Google connection</a>.
+              </p>
+            </div>
+          ) : loading ? (
             <div className="py-6">
               {/* Indeterminate — the work is one server round trip, so there is
                   no real percentage to report. The point is that the modal

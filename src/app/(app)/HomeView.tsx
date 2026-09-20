@@ -75,8 +75,16 @@ export default function HomeView({
   const [syncing, setSyncing]           = useState(false)
   const [planning, setPlanning]         = useState(false)
   const [preview, setPreview] = useState<
-    { loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[] } | null
+    { loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]; error?: string | null } | null
   >(null)
+  /**
+   * A failed calendar refresh, said out loud.
+   *
+   * There is no toast anywhere in this app, and the refresh control has no
+   * modal to put a message in — so it goes inline under the header, next to
+   * the sync age it failed to update.
+   */
+  const [syncError, setSyncError] = useState<string | null>(null)
 
   /**
    * Everything on this page is measured from the instant the server rendered
@@ -142,10 +150,22 @@ export default function HomeView({
 
   function refreshCalendar() {
     setSyncing(true)
+    setSyncError(null)
     startTransition(async () => {
-      try { await triggerCalendarSync(); router.refresh() }
-      catch (err) { console.error('calendar sync failed', err) }
-      finally { setSyncing(false) }
+      try {
+        await triggerCalendarSync()
+        router.refresh()
+      } catch (err) {
+        // syncCalendarEvents throws when getValidToken() returns null, which is
+        // what a revoked or expired refresh token looks like. Logging it left
+        // the button cycling through "Syncing…" back to the same stale age with
+        // nothing said — and this control is the page's whole answer to
+        // staleness, so it is the last thing that should fail quietly.
+        console.error('calendar sync failed', err)
+        setSyncError(err instanceof Error ? err.message : 'Could not refresh the calendar')
+      } finally {
+        setSyncing(false)
+      }
     })
   }
 
@@ -162,7 +182,10 @@ export default function HomeView({
     startTransition(async () => {
       try {
         const res = await proposeSchedule(1, tz, dayStr)
+        // `error` arrives beside three empty arrays rather than as a throw.
+        // Dropping it showed a connection failure as a day with nothing to do.
         setPreview({
+          error: res.error ?? null,
           blocks: res.scheduled.map(b => ({
             taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
             startISO: b.startISO, endISO: b.endISO,
@@ -174,7 +197,10 @@ export default function HomeView({
         })
       } catch (err) {
         console.error('proposeSchedule failed', err)
-        setPreview(null)
+        setPreview({
+          error: err instanceof Error ? err.message : 'Could not build a plan for today',
+          blocks: [], unschedulable: [], existing: [],
+        })
       } finally {
         setPlanning(false)
       }
@@ -231,6 +257,26 @@ export default function HomeView({
               )}
             </div>
           </div>
+
+          {syncError && (
+            <div className="px-6 pb-2.5 flex items-start gap-2">
+              <WarningIcon size={12} className="text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-slate-600 dark:text-slate-300 flex-1 leading-relaxed">
+                {syncError}
+                {/* Its own line: the messages come from several places and none
+                    of them ends in punctuation, so running the two together
+                    reads as one broken sentence. */}
+                <span className="block text-slate-400">The day below is drawn from whatever was last synced.</span>
+              </p>
+              <button
+                onClick={() => setSyncError(null)}
+                aria-label="Dismiss"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 text-xs leading-none shrink-0"
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {allDayEvents.length > 0 && (
             <div className="px-6 pb-2.5 flex items-center gap-2 flex-wrap">
@@ -332,6 +378,7 @@ export default function HomeView({
           blocks={preview.blocks}
           unschedulable={preview.unschedulable}
           existing={preview.existing}
+          error={preview.error}
           onClose={() => setPreview(null)}
           onConfirmed={() => { setPreview(null); router.refresh() }}
         />

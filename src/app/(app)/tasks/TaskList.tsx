@@ -95,6 +95,7 @@ export default function TaskList({
   // Scheduling modals
   const [schedulePreview, setSchedulePreview] = useState<{
     loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
+    error?: string | null
   } | null>(null)
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
@@ -116,7 +117,10 @@ export default function TaskList({
     startTransition(async () => {
       try {
         const res = await proposeSchedule(7, tz)
+        // Returned, not thrown — dropping it showed "Google Calendar not
+        // connected" as a week with nothing worth scheduling.
         setSchedulePreview({
+          error: res.error ?? null,
           blocks: res.scheduled.map(b => ({
             taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
             startISO: b.startISO, endISO: b.endISO,
@@ -128,7 +132,10 @@ export default function TaskList({
       } catch (err) {
         // Don't strand the modal in its loading state if the proposal throws
         console.error('proposeSchedule failed', err)
-        setSchedulePreview(null)
+        setSchedulePreview({
+          error: err instanceof Error ? err.message : 'Could not build a schedule',
+          blocks: [], unschedulable: [], existing: [],
+        })
       } finally {
         setScheduling(false)
       }
@@ -522,6 +529,7 @@ export default function TaskList({
           loading={schedulePreview.loading}
           unschedulable={schedulePreview.unschedulable}
           existing={schedulePreview.existing}
+          error={schedulePreview.error}
           onClose={() => setSchedulePreview(null)}
           onConfirmed={() => setSchedulePreview(null)}
         />
