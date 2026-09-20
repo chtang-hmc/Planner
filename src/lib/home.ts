@@ -20,7 +20,9 @@
 import type { EnergyLevel, TaskType } from '@/types'
 import {
   slotEnergyLevel,
+  type DayGaps,
   type EnergyScheduleEntry,
+  type GapReason,
   type Interval,
   type TaskLocation,
 } from '@/lib/scheduler'
@@ -88,6 +90,8 @@ export interface HomeInput {
    * between things", which the gaps alone cannot say.
    */
   workWindow?:    Interval | null
+  /** Why the day looks the way it does — see `dayReason`. */
+  reason?:        DayReason
   events:         HomeEvent[]
   tasks:          HomeTask[]
   energySchedule: EnergyScheduleEntry[]
@@ -142,8 +146,12 @@ export interface RightNow {
    * break, which is not an event and so leaves no `inEvent` behind.
    */
   dayStartsMs: number | null
-  /** True when the working day has no free time left — or never had any. */
-  doneForToday: boolean
+  /**
+   * Why there is nothing free, when there is nothing free. Replaces a
+   * `doneForToday` boolean that was true of three different days and said the
+   * same wrong sentence about two of them.
+   */
+  reason: DayReason
 }
 
 /**
@@ -280,6 +288,34 @@ export function formatClock(ms: number, tz: string): string {
  * `last_synced_at` (migration 0018): rows on the day are themselves proof that
  * a sync happened, whatever the column says.
  */
+/**
+ * Why the day looks the way it does, in one field.
+ *
+ * `freeGaps` can tell a switched-off weekday from a fully booked one, because
+ * both are facts about intervals. It cannot tell either from a day nobody has
+ * looked at — that is a question about whether a calendar exists and has been
+ * synced, which is what `freeTimeBasis` answers.
+ *
+ * Composing them here rather than passing provenance into the arithmetic keeps
+ * each answer with the thing that knows it, and gives every render site one
+ * field to read instead of a length to infer from. Inferring from the length
+ * is what made "No working time left today" appear on a day off.
+ */
+export type DayReason = 'unknown' | GapReason
+
+export function dayReason(basis: FreeTimeBasis, gaps: DayGaps): DayReason {
+  return basis.observed ? gaps.reason : 'unknown'
+}
+
+/**
+ * True only when the day had time and something else took all of it.
+ *
+ * The one case where "no working time left today" is a true sentence.
+ */
+export function isConsumed(reason: DayReason): boolean {
+  return reason === 'consumed'
+}
+
 export type FreeTimeBasis =
   | { observed: true }
   | { observed: false; reason: 'no-calendar' | 'never-synced' }
@@ -436,7 +472,9 @@ export function rankForGap(
 // ── The page ─────────────────────────────────────────────────────────────────
 
 /** Where you are in the day, from the gaps and what bounds them. */
-export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events' | 'workWindow'>): RightNow {
+export function rightNowFrom(
+  input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events' | 'workWindow'> & { reason?: DayReason },
+): RightNow {
   const { nowMs, gaps, events, workWindow } = input
 
   // Overlaps resolve to the event that ends last: with Fall Fest 11:00–13:15
@@ -464,8 +502,10 @@ export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events' 
     inEvent:      current ? { title: current.title, endMs: current.endMs } : null,
     gap:          gapPart,
     nextEvent:    nextEvent ? { title: nextEvent.title, startMs: nextEvent.startMs } : null,
-    dayStartsMs:  workWindow && nowMs < workWindow[0] ? workWindow[0] : null,
-    doneForToday: gapPart === null,
+    dayStartsMs: workWindow && nowMs < workWindow[0] ? workWindow[0] : null,
+    // Defaults to `consumed` so a caller that has not been updated keeps the
+    // old sentence rather than silently claiming the day is unknown.
+    reason: input.reason ?? (gapPart === null ? 'consumed' : 'available'),
   }
 }
 
@@ -480,7 +520,7 @@ export function rightNowFrom(input: Pick<HomeInput, 'nowMs' | 'gaps' | 'events' 
  */
 export function rightNowSentence(rn: RightNow, tz: string): string {
   const clock = (ms: number) => formatClock(ms, tz)
-  const { inEvent, gap, nextEvent, dayStartsMs, doneForToday } = rn
+  const { inEvent, gap, nextEvent, dayStartsMs } = rn
 
   if (inEvent) {
     return gap
@@ -488,8 +528,15 @@ export function rightNowSentence(rn: RightNow, tz: string): string {
       : `In ${inEvent.title} until ${clock(inEvent.endMs)}. Nothing free after it today.`
   }
 
-  if (doneForToday) return 'No working time left today.'
-  if (!gap) return 'Nothing on today.'
+  // Said only when it is true. A day off and a day nobody has looked at both
+  // have no gaps, and neither of them has been spent.
+  if (!gap) {
+    switch (rn.reason) {
+      case 'unknown': return 'Planner cannot see your day yet.'
+      case 'dayOff':  return 'Today is a day off.'
+      default:        return 'No working time left today.'
+    }
+  }
 
   // A gap that has not opened yet is not time you have. Two ways to be here:
   // the working day has not begun, or it has and you are inside something

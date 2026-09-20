@@ -402,6 +402,32 @@ export function placeBreaks(
  * already taken. That is the whole correctness trap in this file, and
  * `freeGaps` is where it is pinned by a test.
  */
+/**
+ * Why a day has no free time — because absence of data and data showing
+ * absence are different facts, and an empty list cannot tell them apart.
+ *
+ * `No working time left today` is true of exactly one of these, and it used to
+ * be said for all of them: a disabled weekday returns the same empty list as a
+ * day booked solid.
+ *
+ * `unknown` is deliberately not here. Whether the calendar has been seen at
+ * all is a question about data provenance, not about intervals — this function
+ * is given working hours and busy spans and could only ever guess. It lives
+ * beside the thing that does know; see `dayReason` in lib/home.ts.
+ */
+export type GapReason =
+  /** Working hours are switched off for this weekday. Genuinely none. */
+  | 'dayOff'
+  /** There were hours and something else is in all of them. None left. */
+  | 'consumed'
+  /** There is free time. */
+  | 'available'
+
+export interface DayGaps {
+  reason: GapReason
+  gaps:   Interval[]
+}
+
 export function freeGaps(opts: {
   dayStr:       string
   tz:           string
@@ -410,18 +436,20 @@ export function freeGaps(opts: {
   breaks?:      BreakWindow[]
   /** Drop gaps shorter than this. 0 keeps every sliver. */
   minMinutes?:  number
-}): Interval[] {
+}): DayGaps {
   const { dayStr, tz, workingHours, busy, breaks = [], minMinutes = 0 } = opts
   const dayMs = localMidnight(dayStr, tz)
   const win   = workWindowFor(dayMs, workingHours, tz)
-  if (!win) return []
+  if (!win) return { reason: 'dayOff', gaps: [] }
 
   const [winStart, winEnd] = win
   const relevant = busy.filter(([s, e]) => s < winEnd && e > winStart)
   const { reserved } = placeBreaks(dayMs, breaks, busy)
 
-  return subtractIntervals([[winStart, winEnd]], [...relevant, ...reserved])
+  const gaps = subtractIntervals([[winStart, winEnd]], [...relevant, ...reserved])
     .filter(([s, e]) => e - s >= minMinutes * 60_000)
+
+  return { reason: gaps.length > 0 ? 'available' : 'consumed', gaps }
 }
 
 // ── Main algorithm ────────────────────────────────────────────────────────────

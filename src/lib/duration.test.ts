@@ -175,7 +175,7 @@ describe('splitting free time around the cutoff', () => {
       // Fall Fest with ENTR nested inside it: free resumes at 13:15, not 12:15.
       busy: [[at('11:00'), at('13:15')], [at('11:00'), at('12:15')]],
       minMinutes: 15,
-    })
+    }).gaps
     const c = capacityFromGaps({ gaps, dayStr: DAY, tz: TZ, dueMinutes: 0 })
     expect(c.freeBeforeCutoff).toBe(60 + 525)   // 10:00-11:00, then 13:15-22:00
     expect(c.freeAfterCutoff).toBe(210)         // 22:00-01:30
