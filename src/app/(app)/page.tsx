@@ -23,7 +23,7 @@ import {
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
 import {
-  buildHome, resolveAgainstParent, MIN_GAP_MINUTES,
+  buildHome, describeAge, resolveAgainstParent, MIN_GAP_MINUTES,
   type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { Task, Project, INBOX_PROJECT } from '@/types'
@@ -237,6 +237,13 @@ export default async function HomePage() {
     'https://www.googleapis.com/auth/calendar.events'
   )
 
+  // Measured here, not in the view: a duration read during render is read once
+  // on the server and again when the browser hydrates, and the two answers
+  // straddle a boundary often enough to throw the tree away. Same reason the
+  // clock read above is a property of the request rather than of a render.
+  // eslint-disable-next-line react-hooks/purity
+  const syncAge = describeAge((integration as { last_synced_at?: string } | null)?.last_synced_at ?? null, Date.now())
+
   return (
     <HomeView
       data={data}
@@ -250,7 +257,7 @@ export default async function HomePage() {
       projects={(projectRows ?? []) as Project[]}
       gcalWriteEnabled={gcalWriteEnabled}
       calendarConnected={!!integration}
-      lastSyncedISO={(integration as { last_synced_at?: string } | null)?.last_synced_at ?? null}
+      syncAge={syncAge}
     />
   )
 }

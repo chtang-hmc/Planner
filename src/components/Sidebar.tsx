@@ -23,7 +23,21 @@ const NAV = [
   { href: '/analytics', label: 'Analytics', icon: '▸' },
 ]
 
-export default function Sidebar({ projects }: { projects: Project[] }) {
+export default function Sidebar({ projects, todayStr }: {
+  projects: Project[]
+  /**
+   * Today, as a `YYYY-MM-DD` day string in the configured timezone, from the
+   * layout.
+   *
+   * Not `new Date()` here. This component renders on the server and hydrates in
+   * the browser, and the two run in different timezones once deployed — a UTC
+   * server past 5pm Pacific already calls it tomorrow. The date line then
+   * differs between the two renders and React discards the tree, on every page,
+   * because the sidebar is on every page. It is also the wrong "today": the
+   * app's day is the configured zone everywhere else, not the browser's.
+   */
+  todayStr: string
+}) {
   const path = usePathname()
 
   // Stored preferences can only be read in the browser. The server renders the
@@ -223,7 +237,10 @@ export default function Sidebar({ projects }: { projects: Project[] }) {
 
         {!collapsed && (
           <div className="px-2.5 text-xs text-slate-400 dark:text-slate-600">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            {/* Noon UTC and timeZone UTC so the day cannot shift under formatting. */}
+            {new Date(todayStr + 'T12:00:00Z').toLocaleDateString('en-US', {
+              weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC',
+            })}
           </div>
         )}
 

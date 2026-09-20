@@ -236,6 +236,27 @@ export function formatClock(ms: number, tz: string): string {
   }).format(new Date(ms)).replace(/\s?([AP])M$/i, (_, p: string) => p.toLowerCase() + 'm')
 }
 
+/**
+ * How long ago an instant was, worded — "2h ago". Null when there is nothing
+ * to describe, which is not the same claim as "never".
+ *
+ * `nowMs` is a parameter rather than a call to the clock so this is pure, and
+ * so the one place that reads the clock is the server component that renders
+ * the page. The boundaries are why: a duration measured twice, once during SSR
+ * and once at hydration, crosses "just now" into "2m ago" for any sync made
+ * about two minutes before the request, and the markup then differs.
+ */
+export function describeAge(iso: string | null, nowMs: number): string | null {
+  if (!iso) return null
+  const mins = Math.round((nowMs - Date.parse(iso)) / 60_000)
+  if (!Number.isFinite(mins) || mins < 0) return null
+  if (mins < 2)  return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const h = Math.round(mins / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.round(h / 24)}d ago`
+}
+
 export { fmtMinutes as formatGapMinutes }
 
 // ── Ranking ──────────────────────────────────────────────────────────────────

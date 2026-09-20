@@ -41,25 +41,27 @@ interface Props {
   projects:          Project[]
   gcalWriteEnabled:  boolean
   calendarConnected: boolean
-  lastSyncedISO:     string | null
-}
-
-/** "2h ago", or null when nothing recorded a sync. */
-function agoLabel(iso: string | null): string | null {
-  if (!iso) return null
-  const mins = Math.round((Date.now() - Date.parse(iso)) / 60_000)
-  if (!Number.isFinite(mins) || mins < 0) return null
-  if (mins < 2)   return 'just now'
-  if (mins < 60)  return `${mins}m ago`
-  const h = Math.round(mins / 60)
-  if (h < 24) return `${h}h ago`
-  const d = Math.round(h / 24)
-  return `${d}d ago`
+  /**
+   * How long ago the calendar was pulled, already worded — "2h ago", or null
+   * when nothing has recorded a sync.
+   *
+   * A string rather than the timestamp because this is a *duration*, and a
+   * duration measured during render is measured twice: once on the server and
+   * once when the browser hydrates, a moment later. A sync 1m55s old crosses
+   * the "just now" boundary in between, the two renders disagree, and React
+   * throws the tree away. The server measures it once and the client is told
+   * the answer.
+   *
+   * The cost is that it stops being true while the page sits open. That is
+   * acceptable here: every other number on this page is a snapshot from the
+   * same instant, and a hidden tab re-fetches when it comes back.
+   */
+  syncAge:           string | null
 }
 
 export default function HomeView({
   data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
-  gcalWriteEnabled, calendarConnected, lastSyncedISO,
+  gcalWriteEnabled, calendarConnected, syncAge,
 }: Props) {
   const router = useRouter()
   const timer = useTimer()
@@ -100,7 +102,12 @@ export default function HomeView({
   const byId = new Map(tasks.map(t => [t.id, t]))
   const clock = (ms: number) => formatClock(ms, tz)
 
-  const heading = new Date(dayStr + 'T12:00:00Z').toLocaleDateString(undefined, {
+  // 'en-US' rather than the runtime's locale. `undefined` resolves to Node's
+  // default on the server and the browser's on the client, so an en-GB reader
+  // got "Sunday, 20 September" hydrated over "Sunday, September 20" — a
+  // mismatch on the largest text on the page. formatClock pins its locale for
+  // the same reason; noon UTC and timeZone UTC keep the day from shifting.
+  const heading = new Date(dayStr + 'T12:00:00Z').toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC',
   })
 
@@ -192,7 +199,6 @@ export default function HomeView({
     return 'Nothing on today.'
   })()
 
-  const syncAge = agoLabel(lastSyncedISO)
 
   /**
    * Today's habits stay on the page once logged, ticked rather than removed.
