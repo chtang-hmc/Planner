@@ -12,21 +12,22 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
 import { useTimer } from '@/contexts/TimerContext'
-import {
-  CalendarIcon, FocusIcon, OverdueIcon, TimeIcon, WarningIcon,
-} from '@/components/icons'
+import { WarningIcon } from '@/components/icons'
 import { HabitRow, HabitList, CONTROL } from '@/components/TaskChrome'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import LogHabitModal from '@/components/LogHabitModal'
 import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
 import { CapacityBand } from '@/components/ds/CapacityBand'
+import { Timeline } from '@/components/ds/Timeline'
+import { UnplacedRail, type RailItem, type RailSort } from '@/components/ds/UnplacedRail'
+import { saveRailSort } from '@/app/actions/scheduling'
 import { bandKind, type BandInput } from '@/lib/band'
 import { completeTask } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
 import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type FreeTimeBasis, type HomeData } from '@/lib/home'
+import { rightNowSentence, type FreeTimeBasis, type HomeData } from '@/lib/home'
 
 type TaskRow = Task & { project: Project }
 
@@ -67,11 +68,17 @@ interface Props {
   freeTime:          FreeTimeBasis
   /** Everything the day-level headline needs — see `bandCopy`. */
   band:              BandInput
+  /** What the timeline could not place. Overdue comes from `data.overdue`. */
+  railItems:         RailItem[]
+  railSort:          RailSort
+  /** The working window, e.g. "10:00am — 1:30am". */
+  windowLabel:       string | null
 }
 
 export default function HomeView({
   data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
   gcalWriteEnabled, calendarConnected, syncAge, freeTime, band,
+  railItems, railSort, windowLabel,
 }: Props) {
   const router = useRouter()
   const timer = useTimer()
@@ -97,6 +104,21 @@ export default function HomeView({
   const [syncError, setSyncError] = useState<string | null>(null)
 
   /**
+   * The stored order wins on arrival, a click wins after — and the click is
+   * written through, because Triage reads the rail in its current order and
+   * the two have to agree.
+   */
+  const [sortOverride, setSortOverride] = useState<RailSort | null>(null)
+  const sort = sortOverride ?? railSort
+  function chooseSort(next: RailSort) {
+    setSortOverride(next)
+    startTransition(async () => {
+      const res = await saveRailSort(next)
+      if (res.error) console.error('saveRailSort:', res.error)
+    })
+  }
+
+  /**
    * Everything on this page is measured from the instant the server rendered
    * it — "1h 30m free until 2:45" is only true for as long as the tab is
    * looked at. Coming back to a tab left open over lunch should not show
@@ -118,7 +140,6 @@ export default function HomeView({
   }, [router])
 
   const byId = new Map(tasks.map(t => [t.id, t]))
-  const clock = (ms: number) => formatClock(ms, tz)
 
   // 'en-US' rather than the runtime's locale. `undefined` resolves to Node's
   // default on the server and the browser's on the client, so an en-GB reader
@@ -141,10 +162,12 @@ export default function HomeView({
     if (t) timer.start({ ...t, project: t.project ?? INBOX_PROJECT })
   }
 
+  /** Completion now happens in the task panel; the band's Start uses the timer. */
   function markDone(id: string) {
     const t = byId.get(id)
     if (t) setCompleting({ ...t, project: t.project ?? INBOX_PROJECT })
   }
+  void markDone
 
   async function logHabit(task: TaskRow) {
     if (pendingHabits.has(task.id)) return
@@ -357,17 +380,33 @@ export default function HomeView({
             <CapacityBand input={band} onPrimary={bandPrimary} />
           </div>
 
-          {/* Left: everything you act on, in the order you act on it.
-              "Do this now" is gone — the recommendation survives distributed
-              into the free slots of Today's shape, which is where it can name
-              the gap it fits. A card beside them said it twice. */}
+          {/* Left: the day itself, which is the context for every choice. */}
           <div className="lg:col-span-3 flex flex-col gap-5 min-w-0">
-            <NeedsAttention
-              overdue={data.overdue}
-              dueToday={data.dueToday}
-              doneIds={doneIds}
+            <Timeline
+              rows={data.shape}
+              tz={tz}
+              windowLabel={windowLabel}
               onOpen={openTask}
-              onDone={markDone}
+              onFill={gcalWriteEnabled ? () => blockToday() : undefined}
+            />
+          </div>
+
+          {/* Right: what did not fit on it, and today's habits.
+              "Needs attention" is gone — due-today work is either on the
+              timeline or in the rail, so the section had no remaining job, and
+              overdue is pinned at the top of the rail where being late is the
+              thing that decides the order. */}
+          <div className="lg:col-span-2 flex flex-col gap-5 min-w-0">
+            <UnplacedRail
+              items={railItems}
+              overdue={data.overdue.filter(r => !r.taskIds.every(id => doneIds.has(id)))}
+              sort={sort}
+              totalMinutes={
+                railItems.reduce((n, i) => n + (i.minutes ?? 0), 0)
+                + data.overdue.reduce((n, r) => n + (r.minutes ?? 0), 0)
+              }
+              onSort={chooseSort}
+              onOpen={openTask}
             />
 
             {habits.length > 0 && (
@@ -386,11 +425,6 @@ export default function HomeView({
                 ))}
               </HabitList>
             )}
-          </div>
-
-          {/* Right: the day itself — the context for every choice on the left. */}
-          <div className="lg:col-span-2 flex flex-col gap-5 min-w-0">
-            <TodaysShape data={data} clock={clock} onOpen={openTask} />
           </div>
         </div>
       </div>
@@ -446,22 +480,6 @@ export default function HomeView({
   )
 }
 
-// ── Section 2: Do this now ───────────────────────────────────────────────────
-
-function Section({ title, count, children }: {
-  title: string; count?: number; children: React.ReactNode
-}) {
-  return (
-    <section className="flex flex-col min-w-0">
-      <div className="flex items-baseline gap-3 mb-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">{title}</h2>
-        {count !== undefined && <span className="text-xs text-slate-400 tabular-nums">{count}</span>}
-        <div className="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
-      </div>
-      {children}
-    </section>
-  )
-}
 
 /*
  * `DoThisNow` lived here: a card with one primary pick and two alternates.
@@ -475,142 +493,15 @@ function Section({ title, count, children }: {
  * is a single obvious answer.
  */
 
-// ── Section 3: Today's shape ─────────────────────────────────────────────────
-
-/**
- * Events in time order with free gaps as their own rows, each gap saying what
- * fits in it. A drawn hour column was considered and rejected: working hours
- * run into the small hours, so a full axis is a scroll, not a glance.
+/*
+ * `TodaysShape` and `NeedsAttention` lived here.
+ *
+ * The first is now `Timeline`, which draws the same rows with the parts that
+ * make them actionable: a rail in the project's colour, slots that expand by
+ * whether you can act on them, and a caution on the block after the cutoff.
+ *
+ * The second is gone entirely. Due-today work is either placed on the timeline
+ * or sitting in the rail, so the section had no remaining job — and overdue,
+ * its only distinct content, is pinned at the top of the rail, where being
+ * late decides the order instead of competing with size.
  */
-function TodaysShape({ data, clock, onOpen }: {
-  data: HomeData
-  clock: (ms: number) => string
-  onOpen: (id: string) => void
-}) {
-  if (data.shape.length === 0) {
-    return (
-      <Section title="Today's shape">
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-6 text-center">
-          <p className="text-sm text-slate-500 dark:text-slate-400">Nothing left on the calendar today.</p>
-        </div>
-      </Section>
-    )
-  }
-
-  return (
-    <Section title="Today's shape">
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
-        {data.shape.map(row => row.kind === 'event' ? (
-          <div key={row.key} className="flex items-baseline gap-3 px-4 py-2.5">
-            <span className="text-[11px] font-mono tabular-nums text-slate-400 w-16 shrink-0 text-right">
-              {clock(row.startMs)}
-            </span>
-            {row.taskId
-              ? <FocusIcon size={12} className="text-accent-500 shrink-0 self-center" />
-              : <CalendarIcon size={12} className="text-slate-300 dark:text-slate-600 shrink-0 self-center" />}
-            <span className="text-[13px] text-slate-700 dark:text-slate-200 truncate">{row.title}</span>
-          </div>
-        ) : (
-          <div key={row.key} className="px-4 py-2.5 bg-slate-50/60 dark:bg-slate-800/20">
-            <div className="flex items-baseline gap-3">
-              <span className="text-[11px] font-mono tabular-nums text-slate-400 w-16 shrink-0 text-right">
-                {clock(row.startMs)}
-              </span>
-              <span className="text-[11px] font-medium text-accent-600 dark:text-accent-400 tabular-nums">
-                {formatGapMinutes(row.minutes)} free
-              </span>
-              <span className="text-[11px] text-slate-400 font-mono tabular-nums">
-                until {clock(row.endMs)}
-              </span>
-            </div>
-            {row.fits.length > 0 && (
-              <div className="pl-[4.75rem] mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                <span className="text-[11px] text-slate-400">→</span>
-                {row.fits.map((s, i) => (
-                  <span key={s.key} className="text-[11px] text-slate-500 dark:text-slate-400">
-                    <button
-                      onClick={() => onOpen(s.taskIds[0])}
-                      className="hover:text-accent-600 dark:hover:text-accent-400 transition-colors underline-offset-2 hover:underline"
-                    >
-                      {s.title}
-                    </button>
-                    {i < row.fits.length - 1 && <span className="text-slate-300 dark:text-slate-600">, or</span>}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </Section>
-  )
-}
-
-// ── Section 5: Needs attention ───────────────────────────────────────────────
-
-/** Overdue and due today only. Short by design, and empty on a good day. */
-function NeedsAttention({ overdue, dueToday, doneIds, onOpen, onDone }: {
-  overdue:  AttentionRow[]
-  dueToday: AttentionRow[]
-  doneIds:  Set<string>
-  onOpen: (id: string) => void
-  onDone: (id: string) => void
-}) {
-  const rows = [
-    ...overdue.map(r => ({ r, late: true })),
-    ...dueToday.map(r => ({ r, late: false })),
-  ].filter(({ r }) => !r.taskIds.every(id => doneIds.has(id)))
-
-  if (rows.length === 0) {
-    return (
-      <Section title="Needs attention">
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-5 text-center">
-          <p className="text-sm text-slate-500 dark:text-slate-400">Nothing overdue or due today.</p>
-        </div>
-      </Section>
-    )
-  }
-
-  return (
-    <Section title="Needs attention" count={rows.length}>
-      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
-        {rows.map(({ r, late }) => (
-          <div
-            key={r.key}
-            className="group flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-          >
-            {/* A collapsed chain has no single thing to tick — three readings
-                are not done in one click — so it offers the work instead. */}
-            {r.stepsLabel ? (
-              <span className="w-4 h-4 shrink-0 flex items-center justify-center text-[10px] font-mono tabular-nums text-slate-400">
-                {r.taskIds.length}
-              </span>
-            ) : (
-              <button
-                onClick={() => onDone(r.taskIds[0])}
-                title={`Complete ${r.title}`}
-                aria-label={`Complete ${r.title}`}
-                className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-600 shrink-0 hover:border-accent-500 hover:bg-accent-50 dark:hover:bg-accent-950 transition-colors"
-              />
-            )}
-            <button onClick={() => onOpen(r.openId)} className="min-w-0 flex-1 text-left">
-              <p className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate">{r.title}</p>
-              {r.stepsLabel && <p className="text-[11px] text-slate-400">{r.stepsLabel}</p>}
-            </button>
-            {r.minutes != null && (
-              <span className="text-[11px] text-slate-400 font-mono tabular-nums shrink-0">
-                <TimeIcon size={10} className="inline-block mr-1 -mt-px" />{formatGapMinutes(r.minutes)}
-              </span>
-            )}
-            <span className={`text-[11px] font-medium shrink-0 flex items-center gap-1 ${
-              late ? 'text-red-500' : 'text-amber-500'
-            }`}>
-              {late ? <OverdueIcon size={11} /> : <WarningIcon size={11} />}
-              {late ? 'Overdue' : 'Today'}
-            </span>
-          </div>
-        ))}
-      </div>
-    </Section>
-  )
-}

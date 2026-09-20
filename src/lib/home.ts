@@ -18,7 +18,9 @@
  */
 
 import type { EnergyLevel, TaskType } from '@/types'
+import { LATE_CUTOFF_MINUTES } from '@/lib/capacity'
 import {
+  localMidnight,
   slotEnergyLevel,
   type DayGaps,
   type EnergyScheduleEntry,
@@ -76,6 +78,12 @@ export interface HomeEvent {
   endMs:   number
   /** A booked focus block rather than a calendar event. */
   taskId?: string | null
+  /** Project colour for the rail; null for a plain calendar event. */
+  color?:  string | null
+  /** "2h · calendar", "3h · TA", "habit · day 12". Built by the caller. */
+  meta?:   string | null
+  /** Title of a task a confirmed link says this event is already doing. */
+  coversTitle?: string | null
 }
 
 export interface HomeInput {
@@ -113,9 +121,39 @@ export interface Suggestion {
   score:       number
 }
 
+/**
+ * Where a row sits relative to now.
+ *
+ * Drives how much of it is drawn: the slot you are in and the one after it are
+ * worth acting on and expand; later ones collapse to a line; past ones stay,
+ * dim, because deleting them makes the day look shorter than it was, but they
+ * hold no chips you could act on.
+ */
+export type RowPosition = 'past' | 'current' | 'next' | 'later'
+
 export type ShapeRow =
-  | { kind: 'event'; key: string; startMs: number; endMs: number; title: string; taskId: string | null }
-  | { kind: 'gap';   key: string; startMs: number; endMs: number; minutes: number; fits: Suggestion[] }
+  | {
+      kind: 'event'; key: string; startMs: number; endMs: number
+      title: string; taskId: string | null
+      position: RowPosition
+      /** The project's own colour for the rail, or null for a calendar event. */
+      color: string | null
+      /** The line under the title — "2h · calendar", "habit · day 12". */
+      meta: string | null
+      /** Set when a confirmed link says this event is already doing a task. */
+      coversTitle: string | null
+    }
+  | {
+      kind: 'gap'; key: string; startMs: number; endMs: number; minutes: number
+      fits: Suggestion[]
+      position: RowPosition
+      /**
+       * Starts at or after the cutoff. The same threshold that splits the
+       * capacity bar's solid green from its hatch — one setting, three
+       * appearances, so moving it moves all of them.
+       */
+      late: boolean
+    }
 
 /**
  * The one-sentence answer at the top, as parts rather than prose — the view
@@ -560,7 +598,7 @@ export function rightNowSentence(rn: RightNow, tz: string): string {
  * means "what should I line up for when it ends".
  */
 export function buildHome(input: HomeInput): HomeData {
-  const { nowMs, todayStr, gaps, events, tasks } = input
+  const { nowMs, todayStr, tz, gaps, events, tasks } = input
 
   const rightNow = rightNowFrom(input)
 
@@ -583,6 +621,9 @@ export function buildHome(input: HomeInput): HomeData {
       key: `e:${e.id}`,
       startMs: e.startMs, endMs: e.endMs,
       title: e.title, taskId: e.taskId ?? null,
+      color: e.color ?? null, meta: e.meta ?? null,
+      coversTitle: e.coversTitle ?? null,
+      position: e.endMs <= nowMs ? 'past' as const : 'current' as const,
     }))
 
   /**
@@ -594,29 +635,41 @@ export function buildHome(input: HomeInput): HomeData {
    * the readings in the afternoon, the errand in the evening.
    *
    * The first gap is exempt from nothing — it is the one you are in, and it
-   * should agree with "Do this now" above it.
+   * should agree with the band above it.
    */
+  // One threshold, three appearances: this, the capacity bar's hatch, and the
+  // band's "fits only after 10pm". Moving it in settings moves all of them.
+  const cutoffMs = localMidnight(todayStr, tz) + LATE_CUTOFF_MINUTES * 60_000
+
   const spent = new Set<string>()
   const gapRows: ShapeRow[] = []
+  let liveSeen = 0
   for (const raw of gaps) {
     // The gap you are standing in starts now, not when it opened. Showing its
     // original start would offer an hour and a half that is already an hour —
     // and would rank against time that no longer exists.
-    const g: Interval = [Math.max(raw[0], nowMs), raw[1]]
+    const over = raw[1] <= nowMs
+    const g: Interval = over ? raw : [Math.max(raw[0], nowMs), raw[1]]
     if (g[1] - g[0] < MIN_GAP_MINUTES * 60_000) continue
-    const fits = rankForGap(tasks, g, input, 2, spent)
+
+    const position: RowPosition =
+      over ? 'past' : liveSeen === 0 ? 'current' : liveSeen === 1 ? 'next' : 'later'
+    if (!over) liveSeen++
+
+    // Past slots hold no chips you could act on, so they are not ranked.
+    const fits = over ? [] : rankForGap(tasks, g, input, 2, spent)
     for (const s of fits) for (const id of s.taskIds) spent.add(id)
+
     gapRows.push({
       kind: 'gap', key: `g:${g[0]}`,
       startMs: g[0], endMs: g[1],
       minutes: Math.round((g[1] - g[0]) / 60_000),
-      fits,
+      fits, position,
+      late: g[0] >= cutoffMs,
     })
   }
 
-  const shape = [...eventRows, ...gapRows]
-    .filter(r => r.endMs > nowMs)
-    .sort((a, b) => a.startMs - b.startMs)
+  const shape = [...eventRows, ...gapRows].sort((a, b) => a.startMs - b.startMs)
 
   // ── Needs attention ────────────────────────────────────────────────────────
   // Overdue and due today only. Short by design, and empty on a good day.

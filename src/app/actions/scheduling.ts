@@ -781,6 +781,26 @@ export async function saveWeekStartDay(day: number): Promise<{ error?: string }>
  * Saved together because they are one judgement — how much of the future counts
  * as now — and adjusting one usually means reconsidering the other.
  */
+/**
+ * How the unplaced rail is ordered (migration 0020).
+ *
+ * A working preference rather than view state — Triage reads the rail in its
+ * current order, so the two must agree, and they cannot if the choice lives
+ * in one browser's localStorage.
+ */
+export async function saveRailSort(sort: 'size' | 'urgency' | 'project'): Promise<{ error?: string }> {
+  const db = createServiceClient()
+  const { data: row } = await db.from('user_scheduling_config').select('id').limit(1).maybeSingle()
+  if (!row) return { error: 'No scheduling config row' }
+
+  const { error } = await db
+    .from('user_scheduling_config').update({ rail_sort: sort }).eq('id', row.id)
+  if (error) return { error: 'Could not save — run migration 0020 first.' }
+
+  revalidatePath('/')
+  return {}
+}
+
 export async function saveRelevanceSettings(
   windowDays: number,
   minPriority: number,
