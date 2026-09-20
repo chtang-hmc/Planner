@@ -16,6 +16,8 @@ import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
+import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
+import { formatTimeOfDay } from '@/lib/task-format'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { formatMinutes } from '@/lib/task-format'
 import { addDays } from '@/lib/day'
@@ -36,11 +38,19 @@ interface Props {
   relevance?: RelevanceConfig
   /** Today in the configured timezone, from the server — see the filter below. */
   todayStr: string
+  /**
+   * Free minutes per day, either side of the cutoff, for the capacity meter in
+   * each date group header. Only the free half: what is *due* on a day is the
+   * group this component has already built, and sending it down as well would
+   * be the same number arrived at twice — disagreeing the moment a filter hid
+   * a row.
+   */
+  freeByDay: Record<string, { before: number; after: number }>
 }
 
 export default function TaskList({
   tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay,
-  relevance = RELEVANCE_DEFAULT, todayStr,
+  relevance = RELEVANCE_DEFAULT, todayStr, freeByDay,
 }: Props) {
   const { query } = useSearch()
   /**
@@ -65,7 +75,15 @@ export default function TaskList({
   // Parents whose subtasks are showing. Tracking what's OPEN rather than what's
   // shut means the default — an empty set — is everything tucked away.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [groupByProject, setGroupByProject] = useState(false)
+  /**
+   * One grouping, chosen once.
+   *
+   * `By project` was a toggle beside `Relevant` and `Someday`, which put a
+   * grouping, a filter and another filter in one row of identical pills — three
+   * different kinds of thing wearing the same control.
+   */
+  const [group, setGroup] = useState<'date' | 'project' | 'energy'>('date')
+  const groupByProject = group === 'project'
   // Same trick for project sections: grouping exists to compress a long list
   // into something you can survey, so it opens compact and you expand the one
   // project you came for.
@@ -254,6 +272,77 @@ export default function TaskList({
   }
 
   /**
+   * A task as the shared row draws it.
+   *
+   * The chip carries only what the group header does not. A "TODAY" badge on
+   * every row inside a group headed Today is the noise this replaces; what
+   * earns a chip is the thing the header cannot say — that this one already
+   * has a slot, or repeats, or is a run of steps.
+   */
+  function toRowModel(task: TaskRow, kidCount: number): TaskRowModel {
+    const late = task.due_date && task.due_date.slice(0, 10) < todayStr
+      ? Math.round(
+          (Date.parse(todayStr + 'T00:00:00Z') - Date.parse(task.due_date.slice(0, 10) + 'T00:00:00Z'))
+          / 86_400_000)
+      : 0
+
+    const chip =
+      task.scheduled_start
+        ? `scheduled ${formatTimeOfDay(
+            new Date(task.scheduled_start).getHours() * 60 + new Date(task.scheduled_start).getMinutes(),
+          ).toLowerCase()}`
+        : kidCount > 0 ? `${kidCount} steps`
+        : task.rrule ? 'repeats'
+        : null
+
+    return {
+      id: task.id,
+      title: task.title,
+      color: task.project?.color ?? null,
+      project: task.project?.name ?? 'Inbox',
+      minutes: task.adjusted_minutes ?? task.estimated_minutes,
+      urgency: task.urgency_score,
+      chip,
+      lateLabel: late > 0 ? `${late} day${late === 1 ? '' : 's'} late` : null,
+    }
+  }
+
+  /**
+   * Date groups, in the order a day arrives: what is already late, then today,
+   * then forward, then the undated tail.
+   *
+   * Overdue is its own group rather than folded into Today, because the two
+   * answer different questions and a capacity meter over both would be a
+   * number for a day that has not got a deadline.
+   */
+  const dateGroups = (() => {
+    if (group !== 'date') return null
+    const buckets = new Map<string, TaskRow[]>()
+    for (const t of topLevel) {
+      const day = t.due_date?.slice(0, 10) ?? null
+      const key = day == null ? 'none' : day < todayStr ? 'overdue' : day
+      buckets.set(key, [...(buckets.get(key) ?? []), t])
+    }
+
+    const dayLabel = (key: string) => {
+      if (key === todayStr) return 'Today'
+      if (key === addDays(todayStr, 1)) return 'Tomorrow'
+      const d = new Date(key + 'T12:00:00Z')
+      return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })
+    }
+
+    const dated = [...buckets.keys()]
+      .filter(k => k !== 'overdue' && k !== 'none')
+      .sort()
+
+    return [
+      ...(buckets.has('overdue') ? [{ key: 'overdue', label: 'Overdue', rows: buckets.get('overdue')!, day: null }] : []),
+      ...dated.map(k => ({ key: k, label: dayLabel(k), rows: buckets.get(k)!, day: k })),
+      ...(buckets.has('none') ? [{ key: 'none', label: 'No date', rows: buckets.get('none')!, day: null }] : []),
+    ]
+  })()
+
+  /**
    * Rows for a set of top-level tasks, each followed by its subtasks.
    *
    * The row itself is drawn by whichever layout is selected — see
@@ -356,6 +445,19 @@ export default function TaskList({
                 <>
                   <span className="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-0.5" />
 
+                  {/* One row, one height, one idiom. What differs between
+                      these is what they *do*, not how they look: a grouping, a
+                      filter, a filter, a filter. */}
+                  <Segmented
+                    value={group}
+                    onChange={v => setGroup(v as 'date' | 'project' | 'energy')}
+                    options={[
+                      { id: 'date', label: 'Date' }, { id: 'project', label: 'Project' },
+                      { id: 'energy', label: 'Energy' },
+                    ]}
+                    hint="Group"
+                  />
+
                   <Segmented
                     value={energyFilter}
                     onChange={v => setEnergyFilter(v as EnergyLevel | 'all')}
@@ -375,18 +477,21 @@ export default function TaskList({
                     {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
 
+                  <Toggle on={showSomeday} onClick={() => setShowSomeday(v => !v)} title="Include someday tasks">
+                    Someday
+                  </Toggle>
+
+                  {/* Kept, and not in the redesign's five. The spec drops it,
+                      but it is on by default and decides what the list looks
+                      like on arrival — and both its numbers are settings
+                      (migration 0017) that nothing else reads. Removing it is
+                      a decision about those settings too. */}
                   <Toggle
                     on={relevantOnly}
                     onClick={() => setRelevantOnly(v => !v)}
                     title={relevanceHint(relevance)}
                   >
                     Relevant
-                  </Toggle>
-                  <Toggle on={groupByProject} onClick={() => setGroupByProject(v => !v)} title="Group the list by project">
-                    By project
-                  </Toggle>
-                  <Toggle on={showSomeday} onClick={() => setShowSomeday(v => !v)} title="Include someday tasks">
-                    Someday
                   </Toggle>
                 </>
               )}
@@ -413,6 +518,59 @@ export default function TaskList({
         <div className="px-6 py-4">
 
           {/* Task rows */}
+          {group === 'date' && dateGroups ? (
+            <div className="rounded-xl border border-line bg-surface overflow-hidden">
+              {dateGroups.map(g => {
+                /**
+                 * The sum of the rows beneath it, and nothing cleverer.
+                 *
+                 * An earlier version substituted a parent's subtasks for its
+                 * own estimate, to avoid counting the same work twice. But
+                 * only top-level rows are in `g.rows`, so there was nothing to
+                 * double-count — and the header then disagreed with the
+                 * durations printed under it, which is the one thing a reader
+                 * can check. `recalcParentEstimate` keeps a parent's estimate
+                 * equal to its subtasks'; if it ever drifts, that is the bug
+                 * to fix rather than to paper over here.
+                 */
+                const due = g.rows.reduce(
+                  (n, t) => n + (t.adjusted_minutes ?? t.estimated_minutes ?? 0), 0)
+                const free = g.day ? freeByDay[g.day] : undefined
+
+                return (
+                  <div key={g.key}>
+                    <GroupHeader
+                      label={g.label}
+                      count={g.rows.length}
+                      /* An undated group has nothing for its work to fit
+                         inside, and neither does a day off — `freeByDay` has no
+                         entry for one, so the meter is simply omitted. */
+                      capacity={free
+                        ? { dueTotal: due, freeBeforeCutoff: free.before, freeAfterCutoff: free.after }
+                        : null}
+                    />
+                    {g.rows.flatMap(parentTask => {
+                      const kids = childrenOf.get(parentTask.id) ?? []
+                      const collapsed = !expanded.has(parentTask.id)
+                      return (collapsed ? [parentTask] : [parentTask, ...kids]).map(task => (
+                        <TaskRow
+                          key={task.id}
+                          task={toRowModel(task, task.id === parentTask.id ? kids.length : 0)}
+                          onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+                          onToggle={() => setCompletingTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+                        />
+                      ))
+                    })}
+                  </div>
+                )
+              })}
+              {filtered.length === 0 && (
+                <p className="px-4 py-10 text-center text-small text-ink-ghost">
+                  Nothing matches. Try turning off Relevant, or add a task.
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="flex flex-col gap-1.5">
             {groupByProject && projectGroups
               ? projectGroups.map(g => {
@@ -457,6 +615,7 @@ export default function TaskList({
               </div>
             )}
           </div>
+          )}
 
           {habits.length > 0 && (
             <HabitList count={habits.length}>
