@@ -22,6 +22,7 @@ import { CapacityBand } from '@/components/ds/CapacityBand'
 import { Timeline } from '@/components/ds/Timeline'
 import { UnplacedRail, type RailItem, type RailSort } from '@/components/ds/UnplacedRail'
 import { saveRailSort } from '@/app/actions/scheduling'
+import { confirmTaskEventLink, rejectTaskEventLink } from '@/app/actions/links'
 import { bandKind, type BandInput } from '@/lib/band'
 import { completeTask } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
@@ -204,6 +205,23 @@ export default function HomeView({
         return undefined
     }
   })()
+
+  /**
+   * Answering the day's one link question.
+   *
+   * `router.refresh()` rather than local state: confirming removes the task's
+   * minutes from `dueTotal`, so the headline above changes, and a page that
+   * hides the chip without moving the number would look like nothing happened.
+   */
+  function decideLink(taskId: string, eventId: string, confirm: boolean) {
+    startTransition(async () => {
+      const res = confirm
+        ? await confirmTaskEventLink(taskId, eventId)
+        : await rejectTaskEventLink(taskId, eventId)
+      if (res.error) setSyncError(res.error)
+      else router.refresh()
+    })
+  }
 
   function refreshCalendar() {
     setSyncing(true)
@@ -388,6 +406,7 @@ export default function HomeView({
               windowLabel={windowLabel}
               onOpen={openTask}
               onFill={gcalWriteEnabled ? () => blockToday() : undefined}
+              onDecideLink={decideLink}
             />
           </div>
 

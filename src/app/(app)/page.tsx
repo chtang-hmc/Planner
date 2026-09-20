@@ -14,7 +14,7 @@
  */
 
 import { createServiceClient } from '@/lib/supabase/server'
-import { addDays, fetchTimezone, todayStr as todayIn, localDayRange, startOfLocalDay } from '@/lib/day'
+import { addDays, fetchTimezone, todayStr as todayIn, localDayRange, localDayStr, startOfLocalDay } from '@/lib/day'
 import { fetchWeekStartDay } from '@/lib/week'
 import { fetchTodaysHabits } from '@/lib/habits'
 import {
@@ -27,6 +27,7 @@ import {
   resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
+import { suggestTaskEventLinks, topSuggestion } from '@/lib/task-events'
 import type { BandInput } from '@/lib/band'
 import { dayOfWeek } from '@/lib/day'
 import { Task, Project, INBOX_PROJECT } from '@/types'
@@ -69,7 +70,7 @@ export default async function HomePage() {
     { data: taskRows },
     { data: projectRows },
     { data: integration },
-    { data: confirmedLinks },
+    { data: linkRows },
   ] = await Promise.all([
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
@@ -90,9 +91,10 @@ export default async function HomePage() {
     // select('*') so a pre-0018 database still returns the row; last_synced_at
     // is then undefined, which reads as "unknown" rather than "never".
     db.from('user_integrations').select('*').eq('provider', 'google').maybeSingle(),
-    // Confirmed only. A title-similarity guess never moves a number — see
-    // `suggestTaskEventLinks`. Missing table (pre-0019) resolves to null.
-    db.from('task_event_links').select('task_id').eq('status', 'confirmed')
+    // Both statuses: confirmed removes a task's minutes from `dueTotal`, and
+    // rejected is what stops the same wrong pair being offered every morning.
+    // Missing table (pre-0019) resolves to null.
+    db.from('task_event_links').select('task_id, event_id, status')
       .then(r => r, () => ({ data: null })),
   ])
 
@@ -119,6 +121,11 @@ export default async function HomePage() {
   const bufferMinutes = configRow?.buffer_minutes ?? 15
 
   const rows = (taskRows ?? []) as (Task & { project: Project | null; parent?: { id: string; title: string } | null })[]
+
+  const links = (linkRows ?? []) as { task_id: string; event_id: string; status: 'confirmed' | 'rejected' }[]
+  const coveredTaskIds = new Set<string>(
+    links.filter(l => l.status === 'confirmed').map(l => l.task_id),
+  )
 
   // ── What is on the day ──────────────────────────────────────────────────────
   //
@@ -231,6 +238,40 @@ export default async function HomePage() {
       return parentRow ? resolveAgainstParent(own, toHomeTask(parentRow, 0)) : own
     })
 
+  /**
+   * The one link question worth asking today.
+   *
+   * Recomputed every render rather than stored: a re-sync or a retitled task
+   * simply produces a different suggestion next time, and there is no queue of
+   * guesses to go stale. Everything already decided is excluded, which is what
+   * makes a rejection stick.
+   */
+  const linkableTasks = tasks.map(t => ({
+    id: t.id, title: t.title, dueDay: t.dueDay, minutes: t.minutes,
+  }))
+  const linkableEvents = timedEvents.map(e => ({
+    id: e.id, title: e.title, day: localDayStr(new Date(e.startMs), tz),
+    minutes: Math.round((e.endMs - e.startMs) / 60_000),
+  }))
+  const suggested = topSuggestion(
+    suggestTaskEventLinks(linkableTasks, linkableEvents,
+      links.map(l => ({ taskId: l.task_id, eventId: l.event_id, status: l.status }))),
+  )
+
+  const confirmedByEvent = new Map(
+    links.filter(l => l.status === 'confirmed').map(l => [l.event_id, l.task_id]),
+  )
+  const titleOf = (id: string) => tasks.find(t => t.id === id)?.title
+    ?? rows.find(r => r.id === id)?.title ?? null
+
+  for (const e of timedEvents) {
+    const covered = confirmedByEvent.get(e.id)
+    if (covered) e.coversTitle = titleOf(covered)
+    else if (suggested?.eventId === e.id) {
+      e.suggestion = { taskId: suggested.taskId, taskTitle: titleOf(suggested.taskId) ?? '' }
+    }
+  }
+
   const data = buildHome({
     // A force-dynamic Server Component renders once per request, so reading the
     // clock here is a property of the request, not an unstable render. The
@@ -249,9 +290,6 @@ export default async function HomePage() {
   // is the reason `smallestTaskMinutes` is here: a day of 45-minute holes is
   // only a failure relative to what is left to place, so the gaps cannot tell
   // you on their own.
-  const coveredTaskIds = new Set<string>(
-    ((confirmedLinks ?? []) as { task_id: string }[]).map(l => l.task_id),
-  )
 
   const dueToday  = tasks.filter(t => t.dueDay != null && t.dueDay <= today && !coveredTaskIds.has(t.id))
   const unplaced  = tasks.filter(t => isCandidate(t, today) && !coveredTaskIds.has(t.id))

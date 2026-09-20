@@ -84,6 +84,14 @@ export interface HomeEvent {
   meta?:   string | null
   /** Title of a task a confirmed link says this event is already doing. */
   coversTitle?: string | null
+  /**
+   * An unanswered guess that this event is doing a task.
+   *
+   * At most one of these renders per day, on the highest-confidence pair — a
+   * timeline asking four questions at once is a queue, and a queue gets closed
+   * rather than answered.
+   */
+  suggestion?: { taskId: string; taskTitle: string } | null
 }
 
 export interface HomeInput {
@@ -142,6 +150,8 @@ export type ShapeRow =
       meta: string | null
       /** Set when a confirmed link says this event is already doing a task. */
       coversTitle: string | null
+      /** An unanswered guess. At most one across the whole day. */
+      suggestion: { taskId: string; taskTitle: string } | null
     }
   | {
       kind: 'gap'; key: string; startMs: number; endMs: number; minutes: number
@@ -623,6 +633,7 @@ export function buildHome(input: HomeInput): HomeData {
       title: e.title, taskId: e.taskId ?? null,
       color: e.color ?? null, meta: e.meta ?? null,
       coversTitle: e.coversTitle ?? null,
+      suggestion: e.suggestion ?? null,
       position: e.endMs <= nowMs ? 'past' as const : 'current' as const,
     }))
 
