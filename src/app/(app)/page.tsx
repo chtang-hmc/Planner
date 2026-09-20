@@ -1,0 +1,212 @@
+/**
+ * Home — the landing page, and the answer to "what should I do now?".
+ *
+ * All the I/O for `src/lib/home.ts`, which does the thinking. Two constraints
+ * from `docs/HOME.md` shape this file:
+ *
+ *   - **No Google round trip.** Everything here is already local: the calendar
+ *     is synced into `calendar_events`, the tasks and habits are ours, and the
+ *     working hours are config. The freeBusy call is what made "Schedule my
+ *     week" unpleasant, and it must not sit on the landing path. The cost is
+ *     staleness, which the page says out loud rather than blocking on.
+ *   - **A subtask's importance is its parent's.** Resolved here once, at the
+ *     edge, the same way `proposeSchedule` resolves it on every run.
+ */
+
+import { createServiceClient } from '@/lib/supabase/server'
+import { fetchTimezone, todayStr as todayIn, localDayRange } from '@/lib/day'
+import {
+  freeGaps,
+  type BreakWindow, type EnergyScheduleEntry, type Interval,
+  type TimeBlockId, type WorkingHours,
+} from '@/lib/scheduler'
+import {
+  buildHome, resolveAgainstParent, MIN_GAP_MINUTES,
+  type HomeEvent, type HomeTask,
+} from '@/lib/home'
+import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
+import HomeView from './HomeView'
+
+export const dynamic = 'force-dynamic'
+
+export default async function HomePage() {
+  const db = createServiceClient()
+  const tz = await fetchTimezone(db)
+  const today = todayIn(tz)
+  const { startISO, endISO } = localDayRange(today, tz)
+
+  const [
+    { data: whRows },
+    { data: esRows },
+    { data: configRow },
+    { data: breakRows },
+    { data: eventRows },
+    { data: taskRows },
+    { data: streakRows },
+    { data: projectRows },
+    { data: integration },
+  ] = await Promise.all([
+    db.from('user_working_hours').select('*'),
+    db.from('user_energy_schedule').select('*'),
+    db.from('user_scheduling_config').select('*').limit(1).maybeSingle(),
+    // Missing table (pre-0008) resolves to null rather than throwing, exactly
+    // as it does for the scheduler — the day is then simply drawn without meals.
+    db.from('user_daily_breaks').select('*').order('start_hour').then(r => r, () => ({ data: null })),
+    db.from('calendar_events')
+      .select('*')
+      .lt('start_time', endISO)
+      .gt('end_time', startISO)
+      .order('start_time'),
+    db.from('tasks')
+      .select('*, project:projects(id, name, color), parent:parent_id(id, title)')
+      .in('status', ['inbox', 'active'])
+      .order('urgency_score', { ascending: false }),
+    db.from('habit_streaks').select('*'),
+    db.from('projects').select('*').eq('archived', false).order('name'),
+    // select('*') so a pre-0018 database still returns the row; last_synced_at
+    // is then undefined, which reads as "unknown" rather than "never".
+    db.from('user_integrations').select('*').eq('provider', 'google').maybeSingle(),
+  ])
+
+  const workingHours: WorkingHours[] = (whRows ?? []).map(r => ({
+    day_of_week: r.day_of_week,
+    start_hour: r.start_hour, start_minute: r.start_minute,
+    end_hour: r.end_hour, end_minute: r.end_minute,
+    enabled: r.enabled,
+  }))
+
+  const energySchedule: EnergyScheduleEntry[] = (esRows ?? []).map(r => ({
+    day_of_week:  r.day_of_week,
+    time_block:   r.time_block as TimeBlockId,
+    energy_level: r.energy_level as 'low' | 'medium' | 'high',
+  }))
+
+  const breaks: BreakWindow[] = (breakRows ?? []).filter(r => r.enabled).map(r => ({
+    label: r.label, durationMinutes: r.duration_minutes,
+    startHour: r.start_hour, startMinute: r.start_minute,
+    endHour: r.end_hour, endMinute: r.end_minute,
+    cooldownMinutes: r.cooldown_minutes,
+  }))
+
+  const bufferMinutes = configRow?.buffer_minutes ?? 15
+
+  const rows = (taskRows ?? []) as (Task & { project: Project | null; parent?: { id: string; title: string } | null })[]
+
+  // ── What is on the day ──────────────────────────────────────────────────────
+  //
+  // All-day events are held out of the busy set. Google marks them free, and
+  // treating "Chengyi's birthday" as a fourteen-hour block would leave the day
+  // with no gaps at all. They get their own line instead.
+  const allEvents = (eventRows ?? [])
+  const allDay = allEvents.filter(e => e.all_day).map(e => ({ id: e.id as string, title: e.title as string }))
+
+  const timedEvents: HomeEvent[] = allEvents
+    .filter(e => !e.all_day)
+    .map(e => ({
+      id: e.id as string, title: e.title as string,
+      startMs: Date.parse(e.start_time), endMs: Date.parse(e.end_time),
+    }))
+
+  // A focus block already booked is as real as a meeting: it takes the time,
+  // and the work in it should not be offered again in the gap beside it.
+  const bookedBlocks: HomeEvent[] = rows
+    .filter(t => t.scheduled_start && t.scheduled_end
+              && Date.parse(t.scheduled_start) < Date.parse(endISO)
+              && Date.parse(t.scheduled_end)   > Date.parse(startISO))
+    .map(t => ({
+      id: `task:${t.id}`, title: t.title, taskId: t.id,
+      startMs: Date.parse(t.scheduled_start!), endMs: Date.parse(t.scheduled_end!),
+    }))
+
+  const events = [...timedEvents, ...bookedBlocks]
+  const busy: Interval[] = events.map(e => [e.startMs, e.endMs])
+
+  const gaps = freeGaps({
+    dayStr: today, tz, workingHours, busy, breaks, minMinutes: MIN_GAP_MINUTES,
+  })
+
+  // ── Tasks, resolved ─────────────────────────────────────────────────────────
+  const toHomeTask = (t: typeof rows[number], chainIndex: number): HomeTask => ({
+    id:             t.id,
+    title:          t.title,
+    parentId:       t.parent_id,
+    parentTitle:    t.parent?.title ?? null,
+    type:           t.type,
+    priority:       t.priority,
+    urgencyScore:   t.urgency_score,
+    energyRequired: t.energy_required,
+    minutes:        t.adjusted_minutes ?? t.estimated_minutes,
+    dueDay:         t.due_date?.slice(0, 10) ?? null,
+    startDay:       t.start_date?.slice(0, 10) ?? null,
+    location:       t.location ?? 'anywhere',
+    bufferMinutes:  t.buffer_minutes,
+    scheduledStartISO: t.scheduled_start,
+    chainIndex,
+  })
+
+  const byId = new Map(rows.map(t => [t.id, t]))
+  const parentsWithOpenSubtasks = new Set(rows.filter(t => t.parent_id).map(t => t.parent_id!))
+
+  /**
+   * Position within a chain, from creation order — you cannot fold the sheets
+   * before they have been in the dryer, and `rows` arrives sorted by urgency,
+   * which for subtasks (all created at urgency 0) is no order at all. This is
+   * the same `order('created_at')` the scheduler applies for the same reason.
+   */
+  const chainIndexOf = new Map<string, number>()
+  for (const [parentId] of new Map(rows.filter(t => t.parent_id).map(t => [t.parent_id!, true]))) {
+    rows
+      .filter(t => t.parent_id === parentId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .forEach((t, i) => chainIndexOf.set(t.id, i))
+  }
+
+  const tasks: HomeTask[] = rows
+    // A parent with open subtasks is the same work described twice — the
+    // scheduler replaces it with its children, and so does Home.
+    .filter(t => !parentsWithOpenSubtasks.has(t.id))
+    .map(t => {
+      const own = toHomeTask(t, chainIndexOf.get(t.id) ?? 0)
+      const parentRow = t.parent_id ? byId.get(t.parent_id) : null
+      return parentRow ? resolveAgainstParent(own, toHomeTask(parentRow, 0)) : own
+    })
+
+  const data = buildHome({
+    // A force-dynamic Server Component renders once per request, so reading the
+    // clock here is a property of the request, not an unstable render. The
+    // purity rule is written for components that re-render on their own; this
+    // one cannot. HomeView re-fetches when the tab comes back, which is what
+    // keeps "1h 30m free" from being an hour old.
+    // eslint-disable-next-line react-hooks/purity
+    nowMs: Date.now(), todayStr: today, tz,
+    gaps, events, tasks, energySchedule, bufferMinutes,
+  })
+
+  // ── Habits ──────────────────────────────────────────────────────────────────
+  const streaks: Record<string, HabitStreak> = {}
+  for (const s of streakRows ?? []) streaks[s.task_id] = s as HabitStreak
+
+  const habits = rows
+    .filter(t => t.type === 'habit')
+    .map(t => ({ ...t, project: t.project ?? INBOX_PROJECT }))
+
+  const gcalWriteEnabled = ((integration?.scopes ?? []) as string[]).includes(
+    'https://www.googleapis.com/auth/calendar.events'
+  )
+
+  return (
+    <HomeView
+      data={data}
+      dayStr={today}
+      tz={tz}
+      allDayEvents={allDay}
+      tasks={rows.map(t => ({ ...t, project: t.project ?? INBOX_PROJECT }))}
+      habits={habits}
+      streaks={streaks}
+      projects={(projectRows ?? []) as Project[]}
+      gcalWriteEnabled={gcalWriteEnabled}
+      calendarConnected={!!integration}
+      lastSyncedISO={(integration as { last_synced_at?: string } | null)?.last_synced_at ?? null}
+    />
+  )
+}

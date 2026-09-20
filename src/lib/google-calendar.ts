@@ -108,6 +108,17 @@ export async function syncCalendarEvents(): Promise<number> {
     if (error) throw new Error(error.message)
   }
 
+  // Stamp the pull so Home can say how stale it is showing (migration 0018).
+  // Only after the upsert succeeded — a timestamp written on a failed sync
+  // would claim freshness the rows do not have. Failing to write it is not
+  // worth failing the sync over: the reads all treat a missing value as
+  // "unknown", which is what it is.
+  const { error: stampErr } = await db
+    .from('user_integrations')
+    .update({ last_synced_at: new Date().toISOString() })
+    .eq('provider', 'google')
+  if (stampErr) console.error('syncCalendarEvents: could not stamp last_synced_at:', stampErr.message)
+
   return rows.length
 }
 

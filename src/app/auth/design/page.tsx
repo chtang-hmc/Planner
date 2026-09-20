@@ -34,6 +34,10 @@ import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
+import HomeView from '@/app/(app)/HomeView'
+import { buildHome, resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
+import { freeGaps, localMidnight, type Interval, type WorkingHours } from '@/lib/scheduler'
+import { todayStr as todayIn } from '@/lib/day'
 import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
@@ -337,6 +341,99 @@ function RelevancePreview() {
   )
 }
 
+// ── Home ─────────────────────────────────────────────────────────────────────
+//
+// The real HomeView, fed by the real buildHome over a fixture day — so the
+// preview exercises the ranking and the gap arithmetic rather than a picture of
+// them. The day is the one from docs/HOME.md, overlapping events and all, and
+// "now" is pinned to 1:30pm so every section has something in it.
+
+/** Fixed at module load so the preview's render stays pure. */
+const SYNCED_2H_AGO = new Date(Date.now() - 2 * 3600_000).toISOString()
+
+function HomePreview() {
+  const tz    = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const today = todayIn(tz)
+  const at = (h: number, m = 0) => localMidnight(today, tz) + (h * 60 + m) * 60_000
+
+  const workingHours: WorkingHours[] = Array.from({ length: 7 }, (_, d) => ({
+    day_of_week: d, start_hour: 10, start_minute: 0,
+    end_hour: 1, end_minute: 30, enabled: true,     // 10:00 → 01:30 next morning
+  }))
+
+  // Fall Fest runs under ENTR 179A: the free block after them starts at 13:15,
+  // not 12:15. If the preview ever shows a gap at 12:15, the trap is back.
+  const events: HomeEvent[] = [
+    { id: 'entr', title: 'ENTR 179A', startMs: at(11), endMs: at(12, 15) },
+    { id: 'fest', title: 'Fall Fest', startMs: at(11), endMs: at(13, 15) },
+    { id: 'csci', title: 'CSCI 134',  startMs: at(14, 45), endMs: at(16) },
+    { id: 'piano', title: 'Piano',    startMs: at(16), endMs: at(17) },
+    { id: 'clinic', title: 'Clinic Group Meeting', startMs: at(18), endMs: at(19) },
+    { id: 'grut', title: 'Algs Grutoring', startMs: at(20), endMs: at(21) },
+  ]
+
+  const busy: Interval[] = events.map(e => [e.startMs, e.endMs])
+  const gaps = freeGaps({ dayStr: today, tz, workingHours, busy, minMinutes: MIN_GAP_MINUTES })
+
+  const fixture = (over: Partial<HomeTask> & { id: string; title: string }): HomeTask => ({
+    parentId: null, parentTitle: null, type: 'task', priority: 2, urgencyScore: 50,
+    energyRequired: 'medium', minutes: 30, dueDay: null, startDay: null,
+    location: 'anywhere', bufferMinutes: null, scheduledStartISO: null, chainIndex: 0,
+    ...over,
+  })
+
+  const readingParent = fixture({
+    id: 'pp', title: 'Public Policy Readings', priority: 4, urgencyScore: 88, dueDay: today,
+  })
+  const readings = ['Rosner', 'Baumgartner', 'Dahl'].map((t, i) =>
+    resolveAgainstParent(
+      fixture({ id: `read-${i}`, title: t, parentId: 'pp', priority: 1, urgencyScore: 10, minutes: 30, chainIndex: i }),
+      readingParent,
+    ))
+
+  const homeTasks: HomeTask[] = [
+    ...readings,
+    fixture({ id: 'resume', title: 'Update Resume', minutes: 45, priority: 3, urgencyScore: 62 }),
+    fixture({ id: 'grade',  title: 'Grade Algorithms', minutes: 60, priority: 3, urgencyScore: 74, dueDay: today }),
+    fixture({ id: 'print',  title: 'Print Readings', minutes: 15, priority: 2, urgencyScore: 44, location: 'away' }),
+    fixture({ id: 'sheets', title: 'Wash Sheets', minutes: 10, priority: 1, urgencyScore: 18, location: 'home' }),
+    fixture({ id: 'amazon', title: 'Buy stuff from Amazon', minutes: 30, priority: 1, urgencyScore: 10 }),
+    fixture({ id: 'late',   title: 'Reimbursement form', minutes: 20, priority: 2, urgencyScore: 92, dueDay: day(-3).slice(0, 10) }),
+  ]
+
+  const data = buildHome({
+    nowMs: at(13, 30), todayStr: today, tz,
+    gaps, events, tasks: homeTasks, energySchedule: [], bufferMinutes: 15,
+  })
+
+  // HomeView opens task detail from these, so every id it can reach needs a row.
+  const rows = homeTasks.map(h => task({
+    title: h.title, project: h.parentId ? PP : INBOX,
+    estimated_minutes: h.minutes, priority: h.priority as 1 | 2 | 3 | 4,
+  }))
+  rows.forEach((r, i) => { (r as { id: string }).id = homeTasks[i].id })
+
+  return (
+    <TimerProvider>
+      <div className="h-[46rem] overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
+        <HomeView
+          data={data}
+          dayStr={today}
+          tz={tz}
+          allDayEvents={[{ id: 'bday', title: 'Mom’s birthday' }]}
+          tasks={rows}
+          habits={HABITS.map(h => h.t)}
+          streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
+          projects={[PP, TEACH, CLIN, HOME, COURSE]}
+          gcalWriteEnabled
+          calendarConnected
+          lastSyncedISO={SYNCED_2H_AGO}
+        />
+      </div>
+    </TimerProvider>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -395,6 +492,13 @@ export default function DesignPreview() {
         <div className="flex flex-col gap-14">
           {!only && (
             <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Home — today</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <HomePreview />
+              </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Settings — simple / advanced</h2>

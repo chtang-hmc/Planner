@@ -6,13 +6,12 @@ import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT }
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
-import { proposeSchedule, planDay, type ExistingItem } from '@/app/actions/scheduling'
+import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
 import MicroReflection from '@/components/MicroReflection'
 import TaskDetail from '@/components/TaskDetail'
 import AddTaskModal from '@/components/AddTaskModal'
 import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
-import DayPlanModal from '@/components/DayPlanModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
@@ -82,10 +81,6 @@ export default function TaskList({
   const [schedulePreview, setSchedulePreview] = useState<{
     loading?: boolean; blocks: PreviewBlock[]; unschedulable: SchedulerTask[]; existing: ExistingItem[]
   } | null>(null)
-  const [dayPlan, setDayPlan] = useState<{
-    blocks: PreviewBlock[]; attackList: Parameters<typeof DayPlanModal>[0]['attackList']
-    unschedulable: SchedulerTask[]; existing: ExistingItem[]
-  } | null>(null)
   const [scheduling, setScheduling] = useState(false)
   const [, startTransition] = useTransition()
 
@@ -97,17 +92,6 @@ export default function TaskList({
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     'UTC',
   )
-  // Today in that zone, which is what the Plan Day field starts on — but the
-  // user can pick another day, so it is derived with an override rather than
-  // seeded into state by an effect. Null means "they have not chosen", which is
-  // what lets the default follow the zone once it resolves on the client.
-  const todayInTz = useStored(
-    () => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date()),
-    '',
-  )
-  const [planDayOverride, setPlanDayOverride] = useState<string | null>(null)
-  const planDayDate = planDayOverride ?? todayInTz
-
   function handleScheduleWeek() {
     if (!gcalWriteEnabled) return
     setScheduling(true)
@@ -130,28 +114,6 @@ export default function TaskList({
         // Don't strand the modal in its loading state if the proposal throws
         console.error('proposeSchedule failed', err)
         setSchedulePreview(null)
-      } finally {
-        setScheduling(false)
-      }
-    })
-  }
-
-  function handlePlanDay() {
-    if (!gcalWriteEnabled) return
-    setScheduling(true)
-    startTransition(async () => {
-      try {
-        const res = await planDay(tz, planDayDate)
-        setDayPlan({
-          blocks: res.proposedBlocks.map(b => ({
-            taskId: b.taskId, taskTitle: b.taskTitle, taskPriority: b.taskPriority,
-            startISO: b.startISO, endISO: b.endISO,
-            segmentIndex: b.segmentIndex, totalSegments: b.totalSegments, energyMatch: b.energyMatch,
-          })),
-          attackList: res.attackList,
-          unschedulable: res.unschedulable,
-          existing: res.existing,
-        })
       } finally {
         setScheduling(false)
       }
@@ -335,34 +297,19 @@ export default function TaskList({
                   filter row also stops the toolbar wrapping into a stray line
                   holding nothing but these two. */}
               <div className="flex items-center gap-2 shrink-0">
+                {/* Planning one day moved to Home, which is the page you
+                    land on and where the day is already drawn. The week is
+                    still a list-level action: it is about the backlog, not
+                    about today. */}
                 {gcalWriteEnabled && (
-                  <>
-                    <div className={`${CONTROL} hidden md:flex items-center overflow-hidden`}>
-                      <input
-                        type="date"
-                        value={planDayDate}
-                        onChange={e => setPlanDayOverride(e.target.value)}
-                        disabled={scheduling}
-                        className="px-2 h-full text-xs bg-transparent text-slate-600 dark:text-slate-300 focus:outline-none disabled:opacity-40"
-                      />
-                      <button
-                        onClick={handlePlanDay}
-                        disabled={scheduling || !planDayDate}
-                        title="Plan this day — rank and schedule its tasks"
-                        className="px-2.5 h-full text-xs font-medium text-slate-500 hover:text-accent-600 dark:hover:text-accent-400 border-l border-slate-200 dark:border-slate-700 disabled:opacity-40 transition-colors"
-                      >
-                        {scheduling ? '…' : 'Plan'}
-                      </button>
-                    </div>
-                    <button
-                      onClick={handleScheduleWeek}
-                      disabled={scheduling}
-                      title="Schedule my week — auto-fill the week with your tasks"
-                      className={`${CONTROL} px-3 font-medium text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40`}
-                    >
-                      {scheduling ? '…' : 'Schedule week'}
-                    </button>
-                  </>
+                  <button
+                    onClick={handleScheduleWeek}
+                    disabled={scheduling}
+                    title="Schedule my week — auto-fill the week with your tasks"
+                    className={`${CONTROL} px-3 font-medium text-slate-500 hover:border-accent-400 hover:text-accent-600 dark:hover:text-accent-400 disabled:opacity-40`}
+                  >
+                    {scheduling ? '…' : 'Schedule week'}
+                  </button>
                 )}
                 <button
                   onClick={() => openAddTask()}
@@ -562,18 +509,6 @@ export default function TaskList({
         />
       )}
 
-      {/* Plan my day */}
-      {dayPlan && (
-        <DayPlanModal
-          existing={dayPlan.existing}
-          proposedBlocks={dayPlan.blocks}
-          attackList={dayPlan.attackList}
-          unschedulable={dayPlan.unschedulable}
-          dateStr={planDayDate}
-          onClose={() => setDayPlan(null)}
-          onConfirmed={() => setDayPlan(null)}
-        />
-      )}
     </>
   )
 }

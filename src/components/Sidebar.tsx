@@ -15,6 +15,7 @@ import {
 } from '@/lib/sidebar-prefs'
 
 const NAV = [
+  { href: '/',          label: 'Home',      icon: '◆' },
   { href: '/tasks',     label: 'Tasks',     icon: '✓' },
   { href: '/habits',    label: 'Habits',    icon: '◎' },
   { href: '/projects',  label: 'Projects',  icon: '⊞' },
@@ -150,7 +151,10 @@ export default function Sidebar({ projects }: { projects: Project[] }) {
       {/* Primary nav */}
       <nav className="flex flex-col gap-0.5 mb-6">
         {NAV.map(({ href, label, icon }) => {
-          const active = path === href || (href !== '/tasks' && path.startsWith(href))
+          // '/' is a prefix of every route, and /tasks has no children, so both
+          // are exact matches; everything else lights up for its subpages too.
+          const active = path === href
+            || (href !== '/' && href !== '/tasks' && path.startsWith(href))
           return (
             <Link
               key={href}

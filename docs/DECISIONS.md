@@ -1195,3 +1195,98 @@ import { updateTask } from '@/app/actions/tasks'
 ### Quick-add parsing (Claude API)
 
 Natural-language task input is parsed server-side via `@anthropic-ai/sdk`. The result (`ParsedQuickAdd`) includes `title`, `due_date`, `estimated_minutes`, `energy_required`, `project_hint`, and `is_calendar_event`. The Claude call happens in a Server Action so the API key never reaches the client.
+
+---
+
+## Home / Today
+
+The landing page, and the answer to *"what should I do now?"*. `/` renders it
+instead of redirecting to `/tasks`. The full reasoning is in
+[`docs/HOME.md`](HOME.md); what follows is what was settled while building it.
+
+### Plan Day was promoted, not duplicated
+
+`DayPlanModal` showed one day's ranked list, its proposed blocks and the
+calendar around them — most of this page behind a date picker in a toolbar.
+Building Home beside it would have left four surfaces showing time. The modal,
+its date picker, the `planDay` action and `buildAttackList` are all deleted;
+what they did well — writing blocks to Google — is the **Block today** button,
+which runs `proposeSchedule(1, …)` and opens the existing
+`SchedulePreviewModal`. One preview surface instead of two nearly identical ones.
+
+The one-way door is muscle memory: if Home does not land, putting the modal back
+is easy, but changing the habit twice is not.
+
+### The page never calls Google
+
+Everything Home needs is already local — `calendar_events` is synced, tasks and
+habits are ours, working hours are config. The freeBusy round trip is what made
+"Schedule my week" unpleasant and it must not sit on the landing path.
+
+The cost is staleness, and the page states it rather than hiding it: migration
+0018 adds `user_integrations.last_synced_at`, stamped after a successful pull,
+and the header reads *"Synced 2h ago · refresh"*. NULL prints nothing at all —
+"unknown" and "never" are different claims, and only one of them is true of a
+database that predates the column.
+
+### `freeGaps` is lifted out of the scheduler
+
+`workWindow`, the break placement and the free-slot arithmetic were closures
+inside `runScheduler`. They are now `workWindowFor`, `placeBreaks` and
+`freeGaps` at module scope, and `runScheduler` calls them — so Home and a
+proposed schedule cannot disagree about where the free time is.
+
+`freeGaps` is where the **overlap trap** lives, and it has its own tests. Fall
+Fest 11:00–13:15 runs under ENTR 179A 11:00–12:15; the free block after them
+starts at 13:15, not 12:15. `subtractIntervals` removes each busy span from
+what is left of the day rather than walking events pairwise, so a nested event
+takes nothing the longer one had not already taken.
+
+### Away work pays the transition twice
+
+A task's `buffer_minutes` (or the global default) is charged at each end of its
+block; a task with `location: 'away'` is charged **double** at each end, for the
+trip out and the trip back. With the default 15 minutes an errand needs a full
+hour of clear space, which is what keeps it out of the half-hour between two
+classes — the case the spec names.
+
+Alternatives considered: a minimum-gap constant for away work (arbitrary, and a
+second knob saying the same thing as the buffer), and asking the calendar where
+the neighbouring events are (Google does not carry a location we could trust).
+
+### Each gap gets work the earlier gaps did not take
+
+Ranking every gap independently gives every gap the same most-urgent task, and
+the column becomes one answer printed five times — which is what the first
+build did. `buildHome` walks the day in order and spends each suggestion once,
+so the shape reads as a plan: the readings in the afternoon, the errand in the
+evening. The first gap is exempt from nothing, so it agrees with "Do this now"
+above it.
+
+### A subtask's importance is its parent's — resolved at the edge
+
+Subtasks are created at priority 1, urgency 0, no deadline, so ranked on their
+own rows the most urgent work in the app sorts to the bottom. `proposeSchedule`
+already re-reads the parent on every run; Home would have been the fourth
+reader of that rule, so it happens once in `resolveAgainstParent` and nothing
+downstream has to remember.
+
+The same rule makes "Needs attention" readable: three readings under one parent
+collapse to one line, *Readings · 3 steps*, which opens the work rather than
+one step of it. A collapsed row has no completion circle — three readings are
+not finished in one click.
+
+### Clock times keep their meridiem
+
+The spec's mock-up wrote times bare ("1:15 – 2:45"). Working hours in this app
+can run 10:00 → 01:30, and the live day this was checked against had an event
+at 10:00am and a free stretch starting at 10:00pm — printed identically.
+`formatClock` returns "10:00pm", lowercase and unspaced so it stays a time
+rather than a sentence.
+
+### One place to bust the task views
+
+`revalidateTaskViews()` in `src/lib/revalidate.ts` replaces twenty-six
+`revalidatePath('/tasks')` calls. Home and `/tasks` read the same rows, and
+"remember to add a second line at each of twenty-six sites" is not a rule
+anyone keeps. The next surface that reads tasks changes one function.

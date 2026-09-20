@@ -161,10 +161,20 @@ export function HabitRow({ task, streak, pending, onOpen, onDone, onLogTime }: {
   )
 }
 
-/** Container for a run of habit rows — matches the Rail task surface. */
-export function HabitList({ count, children }: { count: number; children: React.ReactNode }) {
+/**
+ * Container for a run of habit rows — matches the Rail task surface.
+ *
+ * `className` carries the section's own spacing. It defaults to the gap the
+ * task list wants below the list above it; a parent that already spaces its
+ * children (Home's column) passes an empty string rather than getting both.
+ */
+export function HabitList({ count, children, className = 'mt-8' }: {
+  count: number
+  children: React.ReactNode
+  className?: string
+}) {
   return (
-    <div className="mt-8">
+    <div className={className}>
       <div className="flex items-baseline gap-3 mb-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Habits</h2>
         <span className="text-xs text-slate-400 tabular-nums">{count}</span>

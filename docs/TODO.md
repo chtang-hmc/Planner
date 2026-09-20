@@ -52,6 +52,15 @@ starting at 9 against an 11am deadline began in time and finished late.
 Three sites changed, including the fixed-offset sequence where the *last* stage
 is what has to land in time. The next "Schedule week" is the first live run.
 
+### Home's "Block today" has never written to a real calendar
+
+*Checked 2026-09-19.* The page itself was verified against the live database —
+today's six events, three gaps, the suggestions and the two attention rows all
+came out right — but that path is read-only. The button runs
+`proposeSchedule(1, …)` and `confirmSchedule`, which is the same code
+"Schedule week" uses, so the risk is in the one-day window rather than in the
+write. First real click is the first real test.
+
 ### `every!` — recurrence anchored on completion
 
 `completeTask` anchors on the completion day rather than the due date when
