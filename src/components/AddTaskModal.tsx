@@ -129,11 +129,15 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
    * no network, no database — which is what lets the field highlight as you
    * type rather than after a round trip.
    */
-  const quick = useMemo(() => parseQuickAdd(text, { tz }), [text, tz])
+  const quick = useMemo(
+    () => parseQuickAdd(text, { tz, projects: projects.map(p => ({ id: p.id, name: p.name })) }),
+    [text, tz, projects],
+  )
 
   /** Apply what the grammar found. Instant, and the Enter key's whole job. */
   function applyQuickAdd() {
-    if (!quick.title && !quick.dueDay && !quick.rrule) return
+    if (!quick.title && !quick.dueDay && !quick.rrule
+        && !quick.projectId && !quick.priority && !quick.estimateMinutes) return
     if (quick.title)  setTitle(quick.title)
     if (quick.dueISO) setDueDate(quick.dueISO.slice(0, 10))
     // A repeat typed in the text wins over one left behind by a previous add:
@@ -144,6 +148,9 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
       setDueTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
     }
     if (quick.recurrenceFromCompletion) setFromCompletion(true)
+    if (quick.projectId)      setProject(quick.projectId)
+    if (quick.priority)       setPriority(quick.priority)
+    if (quick.estimateMinutes) setEstimate(String(quick.estimateMinutes))
     setParsed(null)
     setParseError(null)
     inputRef.current?.focus()

@@ -833,6 +833,22 @@ It is deliberately *not* folded into `due_date`. That column is a `timestamptz` 
 
 Minutes-past-midnight is also the right *type*. A wall-clock time is timezone-independent by nature: "due at 5pm" means 5pm after a move or a DST change, which an instant would not. `formatDue` appends it and deliberately does not let it affect the tone — a task due at 9am today reads as due today at half past nine, not overdue. The scheduler does not yet treat it as a fixed appointment; that is a separate decision about pinning.
 
+### `p1` is Low here, and that is the opposite of Todoist
+
+Todoist's `p1` is its most urgent. This app's priority 1 is Low and 4 is Critical, and the grammar follows **this app**, because the add-task form sitting beside the quick-add field offers priority as four buttons labelled `1 2 3 4` with `4` as Critical. `p1` meaning something other than the button marked `1`, in the same form, would be a trap set for the one person using it.
+
+The help page says so in as many words, since the Todoist habit is what people arrive with.
+
+### `#project` never creates a project
+
+Matching is case-insensitive, and a unique prefix is enough — `#teach` finds Teaching. Two things deliberately do *not* happen: an ambiguous prefix does not pick one, and a name that matches nothing does not create it. Both leave the token in the title, visibly doing nothing, which is the same contract the rest of the grammar keeps (`feb 30` is declined rather than rounded).
+
+Creating on a typo would be worse here than elsewhere: the add flow has no undo, so a mistyped `#Tecahing` would leave a permanent second project behind. `#{Public Policy}` handles a name with spaces, since otherwise there is no way to tell where the name stops and the task resumes.
+
+### Metadata is scanned before the date grammar
+
+The same discipline as recurrence-before-date, for the same reason. `#{4th floor}` contains an ordinal the monthly-repeat rule would claim; `for 2h` contains a bare number. Each pass masks its span before the next runs, so no later rule can read a digit that already belongs to something else.
+
 ### Staged
 
 Dates, times and recurrence are in, and both are now stored. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
