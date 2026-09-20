@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, CalendarEvent, HabitStreak } from '@/types'
 import TaskList from './TaskList'
 import { fetchWeekStartDay } from '@/lib/week'
+import { fetchTimezone, todayStr as todayIn } from '@/lib/day'
 import { normalizeRelevance } from '@/lib/relevance'
 import CalendarPanel from '@/components/CalendarPanel'
 
@@ -53,6 +54,11 @@ export default async function TasksPage() {
 
   const weekStartDay = await fetchWeekStartDay(db)
 
+  // Resolved here rather than in the browser: the relevance filter decides how
+  // many rows the header counts, and a server rendering in UTC beside a browser
+  // that is not would build two different headers for the same list.
+  const today = todayIn(await fetchTimezone(db))
+
   const gcalWriteEnabled = (integration?.scopes ?? []).includes(
     'https://www.googleapis.com/auth/calendar.events'
   )
@@ -75,6 +81,7 @@ export default async function TasksPage() {
           gcalWriteEnabled={gcalWriteEnabled}
           weekStartDay={weekStartDay}
           relevance={relevance}
+          todayStr={today}
         />
       </div>
       <CalendarPanel
