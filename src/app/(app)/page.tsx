@@ -23,7 +23,7 @@ import {
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
 import {
-  buildHome, describeAge, freeTimeBasis, resolveAgainstParent, MIN_GAP_MINUTES,
+  buildHome, dayReason, describeAge, freeTimeBasis, resolveAgainstParent, MIN_GAP_MINUTES,
   type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { Task, Project, INBOX_PROJECT } from '@/types'
@@ -155,9 +155,21 @@ export default async function HomePage() {
   const events = [...timedEvents, ...bookedBlocks]
   const busy: Interval[] = events.map(e => [e.startMs, e.endMs])
 
-  const gaps = freeGaps({
+  const lastSyncedISO = (integration as { last_synced_at?: string } | null)?.last_synced_at ?? null
+
+  // Whether the gaps below are observed or assumed. `timedEvents` rather than
+  // every row: an all-day event is held out of the busy set, so it is no
+  // evidence that the day's hours are known.
+  const basis = freeTimeBasis({
+    calendarConnected: !!integration,
+    lastSyncedISO,
+    eventCount: timedEvents.length,
+  })
+
+  const dayGaps = freeGaps({
     dayStr: today, tz, workingHours, busy, breaks, minMinutes: MIN_GAP_MINUTES,
   })
+  const gaps = dayGaps.gaps
 
   // ── Tasks, resolved ─────────────────────────────────────────────────────────
   const toHomeTask = (t: typeof rows[number], chainIndex: number): HomeTask => ({
@@ -214,6 +226,7 @@ export default async function HomePage() {
     // eslint-disable-next-line react-hooks/purity
     nowMs: Date.now(), todayStr: today, tz,
     gaps, workWindow, events, tasks, energySchedule, bufferMinutes,
+    reason: dayReason(basis, dayGaps),
   })
 
   // ── Habits ──────────────────────────────────────────────────────────────────
@@ -237,7 +250,6 @@ export default async function HomePage() {
     'https://www.googleapis.com/auth/calendar.events'
   )
 
-  const lastSyncedISO = (integration as { last_synced_at?: string } | null)?.last_synced_at ?? null
 
   // Measured here, not in the view: a duration read during render is read once
   // on the server and again when the browser hydrates, and the two answers
@@ -246,14 +258,6 @@ export default async function HomePage() {
   // eslint-disable-next-line react-hooks/purity
   const syncAge = describeAge(lastSyncedISO, Date.now())
 
-  // Whether the gaps below are observed or assumed. `timedEvents` rather than
-  // every row: an all-day event is held out of the busy set, so it is no
-  // evidence that the day's hours are known.
-  const basis = freeTimeBasis({
-    calendarConnected: !!integration,
-    lastSyncedISO,
-    eventCount: timedEvents.length,
-  })
 
   return (
     <HomeView

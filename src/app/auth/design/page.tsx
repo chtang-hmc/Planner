@@ -375,7 +375,7 @@ function HomePreview() {
   ]
 
   const busy: Interval[] = events.map(e => [e.startMs, e.endMs])
-  const gaps = freeGaps({ dayStr: today, tz, workingHours, busy, minMinutes: MIN_GAP_MINUTES })
+  const gaps = freeGaps({ dayStr: today, tz, workingHours, busy, minMinutes: MIN_GAP_MINUTES }).gaps
 
   const fixture = (over: Partial<HomeTask> & { id: string; title: string }): HomeTask => ({
     parentId: null, parentTitle: null, type: 'task', priority: 2, urgencyScore: 50,

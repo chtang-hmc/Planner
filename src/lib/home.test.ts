@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
-  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge, freeTimeBasis,
+  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge, freeTimeBasis, dayReason, isConsumed,
   type HomeTask, type HomeEvent,
 } from '@/lib/home'
 
@@ -43,13 +43,13 @@ const BASE = {
 
 describe('freeGaps', () => {
   it('is the whole working window on an empty day', () => {
-    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(), busy: [] })
+    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(), busy: [] }).gaps
     expect(gaps).toEqual([[at('9:00'), at('22:00')]])
   })
 
   it('returns nothing when the day is switched off', () => {
     const wh = hours().map(w => w.day_of_week === 3 ? { ...w, enabled: false } : w)
-    expect(freeGaps({ dayStr: DAY, tz: TZ, workingHours: wh, busy: [] })).toEqual([])
+    expect(freeGaps({ dayStr: DAY, tz: TZ, workingHours: wh, busy: [] }).gaps).toEqual([])
   })
 
   /**
@@ -64,7 +64,7 @@ describe('freeGaps', () => {
         [at('11:00'), at('13:15')],   // Fall Fest
         [at('11:00'), at('12:15')],   // ENTR 179A, nested inside it
       ],
-    })
+    }).gaps
     expect(gaps).toEqual([
       [at('9:00'),  at('11:00')],
       [at('13:15'), at('22:00')],
@@ -76,7 +76,7 @@ describe('freeGaps', () => {
     const gaps = freeGaps({
       dayStr: DAY, tz: TZ, workingHours: hours(),
       busy: [[at('11:00'), at('13:00')], [at('12:00'), at('14:00')]],
-    })
+    }).gaps
     expect(gaps[1][0]).toBe(at('14:00'))
   })
 
@@ -84,7 +84,7 @@ describe('freeGaps', () => {
     const gaps = freeGaps({
       dayStr: DAY, tz: TZ, workingHours: hours(),
       busy: [[at('11:00'), at('12:00')], [at('12:00'), at('13:00')]],
-    })
+    }).gaps
     expect(gaps).toEqual([[at('9:00'), at('11:00')], [at('13:00'), at('22:00')]])
   })
 
@@ -93,7 +93,7 @@ describe('freeGaps', () => {
       label: 'Lunch', durationMinutes: 30,
       startHour: 12, startMinute: 0, endHour: 14, endMinute: 0, cooldownMinutes: 0,
     }
-    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(), busy: [], breaks: [lunch] })
+    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(), busy: [], breaks: [lunch] }).gaps
     // Takes the earliest slot in its window.
     expect(gaps).toEqual([[at('9:00'), at('12:00')], [at('12:30'), at('22:00')]])
   })
@@ -103,7 +103,7 @@ describe('freeGaps', () => {
       dayStr: DAY, tz: TZ, workingHours: hours(),
       busy: [[at('9:10'), at('12:00')]],
       minMinutes: 15,
-    })
+    }).gaps
     expect(gaps).toEqual([[at('12:00'), at('22:00')]])   // the 10-minute sliver is gone
   })
 })
@@ -233,13 +233,13 @@ describe('right now', () => {
     expect(rn.inEvent).toBeNull()
     expect(rn.gap?.minutes).toBe(60)
     expect(rn.gap?.hasStarted).toBe(true)
-    expect(rn.doneForToday).toBe(false)
+    expect(rn.reason).toBe('available')
   })
 
   it('knows when the day has no free time left', () => {
-    const rn = rightNowFrom({ nowMs: at('21:00'), gaps, events, workWindow: window })
+    const rn = rightNowFrom({ nowMs: at('21:00'), gaps, events, workWindow: window, reason: 'consumed' })
     expect(rn.gap).toBeNull()
-    expect(rn.doneForToday).toBe(true)
+    expect(rn.reason).toBe('consumed')
   })
 })
 
@@ -289,7 +289,7 @@ describe('buildHome', () => {
     dayStr: DAY, tz: TZ, workingHours: hours(),
     busy: events.map(e => [e.startMs, e.endMs] as [number, number]),
     minMinutes: 15,
-  })
+  }).gaps
 
   const tasks = [
     task({ id: 'late',  title: 'Late thing',  dueDay: '2026-09-12', urgencyScore: 95 }),
@@ -331,7 +331,7 @@ describe('buildHome', () => {
   it('offers nothing once the working day is over', () => {
     const d = buildHome({ ...BASE, nowMs: at('23:00'), gaps, events, tasks })
     expect(d.suggestions).toEqual([])
-    expect(d.rightNow.doneForToday).toBe(true)
+    expect(d.rightNow.reason).toBe('consumed')
   })
 })
 
@@ -343,7 +343,7 @@ describe('one answer is not printed five times', () => {
     dayStr: DAY, tz: TZ, workingHours: hours(),
     busy: events.map(e => [e.startMs, e.endMs] as [number, number]),
     minMinutes: 15,
-  })
+  }).gaps
   const tasks = [
     task({ id: 'one',   minutes: 30, urgencyScore: 90 }),
     task({ id: 'two',   minutes: 30, urgencyScore: 80 }),
@@ -425,7 +425,7 @@ describe('a working day is not a calendar day', () => {
       dayStr: DAY, tz: TZ, workingHours: lateHours(),
       busy: [[at('0:15', '2026-09-17'), at('1:00', '2026-09-17')]],
       minMinutes: 15,
-    })
+    }).gaps
     expect(gaps).toEqual([
       [at('10:00'),            at('0:15', '2026-09-17')],
       [at('1:00', '2026-09-17'), at('1:30', '2026-09-17')],
@@ -433,7 +433,7 @@ describe('a working day is not a calendar day', () => {
   })
 
   it('is one unbroken stretch when that tail is clear', () => {
-    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: lateHours(), busy: [], minMinutes: 15 })
+    const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: lateHours(), busy: [], minMinutes: 15 }).gaps
     expect(gaps).toEqual([[at('10:00'), at('1:30', '2026-09-17')]])
   })
 })
@@ -544,5 +544,72 @@ describe('free time is only asserted when something asserts it', () => {
     // earns the word "free".
     expect(freeTimeBasis({ calendarConnected: true, lastSyncedISO: '2026-09-20T07:00:00Z', eventCount: 0 }))
       .toEqual({ observed: true })
+  })
+})
+
+describe('absence of data and data showing absence are different facts', () => {
+  /**
+   * `freeGaps` used to return the same empty list for three different days,
+   * and "No working time left today" was said about all three. It is true of
+   * exactly one.
+   */
+  const hours = (enabled: boolean): WorkingHours[] => Array.from({ length: 7 }, (_, d) => ({
+    day_of_week: d, start_hour: 9, start_minute: 0,
+    end_hour: 22, end_minute: 0, enabled,
+  }))
+
+  it('calls a switched-off weekday a day off', () => {
+    const r = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(false), busy: [] })
+    expect(r).toEqual({ reason: 'dayOff', gaps: [] })
+  })
+
+  it('calls a fully booked day consumed', () => {
+    const r = freeGaps({
+      dayStr: DAY, tz: TZ, workingHours: hours(true),
+      busy: [[at('9:00'), at('22:00')]],
+    })
+    expect(r.reason).toBe('consumed')
+    expect(r.gaps).toEqual([])
+  })
+
+  it('calls a day with room available', () => {
+    expect(freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(true), busy: [] }).reason)
+      .toBe('available')
+  })
+
+  it('does not decide "unknown" itself', () => {
+    // It is handed working hours and busy spans and could only ever guess at
+    // whether a calendar exists. That answer lives with the thing that knows.
+    const seen = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(true), busy: [] })
+    expect(dayReason({ observed: false, reason: 'no-calendar' }, seen)).toBe('unknown')
+    expect(dayReason({ observed: true }, seen)).toBe('available')
+  })
+
+  it('leaves exactly one cause that has been spent', () => {
+    expect(isConsumed('consumed')).toBe(true)
+    expect(isConsumed('dayOff')).toBe(false)
+    expect(isConsumed('unknown')).toBe(false)
+  })
+})
+
+describe('the sentence says which kind of nothing it is', () => {
+  const say = (reason: 'unknown' | 'dayOff' | 'consumed') =>
+    rightNowSentence(
+      rightNowFrom({ nowMs: at('21:00'), gaps: [], events: [], workWindow: null, reason }),
+      TZ,
+    )
+
+  it('does not promise free time on a day nobody has looked at', () => {
+    expect(say('unknown')).toBe('Planner cannot see your day yet.')
+  })
+
+  it('does not say a day off was spent', () => {
+    // The bug the audit found: "No working time left today" on a Sunday with
+    // working hours switched off, where nothing had been used at all.
+    expect(say('dayOff')).toBe('Today is a day off.')
+  })
+
+  it('says a full day was spent, because it was', () => {
+    expect(say('consumed')).toBe('No working time left today.')
   })
 })
