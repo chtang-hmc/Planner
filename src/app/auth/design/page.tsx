@@ -36,6 +36,8 @@ import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
 import HomeView from '@/app/(app)/HomeView'
 import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
+import { CapacityBand } from '@/components/ds/CapacityBand'
+import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
 import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
@@ -640,6 +642,63 @@ function RowSpecimen() {
   )
 }
 
+/**
+ * All six states of the band, in the order they were designed in — which is
+ * also the order of how obvious they are. State 3 came first and the other
+ * five exist because a band that only knows how to say "5h 35m will not fit"
+ * says the wrong thing on every other kind of day.
+ */
+function BandSpecimen() {
+  const m = (mins: number, from: number): [number, number] => [from * 60_000, (from + mins) * 60_000]
+
+  const states: { note: string; input: BandInput }[] = [
+    {
+      note: '1 · unknown — no calendar, so no free-time claim anywhere',
+      input: { reason: 'unknown', capacity: { dueTotal: 670, freeBeforeCutoff: 0, freeAfterCutoff: 0 },
+               gaps: [], dueCount: 11 },
+    },
+    {
+      note: '2 · day off — free time known and zero, so no ratio to draw',
+      input: { reason: 'dayOff', capacity: { dueTotal: 670, freeBeforeCutoff: 0, freeAfterCutoff: 0 },
+               gaps: [], dueCount: 11, nextWorkingDay: 'Monday', nextWorkingDayFree: 290 },
+    },
+    {
+      note: '3 · over capacity — the bar is the work, the track never shows',
+      input: { reason: 'available', capacity: { dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 },
+               gaps: [m(105, 780), m(210, 1320)], dueCount: 10 },
+    },
+    {
+      note: '4 · fits, with slack — the bar is the free time, the track is the slack',
+      input: { reason: 'available', capacity: { dueTotal: 315, freeBeforeCutoff: 240, freeAfterCutoff: 205 },
+               gaps: [m(240, 600), m(205, 1320)], dueCount: 6,
+               start: { title: 'Clinic SOW', gapMinutes: 75, beforeTitle: 'Piano' } },
+    },
+    {
+      note: '4b · fragmented — nothing can be placed, so the bar is the gaps',
+      input: { reason: 'available', capacity: { dueTotal: 150, freeBeforeCutoff: 185, freeAfterCutoff: 0 },
+               gaps: [m(45, 600), m(40, 700), m(30, 800), m(30, 900), m(25, 1000), m(15, 1100)],
+               dueCount: 3, smallestTaskMinutes: 60 },
+    },
+    {
+      note: '5 · nothing due — an empty track, and no primary button',
+      input: { reason: 'available', capacity: { dueTotal: 0, freeBeforeCutoff: 445, freeAfterCutoff: 0 },
+               gaps: [m(445, 600)], dueCount: 0,
+               nextDue: { title: 'OS HW 2', when: 'tomorrow', minutes: 180 } },
+    },
+  ]
+
+  return (
+    <div className="flex flex-col gap-5">
+      {states.map(s => (
+        <div key={s.note}>
+          <p className="text-eyebrow uppercase tracking-wider text-ink-faint mb-1.5">{s.note}</p>
+          <CapacityBand input={s.input} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -711,6 +770,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <RowSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Capacity band — six states</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <BandSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">

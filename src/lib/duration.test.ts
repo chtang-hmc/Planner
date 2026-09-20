@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { formatDuration } from '@/lib/duration'
+import { formatMinutes } from '@/lib/task-format'
 import {
   capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor, slackWidth,
   deficit, slack, freeTotal, NO_CAPACITY, type Capacity,
@@ -18,6 +19,15 @@ describe('a duration in a column', () => {
   it('leaves an hourless duration unpadded', () => {
     expect(formatDuration(45)).toBe('45m')
     expect(formatDuration(5)).toBe('5m')
+  })
+
+  it('is not the prose form, which drops a zero minutes place', () => {
+    // `3h 5m` reads as a typo and `1h 00m` reads as a spreadsheet. The column
+    // form pads unconditionally so the minutes place cannot move down a list;
+    // prose pads only where the minutes show.
+    expect(formatMinutes(185)).toBe('3h 05m')
+    expect(formatMinutes(60)).toBe('1h')
+    expect(formatDuration(60)).toBe('1h 00m')
   })
 
   it('says nothing rather than "0m"', () => {

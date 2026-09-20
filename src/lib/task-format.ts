@@ -7,11 +7,23 @@
  * that makes a settings-driven look feel like four different apps.
  */
 
+/**
+ * A duration in prose: `45m`, `1h`, `3h 05m`.
+ *
+ * The minutes are padded where they show and dropped where they are zero —
+ * `3h 05m` rather than `3h 5m`, and `1h` rather than `1h 00m`. That is the
+ * form the design uses everywhere outside a column, and it is worth the two
+ * lines: "3h 5m" reads as a typo, and "1h 00m" reads as a spreadsheet.
+ *
+ * `formatDuration` in lib/duration.ts is the column form, which pads
+ * unconditionally so the minutes place cannot move down a list. Two functions
+ * rather than a flag, because a caller should have to say which it means.
+ */
 export function formatMinutes(m: number | null): string {
   if (!m) return '—'
   if (m < 60) return `${m}m`
   const h = Math.floor(m / 60), rem = m % 60
-  return rem ? `${h}h ${rem}m` : `${h}h`
+  return rem ? `${h}h ${String(rem).padStart(2, '0')}m` : `${h}h`
 }
 
 /** Today where the user is, as YYYY-MM-DD — the shape a due date slices to. */
