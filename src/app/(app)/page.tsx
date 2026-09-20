@@ -23,7 +23,7 @@ import {
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
 import {
-  buildHome, describeAge, resolveAgainstParent, MIN_GAP_MINUTES,
+  buildHome, describeAge, freeTimeBasis, resolveAgainstParent, MIN_GAP_MINUTES,
   type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { Task, Project, INBOX_PROJECT } from '@/types'
@@ -237,12 +237,23 @@ export default async function HomePage() {
     'https://www.googleapis.com/auth/calendar.events'
   )
 
+  const lastSyncedISO = (integration as { last_synced_at?: string } | null)?.last_synced_at ?? null
+
   // Measured here, not in the view: a duration read during render is read once
   // on the server and again when the browser hydrates, and the two answers
   // straddle a boundary often enough to throw the tree away. Same reason the
   // clock read above is a property of the request rather than of a render.
   // eslint-disable-next-line react-hooks/purity
-  const syncAge = describeAge((integration as { last_synced_at?: string } | null)?.last_synced_at ?? null, Date.now())
+  const syncAge = describeAge(lastSyncedISO, Date.now())
+
+  // Whether the gaps below are observed or assumed. `timedEvents` rather than
+  // every row: an all-day event is held out of the busy set, so it is no
+  // evidence that the day's hours are known.
+  const basis = freeTimeBasis({
+    calendarConnected: !!integration,
+    lastSyncedISO,
+    eventCount: timedEvents.length,
+  })
 
   return (
     <HomeView
@@ -258,6 +269,7 @@ export default async function HomePage() {
       gcalWriteEnabled={gcalWriteEnabled}
       calendarConnected={!!integration}
       syncAge={syncAge}
+      freeTime={basis}
     />
   )
 }

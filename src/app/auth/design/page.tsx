@@ -463,6 +463,7 @@ function HomePreview() {
           gcalWriteEnabled
           calendarConnected
           syncAge="2h ago"
+          freeTime={{ observed: true }}
         />
       </div>
     </TimerProvider>
