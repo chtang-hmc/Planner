@@ -35,13 +35,14 @@ import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
 import HomeView from '@/app/(app)/HomeView'
+import TaskList from '@/app/(app)/tasks/TaskList'
 import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
 import { CapacityBand } from '@/components/ds/CapacityBand'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
 import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
-import { todayStr as todayIn } from '@/lib/day'
+import { todayStr as todayIn, addDays as addDaysStr } from '@/lib/day'
 import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
@@ -717,6 +718,37 @@ function BandSpecimen() {
   )
 }
 
+/**
+ * Tasks·List, against the fixtures.
+ *
+ * The page needs a session, so this is the only way to look at it — and a
+ * rewrite of a list you cannot see is a rewrite you are guessing at.
+ */
+function TaskListPreview() {
+  const today = todayIn(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  const rows = [PARENT, ...KIDS, ...OTHERS]
+  return (
+    <TimerProvider>
+      <div className="h-[44rem] overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
+        <TaskList
+          tasks={rows}
+          projects={[PP, TEACH, CLIN, HOME, COURSE, INBOX]}
+          streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
+          events={[]}
+          gcalWriteEnabled
+          weekStartDay={1}
+          relevance={{ windowDays: 7, minPriority: 3 }}
+          todayStr={today}
+          freeByDay={{
+            [today]:               { before: 105, after: 210 },
+            [addDaysStr(today, 1)]: { before: 290, after: 0 },
+          }}
+        />
+      </div>
+    </TimerProvider>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -788,6 +820,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <RowSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Tasks · List</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <TaskListPreview />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
