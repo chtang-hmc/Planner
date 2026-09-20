@@ -20,6 +20,7 @@
  */
 
 import { formatDuration } from '@/lib/duration'
+import { localMidnight, type Interval } from '@/lib/scheduler'
 
 /** Minutes past local midnight after which free time is second-class. */
 export const LATE_CUTOFF_MINUTES = 22 * 60
@@ -108,4 +109,69 @@ export function capacityVerdict(c: Capacity): { text: string; tone: CapacityTone
     text: spare > 0 ? `fits, ${formatDuration(spare)} to spare` : 'fits exactly',
     tone: 'ok',
   }
+}
+
+// ── Computing it ─────────────────────────────────────────────────────────────
+
+/**
+ * Split the day's free gaps around the cutoff.
+ *
+ * A gap straddling 22:00 contributes to both halves, and a gap running past
+ * midnight is entirely late — which is the normal case here, where the working
+ * window ends at 01:30 and the largest free stretch most days is 22:00–01:30.
+ *
+ * `gaps` comes from `freeGaps`, so the overlap arithmetic and the working
+ * window are already handled and this only has to divide what is left.
+ */
+export function capacityFromGaps(opts: {
+  gaps:           Interval[]
+  dayStr:         string
+  tz:             string
+  /** Minutes of work due. The caller owns which tasks count — see `dueMinutesFor`. */
+  dueMinutes:     number
+  cutoffMinutes?: number
+}): Capacity {
+  const { gaps, dayStr, tz, dueMinutes, cutoffMinutes = LATE_CUTOFF_MINUTES } = opts
+  const cutoffMs = localMidnight(dayStr, tz) + cutoffMinutes * 60_000
+
+  let before = 0
+  let after  = 0
+  for (const [start, end] of gaps) {
+    before += Math.max(0, Math.min(end, cutoffMs) - start)
+    after  += Math.max(0, end - Math.max(start, cutoffMs))
+  }
+
+  return {
+    dueTotal:         Math.max(0, Math.round(dueMinutes)),
+    freeBeforeCutoff: Math.round(before / 60_000),
+    freeAfterCutoff:  Math.round(after  / 60_000),
+  }
+}
+
+/**
+ * Minutes of work due on or before `dayStr`.
+ *
+ * Overdue counts. Work that was due on Friday and is still open is work this
+ * day has to absorb, and a capacity number that ignores it is describing a
+ * lighter day than the one you are in.
+ *
+ * Unestimated tasks contribute nothing, which understates the total — every
+ * open task here has an estimate, so it is not currently a lie, but it would
+ * become one quietly. A task with no estimate is a gap in the input, not a
+ * task that takes no time.
+ *
+ * **Not yet subtracting work already covered by a calendar event.** A task and
+ * the event someone booked for it are the same hour counted twice — "Prep for
+ * Big E&M Grutoring" against the event "Big E&M Grutoring Prep" is a real pair
+ * on this calendar. That needs the task-event link, which is the other half of
+ * this step; until it lands, `dueTotal` is high by the size of any such pair.
+ */
+export function dueMinutesFor(
+  tasks: { dueDay: string | null; minutes: number | null }[],
+  dayStr: string,
+): number {
+  return tasks.reduce(
+    (sum, t) => (t.dueDay != null && t.dueDay <= dayStr ? sum + (t.minutes ?? 0) : sum),
+    0,
+  )
 }

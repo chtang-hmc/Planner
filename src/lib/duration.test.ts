@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { formatDuration } from '@/lib/duration'
 import {
-  capacitySegments, capacityVerdict, deficit, slack, freeTotal, NO_CAPACITY,
-  type Capacity,
+  capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor,
+  deficit, slack, freeTotal, NO_CAPACITY, type Capacity,
 } from '@/lib/capacity'
+import { freeGaps, localMidnight, type WorkingHours } from '@/lib/scheduler'
 
 describe('a duration in a column', () => {
   it('pads the minutes so the place does not move', () => {
@@ -92,5 +93,96 @@ describe('the verdict says which kind of "fits" it is', () => {
   it('says nothing is due rather than that nothing fits', () => {
     expect(capacityVerdict(cap({ freeBeforeCutoff: 300 })))
       .toEqual({ text: 'Nothing due', tone: 'empty' })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TZ  = 'America/Los_Angeles'
+const DAY = '2026-09-16'
+const at  = (hhmm: string, d = DAY) => {
+  const [h, m] = hhmm.split(':').map(Number)
+  return localMidnight(d, TZ) + (h * 60 + m) * 60_000
+}
+
+describe('splitting free time around the cutoff', () => {
+  const from = (gaps: [number, number][], dueMinutes = 0) =>
+    capacityFromGaps({ gaps, dayStr: DAY, tz: TZ, dueMinutes })
+
+  it('counts a gap wholly before the cutoff as early', () => {
+    expect(from([[at('13:00'), at('15:00')]])).toMatchObject({
+      freeBeforeCutoff: 120, freeAfterCutoff: 0,
+    })
+  })
+
+  it('divides a gap that straddles it', () => {
+    expect(from([[at('21:00'), at('23:30')]])).toMatchObject({
+      freeBeforeCutoff: 60, freeAfterCutoff: 90,
+    })
+  })
+
+  it('counts the whole past-midnight tail as late', () => {
+    // The normal case here: working hours run to 01:30, so the largest free
+    // stretch most days is 22:00 to 01:30 and none of it is prime time.
+    expect(from([[at('22:00'), at('1:30', '2026-09-17')]])).toMatchObject({
+      freeBeforeCutoff: 0, freeAfterCutoff: 210,
+    })
+  })
+
+  it('sums across several gaps', () => {
+    const c = from([
+      [at('13:15'), at('14:45')],
+      [at('17:00'), at('18:00')],
+      [at('22:00'), at('1:30', '2026-09-17')],
+    ])
+    expect(c.freeBeforeCutoff).toBe(150)
+    expect(c.freeAfterCutoff).toBe(210)
+    expect(freeTotal(c)).toBe(360)
+  })
+
+  it('reports no free time on a day with no gaps rather than failing', () => {
+    // A day switched off in working hours. Zero capacity is a real answer;
+    // whether it should be *shown* as a deficit is the band's problem.
+    expect(from([], 600)).toEqual({ dueTotal: 600, freeBeforeCutoff: 0, freeAfterCutoff: 0 })
+  })
+
+  it('takes its gaps from freeGaps, so overlaps are already handled', () => {
+    const hours: WorkingHours[] = Array.from({ length: 7 }, (_, d) => ({
+      day_of_week: d, start_hour: 10, start_minute: 0,
+      end_hour: 1, end_minute: 30, enabled: true,
+    }))
+    const gaps = freeGaps({
+      dayStr: DAY, tz: TZ, workingHours: hours,
+      // Fall Fest with ENTR nested inside it: free resumes at 13:15, not 12:15.
+      busy: [[at('11:00'), at('13:15')], [at('11:00'), at('12:15')]],
+      minMinutes: 15,
+    })
+    const c = capacityFromGaps({ gaps, dayStr: DAY, tz: TZ, dueMinutes: 0 })
+    expect(c.freeBeforeCutoff).toBe(60 + 525)   // 10:00-11:00, then 13:15-22:00
+    expect(c.freeAfterCutoff).toBe(210)         // 22:00-01:30
+  })
+})
+
+describe('what counts as due', () => {
+  const tasks = [
+    { dueDay: '2026-09-14', minutes: 60 },   // overdue
+    { dueDay: DAY,          minutes: 150 },
+    { dueDay: DAY,          minutes: null }, // unestimated
+    { dueDay: '2026-09-20', minutes: 999 },  // later
+    { dueDay: null,         minutes: 30 },   // undated
+  ]
+
+  it('includes overdue work, because the day still has to absorb it', () => {
+    expect(dueMinutesFor(tasks, DAY)).toBe(210)
+  })
+
+  it('leaves later and undated work out', () => {
+    expect(dueMinutesFor(tasks, '2026-09-13')).toBe(0)
+  })
+
+  it('contributes nothing for an unestimated task', () => {
+    // Understates rather than guesses. A task with no estimate is a gap in the
+    // input, not a task that takes no time.
+    expect(dueMinutesFor([{ dueDay: DAY, minutes: null }], DAY)).toBe(0)
   })
 })
