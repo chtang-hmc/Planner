@@ -423,6 +423,8 @@ function HomePreview() {
           allDayEvents={[{ id: 'bday', title: 'Mom’s birthday' }]}
           tasks={rows}
           habits={HABITS.map(h => h.t)}
+          /* One already logged, so the ticked state is on screen too. */
+          habitsDoneToday={[HABITS[1].t.id]}
           streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
           projects={[PP, TEACH, CLIN, HOME, COURSE]}
           gcalWriteEnabled

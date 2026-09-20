@@ -14,7 +14,9 @@
  */
 
 import { createServiceClient } from '@/lib/supabase/server'
-import { fetchTimezone, todayStr as todayIn, localDayRange } from '@/lib/day'
+import { addDays, fetchTimezone, todayStr as todayIn, localDayRange, startOfLocalDay } from '@/lib/day'
+import { fetchWeekStartDay } from '@/lib/week'
+import { fetchTodaysHabits } from '@/lib/habits'
 import {
   freeGaps,
   type BreakWindow, type EnergyScheduleEntry, type Interval,
@@ -24,7 +26,7 @@ import {
   buildHome, resolveAgainstParent, MIN_GAP_MINUTES,
   type HomeEvent, type HomeTask,
 } from '@/lib/home'
-import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
+import { Task, Project, INBOX_PROJECT } from '@/types'
 import HomeView from './HomeView'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +44,6 @@ export default async function HomePage() {
     { data: breakRows },
     { data: eventRows },
     { data: taskRows },
-    { data: streakRows },
     { data: projectRows },
     { data: integration },
   ] = await Promise.all([
@@ -61,7 +62,6 @@ export default async function HomePage() {
       .select('*, project:projects(id, name, color), parent:parent_id(id, title)')
       .in('status', ['inbox', 'active'])
       .order('urgency_score', { ascending: false }),
-    db.from('habit_streaks').select('*'),
     db.from('projects').select('*').eq('archived', false).order('name'),
     // select('*') so a pre-0018 database still returns the row; last_synced_at
     // is then undefined, which reads as "unknown" rather than "never".
@@ -183,12 +183,21 @@ export default async function HomePage() {
   })
 
   // ── Habits ──────────────────────────────────────────────────────────────────
-  const streaks: Record<string, HabitStreak> = {}
-  for (const s of streakRows ?? []) streaks[s.task_id] = s as HabitStreak
-
-  const habits = rows
-    .filter(t => t.type === 'habit')
-    .map(t => ({ ...t, project: t.project ?? INBOX_PROJECT }))
+  //
+  // Not filtered out of `rows`: a habit is a family of rows, not a row, so
+  // "today's habits" and "how far through the week" are both questions about
+  // titles rather than ids. `fetchTodaysHabits` is the one place that knows
+  // that — Home read `habit_streaks.completions_this_week` directly at first,
+  // which is keyed by an id that a completion replaces, and showed Piano at 0/7
+  // in a week it had been played six times.
+  //
+  // One week of completions is all this needs; /habits asks the same function
+  // for sixteen because it also draws a calendar from them.
+  const weekStartDay = await fetchWeekStartDay(db)
+  const { habits, doneTodayIds, streaks } = await fetchTodaysHabits(db, {
+    tz, today, weekStartDay,
+    completionsSinceISO: startOfLocalDay(addDays(today, -14), tz).toISOString(),
+  })
 
   const gcalWriteEnabled = ((integration?.scopes ?? []) as string[]).includes(
     'https://www.googleapis.com/auth/calendar.events'
@@ -202,6 +211,7 @@ export default async function HomePage() {
       allDayEvents={allDay}
       tasks={rows.map(t => ({ ...t, project: t.project ?? INBOX_PROJECT }))}
       habits={habits}
+      habitsDoneToday={doneTodayIds}
       streaks={streaks}
       projects={(projectRows ?? []) as Project[]}
       gcalWriteEnabled={gcalWriteEnabled}
