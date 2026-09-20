@@ -160,18 +160,25 @@ export function capacityFromGaps(opts: {
  * become one quietly. A task with no estimate is a gap in the input, not a
  * task that takes no time.
  *
- * **Not yet subtracting work already covered by a calendar event.** A task and
- * the event someone booked for it are the same hour counted twice — "Prep for
- * Big E&M Grutoring" against the event "Big E&M Grutoring Prep" is a real pair
- * on this calendar. That needs the task-event link, which is the other half of
- * this step; until it lands, `dueTotal` is high by the size of any such pair.
+ * Work a calendar event is already doing is excluded — see `coveredTaskIds`.
  */
 export function dueMinutesFor(
-  tasks: { dueDay: string | null; minutes: number | null }[],
+  tasks: { id?: string; dueDay: string | null; minutes: number | null }[],
   dayStr: string,
+  /**
+   * Tasks a calendar event is already doing, from a **confirmed** link
+   * (migration 0019). Their time is on the calendar, so it is already out of
+   * the free total; counting it again as work due makes the day look worse
+   * than it is by exactly the size of the block.
+   *
+   * Only confirmed links. A title-similarity guess never moves a number — see
+   * `suggestTaskEventLinks`.
+   */
+  coveredTaskIds: ReadonlySet<string> = new Set<string>(),
 ): number {
-  return tasks.reduce(
-    (sum, t) => (t.dueDay != null && t.dueDay <= dayStr ? sum + (t.minutes ?? 0) : sum),
-    0,
-  )
+  return tasks.reduce((sum, t) => {
+    if (t.dueDay == null || t.dueDay > dayStr) return sum
+    if (t.id != null && coveredTaskIds.has(t.id)) return sum
+    return sum + (t.minutes ?? 0)
+  }, 0)
 }
