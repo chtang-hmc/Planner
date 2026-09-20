@@ -23,13 +23,15 @@ import {
   type TimeBlockId, type WorkingHours,
 } from '@/lib/scheduler'
 import {
-  buildHome, dayReason, describeAge, freeTimeBasis, isCandidate, resolveAgainstParent,
-  MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
+  buildHome, dayReason, describeAge, formatClock, freeTimeBasis, isCandidate,
+  resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
 import type { BandInput } from '@/lib/band'
 import { dayOfWeek } from '@/lib/day'
 import { Task, Project, INBOX_PROJECT } from '@/types'
+import { formatMinutes } from '@/lib/task-format'
+import type { RailItem, RailSort } from '@/components/ds/UnplacedRail'
 import HomeView from './HomeView'
 
 export const dynamic = 'force-dynamic'
@@ -148,6 +150,7 @@ export default async function HomePage() {
     .map(e => ({
       id: e.id as string, title: e.title as string,
       startMs: Date.parse(e.start_time), endMs: Date.parse(e.end_time),
+      meta: `${formatMinutes(Math.round((Date.parse(e.end_time) - Date.parse(e.start_time)) / 60_000))} · calendar`,
     }))
 
   // A focus block already booked is as real as a meeting: it takes the time,
@@ -158,6 +161,9 @@ export default async function HomePage() {
     .map(t => ({
       id: `task:${t.id}`, title: t.title, taskId: t.id,
       startMs: Date.parse(t.scheduled_start!), endMs: Date.parse(t.scheduled_end!),
+      color: t.project?.color ?? null,
+      meta: [formatMinutes(t.adjusted_minutes ?? t.estimated_minutes), t.project?.name]
+        .filter(Boolean).join(' · ') || null,
     }))
 
   const events = [...timedEvents, ...bookedBlocks]
@@ -314,6 +320,38 @@ export default async function HomePage() {
       : null,
   }
 
+  // ── The rail ────────────────────────────────────────────────────────────────
+  //
+  // What the timeline could not place, and what Triage will read from. Overdue
+  // is passed separately because it is pinned above the sort tabs rather than
+  // ordered among the rest — how big is it is not the question for work that
+  // is already late.
+  const rowById = new Map(rows.map(t => [t.id, t]))
+  const overdueIds = new Set(data.overdue.flatMap(r => r.taskIds))
+  const placedIds = new Set(
+    data.shape.flatMap(r => r.kind === 'gap' ? r.fits.flatMap(f => f.taskIds) : []),
+  )
+
+  const railItems: RailItem[] = unplaced
+    .filter(t => !overdueIds.has(t.id) && !placedIds.has(t.id))
+    .map(t => {
+      const row = rowById.get(t.id)
+      return {
+        key: t.id, taskId: t.id, title: t.title,
+        note: t.parentTitle ? `part of ${t.parentTitle}` : null,
+        minutes: t.minutes, urgency: t.urgencyScore,
+        project: row?.project?.name ?? 'Inbox',
+        color: row?.project?.color ?? null,
+      }
+    })
+
+  const railSort = (['size', 'urgency', 'project'] as const)
+    .find(v => v === configRow?.rail_sort) ?? 'size'
+
+  const windowLabel = workWindow
+    ? `${formatClock(workWindow[0], tz)} — ${formatClock(workWindow[1], tz)}`
+    : null
+
   // ── Habits ──────────────────────────────────────────────────────────────────
   //
   // Not filtered out of `rows`: a habit is a family of rows, not a row, so
@@ -359,6 +397,9 @@ export default async function HomePage() {
       calendarConnected={!!integration}
       syncAge={syncAge}
       band={band}
+      railItems={railItems}
+      railSort={railSort as RailSort}
+      windowLabel={windowLabel}
       freeTime={basis}
     />
   )

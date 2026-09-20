@@ -468,6 +468,16 @@ function HomePreview() {
           calendarConnected
           syncAge="2h ago"
           freeTime={{ observed: true }}
+          railItems={[
+            { key: 'a', taskId: 'a', title: 'Claremont City Council Recording', note: null,
+              minutes: 150, urgency: 71, project: 'Inbox', color: null },
+            { key: 'b', taskId: 'b', title: 'Clean up Repos', note: null,
+              minutes: 120, urgency: 64, project: 'Research', color: '#3B7048' },
+            { key: 'c', taskId: 'c', title: 'Wash Sheets', note: '3 steps',
+              minutes: 20, urgency: 22, project: 'Personal', color: '#A63A66' },
+          ]}
+          railSort="size"
+          windowLabel="10:00am — 1:30am"
           band={{
             reason: 'available',
             capacity: { dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 },

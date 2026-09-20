@@ -315,17 +315,50 @@ describe('buildHome', () => {
     expect(d.suggestions.length).toBeGreaterThan(0)
   })
 
-  it('draws the rest of the day in time order, gaps included', () => {
+  it('draws the whole day in time order, gaps included', () => {
     const d = buildHome({ ...BASE, nowMs: at('13:30'), gaps, events, tasks })
-    expect(d.shape.map(r => r.kind)).toEqual(['gap', 'event', 'gap'])
+    // Three gaps and two events, interleaved: the whole day, not the rest of it.
+    expect(d.shape.map(r => r.kind)).toEqual(['gap', 'event', 'gap', 'event', 'gap'])
     // The gap you are standing in starts now, not when it opened at 13:15.
-    expect(d.shape[0].startMs).toBe(at('13:30'))
-    expect(d.shape[0].kind === 'gap' && d.shape[0].minutes).toBe(75)
+    const current = d.shape.find(r => r.position === 'current')!
+    expect(current.startMs).toBe(at('13:30'))
+    expect(current.kind === 'gap' && current.minutes).toBe(75)
   })
 
-  it('leaves the past out of the shape', () => {
+  it('keeps the past, dimmed, rather than shortening the day', () => {
+    // Deleting spent slots makes the day look shorter than it was. They stay,
+    // marked, and hold no chips because there is nothing left to act on.
     const d = buildHome({ ...BASE, nowMs: at('17:00'), gaps, events, tasks })
-    expect(d.shape.every(r => r.endMs > at('17:00'))).toBe(true)
+    const past = d.shape.filter(r => r.position === 'past')
+    expect(past.length).toBeGreaterThan(0)
+    expect(past.every(r => r.kind !== 'gap' || r.fits.length === 0)).toBe(true)
+  })
+
+  it('marks only one slot current and one next', () => {
+    const d = buildHome({ ...BASE, nowMs: at('13:30'), gaps, events, tasks })
+    const slots = d.shape.filter(r => r.kind === 'gap')
+    expect(slots.filter(r => r.position === 'current')).toHaveLength(1)
+    expect(slots.filter(r => r.position === 'next')).toHaveLength(1)
+  })
+
+  it('marks a slot late from the same threshold the bar uses', () => {
+    const lateHours: WorkingHours[] = Array.from({ length: 7 }, (_, d) => ({
+      day_of_week: d, start_hour: 10, start_minute: 0,
+      end_hour: 1, end_minute: 30, enabled: true,
+    }))
+    const g = freeGaps({ dayStr: DAY, tz: TZ, workingHours: lateHours, busy: [], minMinutes: 15 }).gaps
+    const d = buildHome({ ...BASE, nowMs: at('10:00'), gaps: g, events: [], tasks: [] })
+    const slot = d.shape.find(r => r.kind === 'gap')!
+    // 10:00–01:30 as one stretch starts before the cutoff, so it is not late.
+    expect(slot.kind === 'gap' && slot.late).toBe(false)
+
+    const evening = freeGaps({
+      dayStr: DAY, tz: TZ, workingHours: lateHours,
+      busy: [[at('10:00'), at('22:00')]], minMinutes: 15,
+    }).gaps
+    const e = buildHome({ ...BASE, nowMs: at('10:00'), gaps: evening, events: [], tasks: [] })
+    const lateSlot = e.shape.find(r => r.kind === 'gap')!
+    expect(lateSlot.kind === 'gap' && lateSlot.late).toBe(true)
   })
 
   it('offers nothing once the working day is over', () => {
