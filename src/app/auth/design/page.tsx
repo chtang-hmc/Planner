@@ -101,6 +101,9 @@ const HABITS = [
   { t: task({ title: 'Learn Language', project: HOME, type: 'habit' }), s: null },
 ] as { t: LayoutTask; s: HabitStreak | null }[]
 
+/** Fixed at module load: a fixture date, not a clock read during render. */
+const FIXTURE_TODAY = new Date().toISOString().slice(0, 10)
+
 /** The toolbar, against fixture state. */
 function ToolbarPreview() {
   const [view, setView]       = useState('list')
@@ -164,7 +167,7 @@ function ChromePreview() {
     // sidebar, so what renders here is the real component.
     <TimerProvider>
       <div className="h-[520px] flex rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-        <Sidebar projects={projects} />
+        <Sidebar projects={projects} todayStr={FIXTURE_TODAY} />
         <div className="flex-1 bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
           <p className="text-[11px] text-slate-400">page content</p>
         </div>
@@ -348,9 +351,6 @@ function RelevancePreview() {
 // them. The day is the one from docs/HOME.md, overlapping events and all, and
 // "now" is pinned to 1:30pm so every section has something in it.
 
-/** Fixed at module load so the preview's render stays pure. */
-const SYNCED_2H_AGO = new Date(Date.now() - 2 * 3600_000).toISOString()
-
 function HomePreview() {
   const tz    = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   const today = todayIn(tz)
@@ -429,7 +429,7 @@ function HomePreview() {
           projects={[PP, TEACH, CLIN, HOME, COURSE]}
           gcalWriteEnabled
           calendarConnected
-          lastSyncedISO={SYNCED_2H_AGO}
+          syncAge="2h ago"
         />
       </div>
     </TimerProvider>

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
-  buildHome, rankForGap, rightNowFrom, resolveAgainstParent, edgeBuffer, collapseChains, formatClock,
+  buildHome, rankForGap, rightNowFrom, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge,
   type HomeTask, type HomeEvent,
 } from '@/lib/home'
 
@@ -393,5 +393,39 @@ describe('a working day is not a calendar day', () => {
   it('is one unbroken stretch when that tail is clear', () => {
     const gaps = freeGaps({ dayStr: DAY, tz: TZ, workingHours: lateHours(), busy: [], minMinutes: 15 })
     expect(gaps).toEqual([[at('10:00'), at('1:30', '2026-09-17')]])
+  })
+})
+
+describe('describeAge', () => {
+  const T = Date.parse('2026-09-20T12:00:00Z')
+  const ago = (mins: number) => describeAge(new Date(T - mins * 60_000).toISOString(), T)
+
+  it('says nothing when nothing was recorded', () => {
+    // NULL means "unknown", which is not the claim "never".
+    expect(describeAge(null, T)).toBeNull()
+  })
+
+  it('words the ranges', () => {
+    expect(ago(0)).toBe('just now')
+    expect(ago(1)).toBe('just now')
+    expect(ago(2)).toBe('2m ago')
+    expect(ago(59)).toBe('59m ago')
+    expect(ago(90)).toBe('2h ago')
+    expect(ago(60 * 25)).toBe('1d ago')
+  })
+
+  it('is pure, so SSR and hydration cannot disagree', () => {
+    // The bug this replaced: the minutes are rounded, so the "just now"
+    // boundary is at 90 seconds. A sync 85s old read "just now" during SSR and
+    // "2m ago" ten seconds later in the browser, because each render asked the
+    // clock itself. Same inputs must now give the same answer, always.
+    const iso = new Date(T - 85_000).toISOString()
+    expect(describeAge(iso, T)).toBe(describeAge(iso, T))
+    expect(describeAge(iso, T)).toBe('just now')
+    expect(describeAge(iso, T + 10_000)).toBe('2m ago')   // the boundary it used to straddle
+  })
+
+  it('refuses a timestamp from the future rather than saying "-1m ago"', () => {
+    expect(describeAge(new Date(T + 600_000).toISOString(), T)).toBeNull()
   })
 })
