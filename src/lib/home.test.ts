@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
-  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge,
+  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge, freeTimeBasis,
   type HomeTask, type HomeEvent,
 } from '@/lib/home'
 
@@ -505,5 +505,44 @@ describe('the sentence at the top of the page', () => {
   it('says so when an event is the last thing on the day', () => {
     expect(say('12:00', { gaps: [[at('9:00'), at('11:00')]] }))
       .toBe('In Fall Fest until 1:15pm. Nothing free after it today.')
+  })
+})
+
+describe('free time is only asserted when something asserts it', () => {
+  /**
+   * The bug: `freeGaps` subtracts what it is given, so given nothing it returns
+   * the whole working window. With no calendar the page said "9h 30m free" and
+   * ranked work into it, on the strength of no evidence at all. Zero events is
+   * an unknown day, not a free one.
+   */
+  it('will not claim free time without a calendar', () => {
+    expect(freeTimeBasis({ calendarConnected: false, lastSyncedISO: null, eventCount: 0 }))
+      .toEqual({ observed: false, reason: 'no-calendar' })
+  })
+
+  it('still will not, even on a day that happens to have events', () => {
+    // Events can exist from a connection that was since removed.
+    expect(freeTimeBasis({ calendarConnected: false, lastSyncedISO: '2026-09-20T07:00:00Z', eventCount: 4 }))
+      .toEqual({ observed: false, reason: 'no-calendar' })
+  })
+
+  it('treats a connection that has never synced as unknown', () => {
+    // The window between finishing OAuth and the first sync completing.
+    expect(freeTimeBasis({ calendarConnected: true, lastSyncedISO: null, eventCount: 0 }))
+      .toEqual({ observed: false, reason: 'never-synced' })
+  })
+
+  it('accepts events as proof of a sync that predates the stamp', () => {
+    // A database from before migration 0018 has no last_synced_at, but rows on
+    // the day are themselves evidence that a sync happened.
+    expect(freeTimeBasis({ calendarConnected: true, lastSyncedISO: null, eventCount: 3 }))
+      .toEqual({ observed: true })
+  })
+
+  it('accepts a synced calendar with a genuinely empty day', () => {
+    // This is the case the bug could not distinguish, and the only one that
+    // earns the word "free".
+    expect(freeTimeBasis({ calendarConnected: true, lastSyncedISO: '2026-09-20T07:00:00Z', eventCount: 0 }))
+      .toEqual({ observed: true })
   })
 })

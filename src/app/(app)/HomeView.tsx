@@ -24,7 +24,7 @@ import { completeTask } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
 import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type HomeData, type Suggestion } from '@/lib/home'
+import { formatClock, formatGapMinutes, rightNowSentence, type AttentionRow, type FreeTimeBasis, type HomeData, type Suggestion } from '@/lib/home'
 
 type TaskRow = Task & { project: Project }
 
@@ -57,11 +57,17 @@ interface Props {
    * same instant, and a hidden tab re-fetches when it comes back.
    */
   syncAge:           string | null
+  /**
+   * Whether the free time below was observed or assumed — see `freeTimeBasis`.
+   * When it is assumed the page still works, but it says so rather than
+   * presenting a number it cannot stand behind.
+   */
+  freeTime:          FreeTimeBasis
 }
 
 export default function HomeView({
   data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
-  gcalWriteEnabled, calendarConnected, syncAge,
+  gcalWriteEnabled, calendarConnected, syncAge, freeTime,
 }: Props) {
   const router = useRouter()
   const timer = useTimer()
@@ -257,6 +263,27 @@ export default function HomeView({
               )}
             </div>
           </div>
+
+          {/* Said once, above everything the assumption touches: the sentence
+              in the header, the free rows in Today's shape, and every "fits
+              your 1h 15m" reason under Do this now are all downstream of it. */}
+          {!freeTime.observed && (
+            <div className="px-6 pb-2.5 flex items-start gap-2">
+              <WarningIcon size={12} className="text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-slate-600 dark:text-slate-300 flex-1 leading-relaxed">
+                {freeTime.reason === 'no-calendar'
+                  ? 'No calendar connected.'
+                  : 'Your calendar has not synced yet.'}
+                <span className="block text-slate-400">
+                  The free time below assumes nothing else is booked.{' '}
+                  <a href="/settings" className="underline hover:text-accent-500">
+                    {freeTime.reason === 'no-calendar' ? 'Connect a calendar' : 'Check the connection'}
+                  </a>{' '}
+                  and it becomes how much of today&rsquo;s work actually fits.
+                </span>
+              </p>
+            </div>
+          )}
 
           {syncError && (
             <div className="px-6 pb-2.5 flex items-start gap-2">

@@ -261,6 +261,42 @@ export function formatClock(ms: number, tz: string): string {
 }
 
 /**
+ * Whether the day's free time was *observed* or merely *assumed*.
+ *
+ * Zero calendar events is not a free day. It is an unknown day, and the two
+ * are indistinguishable from the events table alone: `freeGaps` subtracts what
+ * it is given, so given nothing it hands back the whole working window and the
+ * page says "9h 30m free" on the strength of no evidence at all.
+ *
+ * That is the same class of mistake as double-subtracting a nested event —
+ * a claim the data does not support — and it is what a first run looks like.
+ *
+ * The rule: free time is only asserted when something asserts it. A connected,
+ * synced calendar is evidence. Working hours are not; they say when you *would*
+ * work, not what is already in the way. So the page keeps working without a
+ * calendar — it just has to say the number is an assumption.
+ *
+ * `eventCount` is the escape hatch for a database that predates
+ * `last_synced_at` (migration 0018): rows on the day are themselves proof that
+ * a sync happened, whatever the column says.
+ */
+export type FreeTimeBasis =
+  | { observed: true }
+  | { observed: false; reason: 'no-calendar' | 'never-synced' }
+
+export function freeTimeBasis(opts: {
+  calendarConnected: boolean
+  lastSyncedISO:     string | null
+  eventCount:        number
+}): FreeTimeBasis {
+  if (!opts.calendarConnected) return { observed: false, reason: 'no-calendar' }
+  if (opts.lastSyncedISO == null && opts.eventCount === 0) {
+    return { observed: false, reason: 'never-synced' }
+  }
+  return { observed: true }
+}
+
+/**
  * How long ago an instant was, worded — "2h ago". Null when there is nothing
  * to describe, which is not the same claim as "never".
  *
