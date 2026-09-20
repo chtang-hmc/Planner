@@ -1,0 +1,198 @@
+/* Planner — design tokens, revision 2 (2026-09-20)
+   Supersedes revision 1. Changed in response to the implementation review:
+
+   1. --warn and --caution are DELETED. Urgency is no longer colour-coded; see
+      "Urgency" below. This removes the four-hue pileup at hue 5–42 that made
+      a dark palette impossible, and it removes the --p-jobs/--warn and
+      --p-public-policy/--caution byte collisions.
+   2. Every project colour now has a tint and a shade, so chips stop being
+      hardcoded hexes.
+   3. --bar-free and --today-fill are promoted from markup to tokens.
+   4. --accent-wash is deleted; it was used nowhere.
+   5. The capacity bar's middle segment is a hatch, not a lighter fill, so the
+      three segments survive a re-tint. See "Capacity bar" below.
+
+   After this revision the palette has exactly THREE signal colours — accent,
+   danger, ok — at hues 17, 5 and 122. Three separate cleanly on any ground.
+   Five did not.
+
+   On theming: the surfaces, ink and line ramps below are a light-mode
+   reference. If they are generated from your existing hue knob, generate them
+   and treat these hexes as the target for tint-h 40. The accent, signal and
+   project values are hand-picked and should be re-picked per theme rather
+   than lightened. */
+
+:root {
+  /* ---- Surfaces ---------------------------------------------------- */
+  --ground:        #FAF8F4;  /* app background, warm paper */
+  --surface:       #FFFFFF;  /* cards, list containers */
+  --surface-sunk:  #F5F2EC;  /* sidebar, "not enough data" panel, tab bar */
+  --surface-quiet: #FBFAF7;  /* chips, unselected pills, decided rows */
+  --today-fill:    #FBF7F0;  /* today's week-strip column, the late-night slot */
+  --today-edge:    #E0D3C4;  /* border of the same */
+  --track:         #EDE8DE;  /* meter and progress backgrounds */
+  --track-soft:    #F0EDE6;  /* segmented controls, empty habit dots */
+
+  /* ---- Ink --------------------------------------------------------- */
+  --ink:        #1A1815;
+  --ink-2:      #33302B;
+  --ink-3:      #4A463F;
+  --ink-muted:  #6E6960;
+  --ink-faint:  #8A8478;
+  --ink-ghost:  #A9A296;
+
+  /* ---- Lines ------------------------------------------------------- */
+  --line:        #E4DFD5;
+  --line-soft:   #F0EBE1;
+  --line-strong: #D2CBBD;
+  --line-dash:   #C9C0AE;
+
+  /* ---- Accent: interaction and brand ONLY -------------------------- */
+  /* Never used to encode data. That separation is what keeps it legible
+     next to the two signal colours. */
+  --accent:       #A8431C;
+  --accent-hover: #7E3114;
+  --accent-tint:  #F7EEE9;   /* active filter chips */
+  --accent-ink:   #8A3A16;   /* text on --accent-tint */
+
+  /* ---- Signals: two, and only two ---------------------------------- */
+  --danger:      #A32B21;
+  --danger-tint: #FBEDE9;
+  --danger-fill: #E3C9C4;   /* the "won't fit" segment */
+  --ok:          #3D6B3F;
+  --ok-tint:     #E9F0E9;
+  --ok-ink:      #2E5233;
+
+  /* Urgency. The meter's FILL LENGTH is the score, 0–100. The fill has one
+     colour at every score. Colour on this meter was redundant with length
+     and it cost four hues; the list is already sorted by the same number.
+     The only categorical state that still earns red is overdue, which is
+     carried by the row's text, not by the meter. */
+  --urgency-fill:  #8A8478;
+  --urgency-track: #EDE8DE;
+
+  /* Capacity bar. Three segments, three DIFFERENT encodings, so none of them
+     depends on sitting at a particular lightness against the ground:
+       fits before cutoff  solid   --ok
+       fits only late      hatched --ok on --ok-tint (see .capacity-late)
+       does not fit        solid   --danger-fill
+     Revision 1 ran these as one lightness ramp, L=33 → 64 → 83, which is the
+     encoding a re-tint destroys. */
+  --bar-free: #D9E3D9;  /* the free-calendar bar in the week strip */
+
+  /* ---- Project identity, base / tint / shade ----------------------- */
+  /* base  the dot, the timeline rail, the workload bar
+     tint  chip background
+     shade chip text on that tint (all ≥ 4.5:1 on their own tint) */
+  --p-clinic:              #2E5FA3;
+  --p-clinic-tint:         #EEF3F9;
+  --p-clinic-shade:        #1F4A80;
+
+  --p-cs134:               #4C4AA0;
+  --p-cs134-tint:          #EEEDF7;
+  --p-cs134-shade:         #383680;
+
+  --p-jobs:                #B25A12;
+  --p-jobs-tint:           #FBF0E4;
+  --p-jobs-shade:          #8A4409;
+
+  --p-personal:            #A63A66;
+  --p-personal-tint:       #F3EBEF;
+  --p-personal-shade:      #8A2F55;
+
+  --p-public-policy:       #8F6B08;
+  --p-public-policy-tint:  #F7F0DC;
+  --p-public-policy-shade: #6B5006;
+
+  --p-research:            #3B7048;
+  --p-research-tint:       #E9F0E9;
+  --p-research-shade:      #2E5233;
+
+  --p-ta:                  #2B7570;
+  --p-ta-tint:             #E8F0EF;
+  --p-ta-shade:            #1F5D59;
+
+  --p-none:                #9A948A;  /* inbox, calendar-only events */
+  --p-none-tint:           #F1EFEB;
+  --p-none-shade:          #6E6960;
+
+  /* ---- Type -------------------------------------------------------- */
+  /* Two families, not three. IBM Plex Sans is dropped; the app's existing
+     sans does that job. Instrument Serif is the only new payload, and it is
+     loaded for claims only — four sizes, one weight, no italic. */
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-ui:      var(--font-sans);   /* the app's existing sans */
+  --font-mono:    var(--font-mono-app);
+
+  --t-display-l:  38px;  /* Today's date */
+  --t-display-m:  34px;  /* page titles */
+  --t-display-s:  31px;  /* the capacity sentence */
+  --t-display-xs: 23px;  /* finding-card headline */
+
+  --t-body:   14px;
+  --t-body-s: 13px;
+  --t-meta:   12.5px;
+  --t-small:  11.5px;
+  --t-micro:  11px;
+  --t-eyebrow: 10px;  /* uppercase, letter-spacing .12em */
+
+  --t-mono:   12px;
+  --t-mono-s: 11px;
+
+  /* ---- Spacing & shape --------------------------------------------- */
+  --gap-page:  20px;
+  --gap-card:  16px;
+  --pad-page:  26px 34px;
+  --pad-page-narrow: 16px 14px;
+  --pad-card:  18px 20px;
+
+  --r-card:  12px;
+  --r-ctrl:   8px;
+  --r-chip:   6px;
+  --r-pill:  17px;
+  --r-dot:    4px;
+
+  /* ---- Density ----------------------------------------------------- */
+  --h-row-task:        44px;  /* ≥900px */
+  --h-row-task-narrow: 56px;  /* <900px, two lines, no fixed columns */
+  --h-row-habit:       62px;
+  --h-row-compact:     40px;
+  --h-row-day:         34px;  /* Upcoming day row */
+  --h-row-project:     54px;
+  --h-row-project-narrow: 62px;
+  --h-row-table:       34px;
+  --h-control:         38px;
+  --h-button:          40px;
+  --h-nav:             34px;
+  --h-tabbar:          62px;
+  --tap-min:           34px;
+
+  --dot:      7px;
+  --rail:     3px;
+  --meter-w: 34px;
+  --meter-h:  4px;
+
+  /* ---- Breakpoints ------------------------------------------------- */
+  --bp-narrow: 640px;   /* below: two-line task rows, tab bar, no sidebar */
+  --bp-mid:    900px;   /* below: project table sheds columns */
+  --bp-wide:  1200px;   /* below: Today drops to one column */
+}
+
+/* The hatch for the capacity bar's middle segment. A pattern, not a
+   lightness step, so it reads the same on any ground. */
+.capacity-late {
+  background-color: var(--ok-tint);
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--ok) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Deliberately empty. See DECISIONS.md A1: warm paper ships as a light
+     preset in the existing accent system, and dark mode keeps the app's
+     current generated palette. Do not lighten the hexes above to fill this
+     in — --accent, --danger and --ok all fall below 3:1 on a dark ground and
+     need re-picking, not adjusting. */
+}

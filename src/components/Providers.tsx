@@ -23,6 +23,8 @@ export const ACCENTS = [
   { id: 'rose',    label: 'Rose',    color: '#f43f5e' },
   { id: 'crimson', label: 'Red',     color: '#ef4444' },
   { id: 'amber',   label: 'Amber',   color: '#f59e0b' },
+  // The redesign's identity, as a preset — see globals.css.
+  { id: 'paper',   label: 'Paper',   color: '#A8431C' },
 ] as const
 
 export type AccentId = (typeof ACCENTS)[number]['id']
