@@ -469,6 +469,110 @@ function HomePreview() {
   )
 }
 
+/** A row of swatches, drawn from the live custom properties. */
+function SwatchRow({ names, kind }: { names: string[]; kind: 'bg' | 'text' | 'border' }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {names.map(n => (
+        <div key={n} className="rounded-lg border border-line p-2 min-w-[7.5rem] bg-surface">
+          <div
+            className="h-8 rounded-md mb-1.5"
+            style={
+              kind === 'text'
+                ? { background: `var(--${n})` }
+                : kind === 'border'
+                  ? { border: `2px solid var(--${n})`, background: 'var(--surface-quiet)' }
+                  : { background: `var(--${n})`, boxShadow: 'inset 0 0 0 1px var(--line)' }
+            }
+          />
+          <div className="text-micro text-ink-2">{n}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function SwatchHead({ children }: { children: React.ReactNode }) {
+  return <p className="text-eyebrow uppercase tracking-wider text-ink-faint mt-4 mb-1.5">{children}</p>
+}
+
+/**
+ * The design tokens, drawn.
+ *
+ * A palette you cannot look at is a palette you are guessing at, and these are
+ * the values every component built from step 2 onward will resolve through.
+ * Rendered from the real custom properties, so it cannot drift from
+ * globals.css the way a hand-written swatch table would.
+ *
+ * Switch the accent to Paper in Settings to see the redesign's identity; the
+ * neutral roles re-tint with it and keep their dark values.
+ */
+function TokenSpecimen() {
+  const INK   = ['ink', 'ink-2', 'ink-3', 'ink-muted', 'ink-faint', 'ink-ghost']
+  const SURF  = ['surface', 'surface-sunk', 'surface-quiet', 'track', 'track-soft']
+  const LINE  = ['line', 'line-soft', 'line-strong']
+  const SIG   = ['ok', 'ok-tint', 'danger', 'danger-tint', 'danger-fill', 'bar-free']
+  const TYPE  = [
+    ['display-l',  '38px', 'Sunday, 20 September'],
+    ['display-s',  '31px', '5h 35m of today’s work will not fit.'],
+    ['display-xs', '23px', 'Research is 44% of everything you have left.'],
+  ] as const
+
+  return (
+    <div className="rounded-xl border border-line bg-surface-sunk p-5">
+      <SwatchHead>Ink</SwatchHead><SwatchRow names={INK} kind="text" />
+      <SwatchHead>Surfaces</SwatchHead><SwatchRow names={SURF} kind="bg" />
+      <SwatchHead>Lines</SwatchHead><SwatchRow names={LINE} kind="border" />
+      <SwatchHead>Signals — three, not five</SwatchHead><SwatchRow names={SIG} kind="text" />
+
+      <SwatchHead>Capacity bar — three encodings, not one lightness ramp</SwatchHead>
+      <div className="flex h-3.5 rounded-md overflow-hidden w-full max-w-md" style={{ background: 'var(--track)' }}>
+        <div style={{ width: '16%', background: 'var(--ok)' }} />
+        <div className="capacity-late" style={{ width: '32%' }} />
+        <div style={{ width: '52%', background: 'var(--danger-fill)' }} />
+      </div>
+      <p className="text-micro text-ink-muted mt-1">
+        solid · hatched · solid — the middle one survives a re-tint, a third lightness would not
+      </p>
+
+      <SwatchHead>Project colour, tint and shade derived</SwatchHead>
+      <div className="flex flex-wrap gap-2">
+        {[PP, TEACH, CLIN, HOME, COURSE].map(p => (
+          <div
+            key={p.id}
+            className="project-tint rounded-lg px-2.5 py-1.5 flex items-center gap-2"
+            style={{ ['--project' as string]: p.color }}
+          >
+            <span className="w-[7px] h-[7px] rounded-full" style={{ background: p.color }} />
+            <span className="project-shade text-small font-medium" style={{ ['--project' as string]: p.color }}>
+              {p.name}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-micro text-ink-muted mt-1">
+        <code>projects.color</code> is user data, so these are color-mix, not tokens
+      </p>
+
+      <SwatchHead>Type</SwatchHead>
+      {TYPE.map(([name, size, sample]) => (
+        <div key={name} className="flex items-baseline gap-3 py-0.5">
+          <span className="num text-micro text-ink-ghost w-24 shrink-0">{name}</span>
+          <span className="display text-ink" style={{ fontSize: size }}>{sample}</span>
+        </div>
+      ))}
+      <div className="flex items-baseline gap-3 py-1 mt-1">
+        <span className="num text-micro text-ink-ghost w-24 shrink-0">.num</span>
+        <span className="num text-ink-2">1h 00m · 45m · 2h 30m · 11:15pm · 10:00am</span>
+      </div>
+      <div className="flex items-baseline gap-3">
+        <span className="num text-micro text-ink-ghost w-24 shrink-0">body</span>
+        <span className="text-ink-3">Geist — every label, control and table cell</span>
+      </div>
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -527,6 +631,13 @@ export default function DesignPreview() {
         <div className="flex flex-col gap-14">
           {!only && (
             <>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Design tokens</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <TokenSpecimen />
+              </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Home — today</h2>

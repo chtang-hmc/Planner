@@ -57,7 +57,17 @@
   --foreground: hsl(var(--tint-h) calc(var(--tint-s) * 1.6%) 91.0%);
 }
 
-body { background: var(--background); color: var(--foreground); }
+/* Tailwind's preflight sets the default family on `html`, but next/font puts
+   its variables on `body` — and they cannot move to `html`, because next-themes
+   owns that element's class attribute and rewrites it before hydration. So the
+   family is set here, where the variable is actually in scope. Without this the
+   whole app silently renders in the system stack, which is what it had been
+   doing since the fonts were added. */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
 
 /* ── Accent color presets ────────────────────────────────────────────────────
    Each preset defines the full shade range used across the app.
@@ -210,6 +220,196 @@ body { background: var(--background); color: var(--foreground); }
   --accent-950: #082f49;
 }
 
+
+/* ── Paper ───────────────────────────────────────────────────────────────────
+   The redesign's identity (docs/DESIGN-SPEC.md), as a preset rather than a
+   replacement. A warm ground with a rust accent, five signal colours reduced
+   to three, and a palette that was tuned against an L=97 paper.
+
+   A preset rather than a second palette because the design ships no dark
+   values: every one of its tokens measured between 1.97:1 and 3.68:1 against a
+   dark ground, its tints invert into glare, and three of its hues sit within
+   22 degrees and only separate by lightness. Running it through --tint-h keeps
+   all ~1,200 slate utilities and their dark pairs working, and the warm ground
+   is what the hue was carrying.
+─────────────────────────────────────────────────────────────────────────── */
+[data-accent="paper"] {
+  --tint-h: 38;
+  --tint-s: 13;
+  --accent-50:  #FBF3EF;
+  --accent-100: #F3E4DC;
+  --accent-200: #E7C7B8;
+  --accent-300: #D5A288;
+  --accent-400: #C07650;
+  --accent-500: #A8431C;
+  --accent-600: #963C19;
+  --accent-700: #7E3114;
+  --accent-800: #642710;
+  --accent-900: #4C1E0C;
+  --accent-950: #2C1107;
+}
+
+
+/* ── Semantic roles ──────────────────────────────────────────────────────────
+   The redesign names roles rather than shades — ink, line, surface — and that
+   is the better vocabulary for components. They resolve through the --n-*
+   ramp rather than to fixed hexes, which is the whole reason the preset
+   approach works: a role written once picks up the dark values the ramp
+   already has, and a component using `text-ink-muted` needs no dark: pair.
+
+   Fixed hexes here would have made every new component light-only.
+─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --surface:       #ffffff;
+  --surface-sunk:  var(--n-100);
+  --surface-quiet: var(--n-50);
+  --track:         var(--n-200);
+  --track-soft:    var(--n-100);
+
+  --ink:       var(--n-900);
+  --ink-2:     var(--n-800);
+  --ink-3:     var(--n-700);
+  --ink-muted: var(--n-500);
+  --ink-faint: var(--n-400);
+  --ink-ghost: var(--n-400);
+
+  --line:        var(--n-200);
+  --line-soft:   var(--n-100);
+  --line-strong: var(--n-300);
+
+  /* Signals. Chromatic and genuinely theme-specific, so these are the only
+     roles that carry a literal — and the only ones with a dark override.
+     --warn and --caution are deliberately absent: they existed to band the
+     urgency meter in four colours, but the meter's fill length already encodes
+     the score and the list is sorted by it. Three encodings of one variable,
+     and the third cost two hues that collided with two project colours. */
+  --ok:           #3D6B3F;
+  --ok-tint:      #E9F0E9;
+  --danger:       #A32B21;
+  --danger-tint:  #FBEDE9;
+  --danger-fill:  #E3C9C4;
+  --bar-free:     #D9E3D9;
+}
+
+/* Both branches, because next-themes may set the class or may be following the
+   system. They carry the same values deliberately: a partial override is worse
+   than none — dark surfaces under light ink is unreadable, and it is exactly
+   what a half-written media query produces. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --surface:       var(--n-900);
+    --surface-sunk:  var(--n-950);
+    --surface-quiet: var(--n-800);
+    --track:         var(--n-800);
+    --track-soft:    var(--n-800);
+
+    --ink:       var(--n-100);
+    --ink-2:     var(--n-200);
+    --ink-3:     var(--n-300);
+    --ink-muted: var(--n-400);
+    --ink-faint: var(--n-500);
+    --ink-ghost: var(--n-600);
+
+    --line:        var(--n-800);
+    --line-soft:   var(--n-800);
+    --line-strong: var(--n-700);
+
+    /* Lightened to clear 4.5:1 on the dark ground; the tints become shades. */
+    --ok:           #7FA981;
+    --ok-tint:      #1E2A1F;
+    --danger:       #D98B82;
+    --danger-tint:  #2E1917;
+    --danger-fill:  #5E2F2A;
+    --bar-free:     #2E3A2E;
+  }
+}
+
+:root.dark {
+    --surface:       var(--n-900);
+    --surface-sunk:  var(--n-950);
+    --surface-quiet: var(--n-800);
+    --track:         var(--n-800);
+    --track-soft:    var(--n-800);
+
+    --ink:       var(--n-100);
+    --ink-2:     var(--n-200);
+    --ink-3:     var(--n-300);
+    --ink-muted: var(--n-400);
+    --ink-faint: var(--n-500);
+    --ink-ghost: var(--n-600);
+
+    --line:        var(--n-800);
+    --line-soft:   var(--n-800);
+    --line-strong: var(--n-700);
+
+    /* Lightened to clear 4.5:1 on the dark ground; the tints become shades. */
+    --ok:           #7FA981;
+    --ok-tint:      #1E2A1F;
+    --danger:       #D98B82;
+    --danger-tint:  #2E1917;
+    --danger-fill:  #5E2F2A;
+    --bar-free:     #2E3A2E;
+}
+
+/* ── Density, shape and breakpoints ─────────────────────────────────────── */
+:root {
+  --h-row-task:    44px;
+  --h-row-habit:   62px;
+  --h-row-compact: 40px;
+  --h-row-table:   34px;
+  --h-control:     38px;
+  --h-nav:         34px;
+  /* Smallest interactive target. The redesign's own wide energy control fails
+     this at 22x12, which is why it is written down rather than assumed. */
+  --tap-min:       34px;
+
+  --bp-narrow:  640px;   /* below: two-line task rows, tab bar, no sidebar */
+  --bp-mid:     900px;   /* below: the project table sheds columns */
+  --bp-wide:   1200px;   /* below: Today drops to one column */
+}
+
+/* ── Project colour tint and shade ───────────────────────────────────────────
+   Derived, not tokenised. `projects.color` is a hex the user picks, so the
+   eight --p-* values in the design are the reference day's data rather than a
+   palette. color-mix gives any stored colour a tint and a shade, and mixes
+   toward the ground so it follows the theme.
+─────────────────────────────────────────────────────────────────────────── */
+.project-tint  { background-color: color-mix(in oklab, var(--project) 14%, var(--surface)); }
+.project-shade { color:            color-mix(in oklab, var(--project) 78%, var(--ink)); }
+
+/* ── A number that belongs in a column ───────────────────────────────────────
+   Every duration, clock time, count and percentage is mono, and a column of
+   them only aligns if the figures are the same width. One class rather than
+   `font-mono tabular-nums` at each site, because the rule is "this is a number
+   in a column", and stating it once is what stops half of them drifting.
+
+   Durations render as `Xh YYm` or `YYm` — never `1h` beside `1h 15m` in the
+   same column. That padding is in src/lib/task-format.ts, not here.
+─────────────────────────────────────────────────────────────────────────── */
+.num {
+  font-family: var(--font-mono-src), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Claims only. A page title, the capacity sentence, a finding headline —
+   never a label, a control, or a table cell. */
+.display {
+  font-family: var(--font-display-src), Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+/* The "fits only late" segment of a capacity bar. A hatch rather than a third
+   lightness: the three segments used to be one L=33/64/83 ramp, which is the
+   encoding a re-tint destroys — the "fits" segment fell to 2.85:1 on dark and
+   became the quietest thing on the most important graphic on the page. */
+.capacity-late {
+  background-color: var(--ok-tint);
+  background-image: repeating-linear-gradient(45deg, var(--ok) 0 3px, transparent 3px 7px);
+}
+
 /* ── Expose accent shades as Tailwind design tokens ─────────────────────────
    Tailwind v4 picks up --color-* vars defined in @theme and makes them
    available as bg-accent-500, text-accent-600, ring-accent-500, etc.
@@ -217,8 +417,45 @@ body { background: var(--background); color: var(--foreground); }
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans:    var(--font-geist-sans);
+  --font-mono:    var(--font-mono-src);
+  --font-display: var(--font-display-src);
+
+  /* Display is for claims only — a page title, the capacity sentence, a
+     finding headline. Never a label, never a control, never a table cell. */
+  --text-display-l:  38px;
+  --text-display-m:  34px;
+  --text-display-s:  31px;
+  --text-display-xs: 23px;
+
+  --text-meta:    12.5px;
+  --text-small:   11.5px;
+  --text-micro:   11px;
+  --text-eyebrow: 10px;
+
+  --color-surface:       var(--surface);
+  --color-surface-sunk:  var(--surface-sunk);
+  --color-surface-quiet: var(--surface-quiet);
+  --color-track:         var(--track);
+  --color-track-soft:    var(--track-soft);
+
+  --color-ink:       var(--ink);
+  --color-ink-2:     var(--ink-2);
+  --color-ink-3:     var(--ink-3);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-ghost: var(--ink-ghost);
+
+  --color-line:        var(--line);
+  --color-line-soft:   var(--line-soft);
+  --color-line-strong: var(--line-strong);
+
+  --color-ok:          var(--ok);
+  --color-ok-tint:     var(--ok-tint);
+  --color-danger:      var(--danger);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-fill: var(--danger-fill);
+  --color-bar-free:    var(--bar-free);
 
   --color-accent-50:  var(--accent-50);
   --color-accent-100: var(--accent-100);

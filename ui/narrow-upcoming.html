@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planner — Upcoming, narrow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Instrument+Serif&display=swap">
+<style>
+body{margin:0;background:#FAF8F4}
+a{color:#A8431C;text-decoration:none}
+a:hover{color:#7E3114}
+button{font:inherit}
+body { display: flex; justify-content: center; padding: 24px 0; }
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 800px; box-sizing: border-box; background: #FAF8F4; font-family: 'IBM Plex Sans', system-ui, sans-serif; color: #1A1815; display: flex; flex-direction: column;">
+
+  <div style="flex-grow: 1; box-sizing: border-box; padding: 16px 14px 0 14px; display: flex; flex-direction: column; gap: 11px; min-height: 0;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+      <h1 style="margin: 0; font-family: 'Instrument Serif', Georgia, serif; font-size: 26px; line-height: 1.1;">Tasks</h1>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; height: 34px; padding: 3px; box-sizing: border-box; background: #F0EDE6; border-radius: 8px; gap: 2px;">
+          <a href="narrow-tasks.html" style="height: 28px; padding: 0 11px; border-radius: 6px; font-size: 12px; color: #6E6960; display: flex; align-items: center;">List</a>
+          <span style="height: 28px; padding: 0 11px; border-radius: 6px; background: #FFFFFF; font-size: 12px; font-weight: 600; display: flex; align-items: center;">Upcoming</span>
+        </div>
+        <button type="button" aria-label="Add task" style="width: 34px; height: 34px; border: 0; border-radius: 8px; background: #A8431C; color: #FFFFFF; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3 L8 13 M3 8 L13 8"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- WEEK STRIP, SEVEN DAYS + PAGER -->
+    <div style="box-sizing: border-box; background: #FFFFFF; border: 1px solid #E4DFD5; border-radius: 12px; padding: 11px 12px 10px 12px; display: flex; flex-direction: column; gap: 9px;">
+
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" aria-label="Previous week" style="width: 26px; height: 26px; border: 1px solid #E4DFD5; border-radius: 7px; background: #FBFAF7; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#6E6960" stroke-width="1.6" aria-hidden="true"><path d="M7.5 3 L4 6 L7.5 9"></path></svg>
+        </button>
+        <span style="flex-grow: 1; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #33302B;">20 — 26 Sep</span>
+        <button type="button" aria-label="Next week" style="width: 26px; height: 26px; border: 1px solid #E4DFD5; border-radius: 7px; background: #FBFAF7; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#6E6960" stroke-width="1.6" aria-hidden="true"><path d="M4.5 3 L8 6 L4.5 9"></path></svg>
+        </button>
+      </div>
+
+      <div style="display: flex; gap: 3px; align-items: flex-end;">
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid #E0D3C4; background: #FBF7F0;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">S</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #1A1815;">20</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 21px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #A32B21; height: 43px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">M</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">21</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 19px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #3D6B3F; height: 14px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">T</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">22</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 23px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #3D6B3F; height: 10px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">W</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">23</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 18px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #EDE8DE; height: 2px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">T</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">24</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 22px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #EDE8DE; height: 2px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">F</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">25</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 16px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #EDE8DE; height: 2px;"></span>
+            </span>
+          </button>
+        
+          <button type="button" style="flex-grow: 1; flex-basis: 0; min-width: 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 1px 5px 1px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; background: transparent;">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #A9A296;">S</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #6E6960;">26</span>
+            <span style="height: 48px; display: flex; align-items: flex-end; gap: 3px;">
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #D9E3D9; height: 33px;"></span>
+              <span style="width: 8px; border-radius: 2px 2px 0 0; background: #EDE8DE; height: 2px;"></span>
+            </span>
+          </button>
+        
+      </div>
+
+      <div style="font-size: 11px; color: #A32B21; text-align: center;">Everything you owe is in the next three days.</div>
+    </div>
+
+    <!-- TODAY -->
+    <div style="box-sizing: border-box; background: #FFFFFF; border: 1px solid #E4DFD5; border-radius: 12px; padding: 0 14px 8px 14px;">
+      <div style="padding: 12px 0 8px 0; display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; align-items: baseline; gap: 9px;">
+          <span style="font-size: 12.5px; font-weight: 700;">Sunday 20</span>
+          <span style="font-size: 11px; color: #A8431C; font-weight: 600;">today</span>
+          <span style="flex-grow: 1;"></span>
+          <a href="narrow-today.html" style="font-size: 11px; font-weight: 600;">Open →</a>
+        </div>
+        <div style="display: flex; align-items: center; gap: 9px;">
+          <span style="width: 96px; height: 6px; border-radius: 3px; background: #EDE8DE; overflow: hidden; display: flex; flex-shrink: 0;"><span style="width: 48%; background: #94B394;"></span><span style="width: 52%; background: #E3C9C4;"></span></span>
+          <span style="font-size: 11px; color: #A32B21;">5h 35m over</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; border-top: 1px solid #F0EBE1;">
+        <span style="width: 38px; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8A8478; text-align: right;">13:00</span>
+        <span style="width: 3px; height: 16px; border-radius: 2px; background: #2B7570; flex-shrink: 0;"></span>
+        <span style="flex-grow: 1; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Big E&amp;M Tutoring</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #4A463F;">3h</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; border-top: 1px solid #F0EBE1;">
+        <span style="width: 38px; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8A8478; text-align: right;">16:00</span>
+        <span style="width: 3px; height: 16px; border-left: 3px dashed #C9C0AE; flex-shrink: 0;"></span>
+        <span style="flex-grow: 1; font-size: 12.5px; color: #A8431C; font-weight: 600;">30m free</span>
+        <span style="font-size: 10.5px; color: #6E6960;">2 fit</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; border-top: 1px solid #F0EBE1;">
+        <span style="width: 38px; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8A8478; text-align: right;">16:30</span>
+        <span style="width: 3px; height: 16px; border-radius: 2px; background: #A63A66; flex-shrink: 0;"></span>
+        <span style="flex-grow: 1; font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Grad trip</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #4A463F;">1h 15m</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 34px; border-top: 1px solid #F0EBE1;">
+        <span style="width: 38px; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8A8478; text-align: right;">22:00</span>
+        <span style="width: 3px; height: 16px; border-left: 3px dashed #C9C0AE; flex-shrink: 0;"></span>
+        <span style="flex-grow: 1; font-size: 12.5px; color: #A8431C; font-weight: 600;">3h 30m free</span>
+        <span style="font-size: 10.5px; color: #6E6960;">late</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 9px; height: 36px; border-top: 1px solid #F0EBE1;">
+        <span style="flex-grow: 1; font-size: 11.5px; color: #A32B21;">7 unplaced · 5h 35m</span>
+        <a href="#triage" style="font-size: 11px; font-weight: 600;">Triage →</a>
+      </div>
+    </div>
+
+    <!-- COLLAPSED -->
+    <div style="box-sizing: border-box; background: #FFFFFF; border: 1px solid #E4DFD5; border-radius: 12px; padding: 0 14px;">
+      <div style="display: flex; align-items: center; gap: 10px; height: 54px;">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#A9A296" stroke-width="1.5" aria-hidden="true"><path d="M4.5 3 L8 6 L4.5 9"></path></svg>
+        <span style="flex-grow: 1; min-width: 0;">
+          <span style="display: block; font-size: 12.5px; font-weight: 700;">Monday 21</span>
+          <span style="display: block; margin-top: 2px; font-size: 10.5px; color: #3D6B3F;">3h 30m due · 4h 50m free · fits</span>
+        </span>
+        <span style="padding: 2px 7px; border-radius: 5px; background: #FBEDE9; color: #A32B21; font-size: 10px;">1 clash</span>
+        <span style="width: 54px; height: 5px; border-radius: 3px; background: #EDE8DE; overflow: hidden; display: flex; flex-shrink: 0;"><span style="width: 100%; background: #3D6B3F;"></span></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 54px; border-top: 1px solid #F0EBE1;">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#A9A296" stroke-width="1.5" aria-hidden="true"><path d="M4.5 3 L8 6 L4.5 9"></path></svg>
+        <span style="flex-grow: 1; min-width: 0;">
+          <span style="display: block; font-size: 12.5px; font-weight: 700;">Tuesday 22</span>
+          <span style="display: block; margin-top: 2px; font-size: 10.5px; color: #6E6960;">2h 30m due · 5h 45m free · 3 events</span>
+        </span>
+        <span style="width: 54px; height: 5px; border-radius: 3px; background: #EDE8DE; overflow: hidden; display: flex; flex-shrink: 0;"><span style="width: 44%; background: #3D6B3F;"></span></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; height: 54px; border-top: 1px solid #F0EBE1;">
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="#A9A296" stroke-width="1.5" aria-hidden="true"><path d="M4.5 3 L8 6 L4.5 9"></path></svg>
+        <span style="flex-grow: 1; min-width: 0;">
+          <span style="display: block; font-size: 12.5px; font-weight: 700;">Wednesday 23</span>
+          <span style="display: block; margin-top: 2px; font-size: 10.5px; color: #8A8478;">nothing due · 6h 15m free</span>
+        </span>
+        <button type="button" style="border: 0; background: transparent; padding: 0; font-size: 11px; color: #A8431C; font-weight: 600; cursor: pointer;">Push here</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- TAB BAR -->
+  <div style="flex-shrink: 0; height: 62px; box-sizing: border-box; border-top: 1px solid #E4DFD5; background: #F5F2EC; display: flex; align-items: center; margin-top: 12px;">
+    <a href="narrow-today.html" style="flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #6E6960;">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="2"></rect><path d="M3 8.5 L17 8.5 M7 3 L7 6 M13 3 L13 6"></path></svg>
+      <span style="font-size: 9.5px;">Today</span>
+    </a>
+    <a href="narrow-tasks.html" style="flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #A8431C;">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 10.5 L8 14.5 L16 5.5"></path></svg>
+      <span style="font-size: 9.5px; font-weight: 600;">Tasks</span>
+    </a>
+    <a href="#habits" style="flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #6E6960;">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="10" r="6.5"></circle><circle cx="10" cy="10" r="2"></circle></svg>
+      <span style="font-size: 9.5px;">Habits</span>
+    </a>
+    <a href="narrow-projects.html" style="flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #6E6960;">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3.5" y="3.5" width="5.5" height="5.5" rx="1"></rect><rect x="11" y="3.5" width="5.5" height="5.5" rx="1"></rect><rect x="3.5" y="11" width="5.5" height="5.5" rx="1"></rect><rect x="11" y="11" width="5.5" height="5.5" rx="1"></rect></svg>
+      <span style="font-size: 9.5px;">Projects</span>
+    </a>
+    <a href="#insights" style="flex-grow: 1; flex-basis: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; color: #6E6960;">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 16 L4 11 M8.5 16 L8.5 6 M13 16 L13 9 M17 16 L17 4"></path></svg>
+      <span style="font-size: 9.5px;">Insights</span>
+    </a>
+  </div>
+
+</div>
+</body>
+</html>
