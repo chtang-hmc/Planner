@@ -1128,6 +1128,59 @@ The **scheduling horizon stays rolling** 7 days from today. Aligning it to the w
 
 ## Projects
 
+### The overview is a table (2026-09-21)
+
+Cards forced a one-task project and a six-task project to the same size, which
+left ragged holes down the page and made nothing comparable — and comparison is
+the only reason to have an overview. `src/lib/projects.ts` derives the rows and
+`src/components/ds/ProjectTable.tsx` draws them.
+
+**`isActiveTask` is the one definition of active.** Open, not someday, and
+`parent_id IS NULL`. It lives in the library rather than being re-filtered per
+caller, so a per-project sum and a global count cannot disagree; if they ever
+do, the fix is to route the global count through it. Subtasks are excluded
+because they inherit their parent's deadline — otherwise one task with six
+steps outranks six projects.
+
+**Share of time is drawn against the whole table, not against the largest
+row.** The handoff scaled the bar to the biggest project, so the top row ran
+full width while its own chip read "35% of all time left" — a graphic
+contradicting the number beside it, the same fault as a week-strip column that
+drew a no-ratio dash next to a deficit. Scaled to the total, three projects
+visibly holding most of the width *is* the finding.
+
+**Three status tones, not four.** The spec asks for orange on three of six
+conditions and there is no orange: `--warn` was cut from the palette on purpose
+(see the comment in `globals.css`). `attention` is neutral ink on a filled chip,
+the call `VERDICT_CLASS` already makes where `tight` is deliberately not `ok`.
+The chips carry words; colour's job is to let you scan for red. Every chip
+clears 4.5:1 — `quiet` uses `--ink-3`, not `--ink-faint`, which is 2.28:1 on
+white and would have made a status unreadable.
+
+**`Nothing active` is a seventh chip the spec does not have.** A project with a
+completed history and nothing open is finished or forgotten, and calling that
+"On track" claims progress on work that does not exist. On 2026-09-21 that is
+CS134.
+
+**Two row shapes, not one narrowed.** Below 640px the four surviving columns
+still need ~340px of fixed width before the name gets any, which on a 390px
+screen leaves the name nothing. `NarrowRow` puts the name and the total on one
+line and everything qualifying them on the second — the same move `TaskRow`
+makes. Above it, columns shed by the handoff's rank order at the `narrow` /
+`mid` / `wide` breakpoints, which are now declared in `@theme` and generate
+real Tailwind variants instead of only being commented on.
+
+**Inbox renders only when non-empty.** An empty inbox is a small quiet win and
+the table should not manufacture a row to announce it. It is also excluded from
+the concentration chip: that is a claim about a project, and letting Inbox hold
+the title would suppress the chip on whichever project actually ran away with
+the time.
+
+Measured against the live database on 2026-09-21: 7 projects, 20 active tasks,
+24h 05m left, Research at 32% — **below** the 35% concentration threshold, so
+no project fires that chip today. The handoff's "Research is 35%" and "19 active
+tasks · 27h 55m" are the reference day's numbers, not the current ones.
+
 ### Creating and changing from where you are
 
 `ProjectPicker` is a dropdown with inline creation, shared by the add-task modal and the task detail panel. Choosing "+ New project…" swaps the select for a name field and a colour row; creating selects the new project immediately.
@@ -1146,7 +1199,7 @@ Habits don't get a project picker — they're deliberately project-less.
 
 ## Tests
 
-`npm test` (vitest, `npm run test:watch` to iterate). 77 tests over the pure logic — the scheduler, urgency, and the day and week helpers.
+`npm test` (vitest, `npm run test:watch` to iterate). 438 tests over the pure logic (checked 2026-09-21) — the scheduler, urgency, the day and week helpers, and everything the redesign added: capacity, the band, task↔event matching, the week strip, conflicts, the design tokens and the project rows.
 
 ### Why these four and nothing else
 
