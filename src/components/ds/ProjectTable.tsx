@@ -14,7 +14,7 @@
  */
 
 import { formatMinutes } from '@/lib/task-format'
-import type { ProjectRow, StatusTone } from '@/lib/projects'
+import { dueShort, type ProjectRow, type StatusTone } from '@/lib/projects'
 
 /**
  * Three tones for the spec's four.
@@ -36,8 +36,10 @@ const TONE: Record<StatusTone, { bg: string; className: string }> = {
   ok:        { bg: 'var(--ok-tint)',      className: 'text-ok' },
 }
 
-export function ProjectTable({ rows, expanded, onToggle, onOpen, children }: {
+export function ProjectTable({ rows, todayStr, expanded, onToggle, onOpen, children }: {
   rows:     ProjectRow[]
+  /** Today, for the narrow row's `due Tue 22`. */
+  todayStr: string
   /** Which row is open. One at a time — two open rows stop being a table. */
   expanded: string | null
   onToggle: (id: string | null) => void
@@ -53,7 +55,7 @@ export function ProjectTable({ rows, expanded, onToggle, onOpen, children }: {
         const isOpen = expanded === (r.id ?? 'inbox')
         return (
           <div key={key} className="border-t border-line-soft">
-            <Row row={r} open={isOpen} onToggle={() => onToggle(isOpen ? null : (r.id ?? 'inbox'))} onOpen={onOpen} />
+            <Row row={r} open={isOpen} todayStr={todayStr} onToggle={() => onToggle(isOpen ? null : (r.id ?? 'inbox'))} onOpen={onOpen} />
             {isOpen && children && (
               <div className="bg-surface-quiet border-t border-line-soft">{children(r)}</div>
             )}
@@ -110,12 +112,13 @@ function Dot({ color }: { color: string | null }) {
 }
 
 function Row(props: {
-  row: ProjectRow; open: boolean; onToggle: () => void; onOpen: (id: string | null) => void
+  row: ProjectRow; open: boolean; todayStr: string
+  onToggle: () => void; onOpen: (id: string | null) => void
 }) {
   return (
     <>
       <WideRow {...props} />
-      <NarrowRow {...props} />
+      <NarrowRow row={props.row} todayStr={props.todayStr} onOpen={props.onOpen} />
     </>
   )
 }
@@ -170,48 +173,47 @@ function WideRow({ row, open, onToggle, onOpen }: {
 }
 
 /**
- * Two shapes, not one narrowed.
+ * Two shapes, not one narrowed — and this one is the designer's, not mine.
  *
- * Below 640 the four surviving columns — name, progress, time left, status —
- * still need about 340px of fixed width before the name gets any, which on a
- * 390px screen leaves the name nothing and pushes the status chip off the
- * edge. Shedding stops working at some point and the row has to change shape:
- * the name and the total on the first line, everything that qualifies them on
- * the second, the same way a task row does.
+ * `ui/narrow-projects.html`: no chevron, because the whole row is the link and
+ * the columns that vanished are reached by opening the project rather than by
+ * expanding it in place. Name over a meta line carrying the total and the
+ * deadline as one sentence, chip and a 64px bar stacked at the right.
+ *
+ * The deadline is absolute here (`due Tue 22`) where the wide column is
+ * relative (`3d`): the narrow form is read as prose, and "· due 3d" is not a
+ * sentence. Overdue is said by the line being red, not by the words.
  */
-function NarrowRow({ row, open, onToggle, onOpen }: {
-  row: ProjectRow; open: boolean; onToggle: () => void; onOpen: (id: string | null) => void
+function NarrowRow({ row, todayStr, onOpen }: {
+  row: ProjectRow; todayStr: string; onOpen: (id: string | null) => void
 }) {
-  const { name, color, progress, minutesLeft, status } = row
+  const { name, color, progress, minutesLeft, nextDue, nextDueIn, status } = row
+  const late = nextDueIn !== null && nextDueIn <= 0
 
   return (
-    <div className="narrow:hidden flex items-start gap-2.5 px-4 py-2 hover:bg-surface-quiet transition-colors">
-      <Chevron open={open} name={name} onToggle={onToggle} />
-      <span className="pt-[11px]"><Dot color={color} /></span>
+    <button
+      onClick={() => onOpen(row.id)}
+      className="narrow:hidden w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-surface-quiet transition-colors"
+      style={{ minHeight: 'var(--tap-min)' }}
+    >
+      <Dot color={color} />
 
-      <span className="flex-1 min-w-0 flex flex-col gap-1 py-1">
-        <span className="flex items-baseline gap-2">
-          <button onClick={() => onOpen(row.id)}
-                  className="text-[14px] font-medium text-ink truncate text-left hover:text-accent-600 transition-colors">
-            {name}
-          </button>
-          <span className="flex-1" />
-          <span className="num text-small text-ink shrink-0">
-            {minutesLeft > 0 ? formatMinutes(minutesLeft) : '—'}
-          </span>
-        </span>
-
-        {/* Wraps rather than truncates. The chip is the one column the design
-            keeps at every width, and `Overdue, never sta…` is not a status.
-            The active count is not here: it is rank 6 and already gone by
-            900px, so reinstating it at 390 would invert the shedding order. */}
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="w-[64px] shrink-0 flex"><ProgressBar value={progress} color={color} /></span>
-          <span className="num text-micro shrink-0"><DueText row={row} /></span>
-          <StatusChip status={status} />
+      <span className="flex-1 min-w-0 flex flex-col gap-[3px]">
+        <span className="text-[13.5px] font-medium text-ink truncate">{name}</span>
+        {/* One sentence. A project with no work left has no deadline worth
+            stating either, so it says that instead of "nothing · due no date". */}
+        <span className={`text-micro ${late ? 'text-danger' : 'text-ink-muted'}`}>
+          {minutesLeft > 0 ? (
+            <><span className="num">{formatMinutes(minutesLeft)}</span>{' · due '}{dueShort(nextDue, todayStr)}</>
+          ) : 'nothing left'}
         </span>
       </span>
-    </div>
+
+      <span className="shrink-0 flex flex-col items-end gap-1.5">
+        <StatusChip status={status} />
+        <span className="w-[64px] flex"><ProgressBar value={progress} color={color} /></span>
+      </span>
+    </button>
   )
 }
 

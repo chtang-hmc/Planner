@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isActiveTask, buildProjectRows, projectStatus, sortProjectRows,
-  projectsSummary, projectsFinding, CONCENTRATION_THRESHOLD, STALL_DAYS,
+  projectsSummary, projectsFinding, dueShort, CONCENTRATION_THRESHOLD, STALL_DAYS,
 } from '@/lib/projects'
 import type { Task, Project } from '@/types'
 
@@ -210,5 +210,23 @@ describe('the line under the heading', () => {
 
   it('does not count Inbox as a project that never started', () => {
     expect(projectsFinding(build([task()], []))).toBeNull()
+  })
+})
+
+describe('dueShort — the narrow row reads as a sentence', () => {
+  it('says today rather than a date for today', () => {
+    expect(dueShort(TODAY, TODAY)).toBe('today')
+  })
+
+  it('keeps the date when it has passed, because the line is already red', () => {
+    expect(dueShort('2026-09-18', TODAY)).toBe('Fri 18')
+  })
+
+  it('names the weekday and the day of the month ahead', () => {
+    expect(dueShort('2026-09-22', TODAY)).toBe('Tue 22')
+  })
+
+  it('has words for no deadline at all', () => {
+    expect(dueShort(null, TODAY)).toBe('no date')
   })
 })

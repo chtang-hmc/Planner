@@ -211,6 +211,22 @@ export function buildProjectRows({ projects, tasks, todayStr }: BuildInput): Pro
     .sort((a, b) => b.minutesLeft - a.minutesLeft || a.name.localeCompare(b.name))
 }
 
+const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/**
+ * The narrow row's deadline: `today`, `Tue 22`, `no date`.
+ *
+ * Absolute where the wide column is relative, because it is read as part of a
+ * sentence — "9h 45m · due Tue 22" — and "· due 3d" is not one. Overdue keeps
+ * the date rather than becoming "3d overdue" for the same reason; the line is
+ * red, which is where "overdue" is said.
+ */
+export function dueShort(dayStr: string | null, todayStr: string): string {
+  if (!dayStr) return 'no date'
+  if (dayStr === todayStr) return 'today'
+  return `${WEEKDAY[new Date(dayStr + 'T00:00:00Z').getUTCDay()]} ${Number(dayStr.slice(8, 10))}`
+}
+
 export type ProjectSort = 'left' | 'due' | 'progress' | 'name'
 
 export const PROJECT_SORTS: { key: ProjectSort; label: string }[] = [

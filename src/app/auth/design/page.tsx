@@ -873,7 +873,7 @@ function ProjectTableSpecimen() {
         </span>
         <span className="text-small text-danger">{projectsFinding(rows)}</span>
       </div>
-      <ProjectTable rows={rows} expanded={open} onToggle={setOpen} onOpen={() => {}}>
+      <ProjectTable rows={rows} todayStr="2026-09-21" expanded={open} onToggle={setOpen} onOpen={() => {}}>
         {row => (
           <div className="px-4 py-3 text-micro text-ink-faint">
             {row.activeCount} task rows for {row.name} go here — the shared task row,

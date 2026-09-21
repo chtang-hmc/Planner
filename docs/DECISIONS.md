@@ -1150,25 +1150,32 @@ drew a no-ratio dash next to a deficit. Scaled to the total, three projects
 visibly holding most of the width *is* the finding.
 
 **Three status tones, not four.** The spec asks for orange on three of six
-conditions and there is no orange: `--warn` was cut from the palette on purpose
-(see the comment in `globals.css`). `attention` is neutral ink on a filled chip,
-the call `VERDICT_CLASS` already makes where `tight` is deliberately not `ok`.
-The chips carry words; colour's job is to let you scan for red. Every chip
-clears 4.5:1 — `quiet` uses `--ink-3`, not `--ink-faint`, which is 2.28:1 on
-white and would have made a status unreadable.
+conditions and there is no orange: `--warn` and `--caution` were deleted in
+`tokens.css` rev 2 (handoff A1), because they collided with two project colours
+and made a dark palette impossible. The reference boards still paint that chip
+`#FBF0E4` / `#8A4409` — which *is* `--p-jobs-tint` / `--p-jobs-shade`, the
+exact collision A1 removed — so the boards predate the decision and A1 wins.
+`attention` is neutral ink on a filled chip, the call `VERDICT_CLASS` already
+makes where `tight` is deliberately not `ok`. The chips carry words; colour's
+job is to let you scan for red. Every chip clears 4.5:1 — `quiet` uses
+`--ink-3`, not `--ink-faint`, which is 2.28:1 on white and would have made a
+status unreadable.
 
 **`Nothing active` is a seventh chip the spec does not have.** A project with a
 completed history and nothing open is finished or forgotten, and calling that
 "On track" claims progress on work that does not exist. On 2026-09-21 that is
 CS134.
 
-**Two row shapes, not one narrowed.** Below 640px the four surviving columns
-still need ~340px of fixed width before the name gets any, which on a 390px
-screen leaves the name nothing. `NarrowRow` puts the name and the total on one
-line and everything qualifying them on the second — the same move `TaskRow`
-makes. Above it, columns shed by the handoff's rank order at the `narrow` /
-`mid` / `wide` breakpoints, which are now declared in `@theme` and generate
-real Tailwind variants instead of only being commented on.
+**Two row shapes, not one narrowed**, and the narrow one is drawn in
+`ui/narrow-projects.html`: no chevron, because the whole row is the link and
+the shed columns are reached by opening the project rather than expanding it in
+place; name over a meta line reading `9h 45m · due Tue 22`; chip and a 64px bar
+stacked at the right. The deadline is absolute there and relative in the wide
+`Next due` column, because the narrow form is read as prose and "· due 3d" is
+not a sentence — overdue is said by the line being red. Above 640, columns shed
+by the handoff's rank order at the `narrow` / `mid` / `wide` breakpoints, which
+are now declared in `@theme` and generate real Tailwind variants instead of
+only being commented on.
 
 **Inbox renders only when non-empty.** An empty inbox is a small quiet win and
 the table should not manufacture a row to announce it. It is also excluded from
