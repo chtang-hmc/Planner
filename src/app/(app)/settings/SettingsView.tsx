@@ -372,9 +372,13 @@ export function TaskLayoutSection() {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Task list layout</h2>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Upcoming row layout</h2>
+      {/* Was "Task list layout", which stopped being true: Tasks·List draws the
+          one shared row in every grouping now, and Upcoming is the last caller
+          of these four. Renamed rather than left claiming a page it no longer
+          reaches. It goes when Upcoming does — see #73. */}
       <p className="text-xs text-slate-400 mb-4">
-        How a task is drawn in the list. Takes effect next time you open Tasks.
+        How a task is drawn on Upcoming. Takes effect next time you open it.
       </p>
 
       <div className="grid grid-cols-2 gap-2">

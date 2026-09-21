@@ -36,7 +36,10 @@ export interface TaskRowModel {
   done?:     boolean
 }
 
-export function TaskRow({ task, narrow = false, hideProject = false, onToggle, onOpen }: {
+export function TaskRow({
+  task, narrow = false, hideProject = false, folded, isChild = false,
+  onToggle, onOpen, onFold,
+}: {
   task:      TaskRowModel
   narrow?:   boolean
   /**
@@ -47,8 +50,20 @@ export function TaskRow({ task, narrow = false, hideProject = false, onToggle, o
    * the chip rule was written against.
    */
   hideProject?: boolean
+  /**
+   * Whether this parent's steps are hidden. Undefined on a row with none.
+   *
+   * The reference board draws a `3 steps` chip and no way to act on it, which
+   * works on a still image and not in a list — the app has always let you
+   * open a run of steps, and the chip alone cannot. The caret is the smallest
+   * thing that can, and it appears only on rows that have something to fold.
+   */
+  folded?:   boolean
+  /** A step inside its parent's run: indented to the caret's width. */
+  isChild?:  boolean
   onToggle?: () => void
   onOpen?:   () => void
+  onFold?:   () => void
 }) {
   const dot = (
     <span
@@ -56,6 +71,20 @@ export function TaskRow({ task, narrow = false, hideProject = false, onToggle, o
       className="w-[7px] h-[7px] rounded-full shrink-0"
       style={{ background: task.color ?? 'var(--ink-ghost)' }}
     />
+  )
+
+  const caret = onFold ? (
+    <button
+      type="button"
+      onClick={onFold}
+      aria-expanded={!folded}
+      aria-label={folded ? `Show the steps of ${task.title}` : `Hide the steps of ${task.title}`}
+      className="w-3 shrink-0 text-[9px] leading-none text-ink-ghost hover:text-ink-2 transition-colors"
+    >
+      {folded ? '▸' : '▾'}
+    </button>
+  ) : (
+    <span aria-hidden className="w-3 shrink-0" />
   )
 
   const check = (
@@ -74,9 +103,11 @@ export function TaskRow({ task, narrow = false, hideProject = false, onToggle, o
     // its four colours were deleted from the palette.
     return (
       <div className="flex items-start gap-2.5 px-4 py-2 border-t border-line-soft min-h-[56px]">
+        <span className="pt-[3px]">{caret}</span>
         <span className="pt-0.5">{check}</span>
         <span className="pt-[7px]">{dot}</span>
-        <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+        <button onClick={onOpen}
+                className={`min-w-0 flex-1 text-left ${isChild ? 'pl-2' : ''}`}>
           <p className="text-[14px] text-ink truncate leading-snug">{task.title}</p>
           <p className="text-micro text-ink-faint mt-0.5 flex items-center gap-1.5 flex-wrap">
             {!hideProject && (
@@ -95,10 +126,12 @@ export function TaskRow({ task, narrow = false, hideProject = false, onToggle, o
 
   return (
     <div className="flex items-center gap-3 px-4 h-[44px] border-t border-line-soft group">
+      {caret}
       {check}
       {dot}
 
-      <button onClick={onOpen} className="min-w-0 flex-1 text-left">
+      <button onClick={onOpen}
+              className={`min-w-0 flex-1 text-left ${isChild ? 'pl-3' : ''}`}>
         <span className="text-[14px] text-ink truncate block">{task.title}</span>
       </button>
 
