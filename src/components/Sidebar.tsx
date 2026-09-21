@@ -20,7 +20,10 @@ const NAV = [
   { href: '/habits',    label: 'Habits',    icon: '◎' },
   { href: '/projects',  label: 'Projects',  icon: '⊞' },
   { href: '/review',    label: 'Review',    icon: '↻' },
-  { href: '/analytics', label: 'Analytics', icon: '▸' },
+  /* The page is called Insights; the route stays `/analytics`. Renaming it
+     would mean touching five `revalidatePath` calls and breaking any bookmark
+     to buy nothing — the name the user reads is the label. */
+  { href: '/analytics', label: 'Insights',  icon: '▸' },
 ]
 
 export default function Sidebar({ projects, todayStr }: {

@@ -33,7 +33,6 @@ import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
-import AnalyticsView from '@/app/(app)/analytics/AnalyticsView'
 import HomeView from '@/app/(app)/HomeView'
 import TaskList from '@/app/(app)/tasks/TaskList'
 import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
@@ -42,12 +41,15 @@ import { DaySection } from '@/components/ds/DaySection'
 import ProjectsView from '@/app/(app)/projects/ProjectsView'
 import ProjectDetailView from '@/app/(app)/projects/[id]/ProjectDetailView'
 import HabitsView from '@/app/(app)/habits/HabitsView'
+import InsightsView from '@/app/(app)/analytics/AnalyticsView'
+import { buildProjectRows } from '@/lib/projects'
+import { capacityFinding, urgencyFinding, concentrationFinding, workloadFinding } from '@/lib/insights'
+import { thinData } from '@/lib/thin-data'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
 import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
 import { todayStr as todayIn, addDays as addDaysStr } from '@/lib/day'
-import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -183,34 +185,6 @@ function ChromePreview() {
       </div>
     </TimerProvider>
   )
-}
-
-const bias = (ratio: number, n: number) =>
-  ({ id: 'b', project_id: 'p', bias_ratio: ratio, sample_count: n, updated_at: '' })
-
-const ANALYTICS: AnalyticsData = {
-  weekStartDay: 1,
-  activeCount: 23, doneCount: 141, totalEstMinutes: 1290, avgUrgency: 46,
-  urgencyBuckets: [4, 7, 6, 4, 2],
-  projectStats: [
-    { project: PP,     activeCount: 8, estimatedMinutes: 420, doneCount: 31, bias: bias(1.35, 12) },
-    { project: TEACH,  activeCount: 4, estimatedMinutes: 260, doneCount: 48, bias: bias(0.92, 20) },
-    { project: CLIN,   activeCount: 6, estimatedMinutes: 310, doneCount: 22, bias: bias(1.08, 7) },
-    { project: COURSE, activeCount: 3, estimatedMinutes: 190, doneCount: 26, bias: bias(1.7, 5) },
-    { project: HOME,   activeCount: 2, estimatedMinutes: 110, doneCount: 14, bias: null },
-  ],
-  accurateSessions: 38, inaccurateSessions: 17,
-  recentEnergy: Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i))
-    return { date: d.toISOString().slice(0, 10), avg: [3.2, 4.1, 2.8, 3.9, 4.4, 3.1, 3.6][i], count: 3 }
-  }),
-  energyPatterns: Array.from({ length: 7 * 18 }, (_, i) => ({
-    day_of_week: Math.floor(i / 18),
-    hour_of_day: (i % 18) + 6,
-    avg_level: 1 + ((Math.sin(i * 1.7) + 1) * 2),
-    sample_count: 4,
-    computed_at: '',
-  })),
 }
 
 // ── Preview ──────────────────────────────────────────────────────────────────
@@ -1025,6 +999,75 @@ function HabitsSpecimen() {
   )
 }
 
+/**
+ * Insights with all three findings firing at once.
+ *
+ * The real page today shows one or two: the point of the design is that a
+ * finding appears when it has a number, so a specimen shaped like the live
+ * data would leave two thirds of the row empty. It runs through the real
+ * `capacityFinding` / `urgencyFinding` / `concentrationFinding`, so it cannot
+ * drift from the rules that decide when each one is allowed to speak.
+ */
+function InsightsSpecimen() {
+  const TODAY = todayIn(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  const p = (id: string, name: string, color: string): Project =>
+    ({ id, name, color, archived: false, created_at: '2026-01-01T00:00:00Z', description: null })
+  const projects = [
+    p('res', 'Research', '#3B7048'), p('pol', 'Public Policy', '#8F6B08'),
+    p('per', 'Personal', '#A63A66'), p('cli', 'Clinic', '#2E5FA3'),
+    p('job', 'Jobs', '#B25A12'), p('cs', 'CS134', '#4C4AA0'), p('ta', 'TA', '#2B7570'),
+  ]
+  const t = (project_id: string | null, o: Record<string, unknown> = {}) => ({
+    project_id, parent_id: null, status: 'active' as const, type: 'task' as const,
+    estimated_minutes: 60, adjusted_minutes: null, due_date: null, completed_at: null,
+    ...o,
+  })
+  const mins: [string | null, number, number][] = [
+    ['res', 585, 6], ['pol', 255, 2], ['per', 85, 6], ['cli', 75, 2],
+    ['job', 60, 1], ['cs', 45, 1], ['ta', 45, 1], [null, 525, 4],
+  ]
+  const tasks = mins.flatMap(([id, total, n]) => [
+    ...Array.from({ length: n }, () => t(id, { estimated_minutes: Math.round(total / n) })),
+    ...Array.from({ length: 3 }, () => t(id, { status: 'done' as const, completed_at: `${TODAY}T09:00:00Z` })),
+  ])
+  const rows = buildProjectRows({ projects, tasks, todayStr: TODAY })
+
+  const findings = [
+    capacityFinding({
+      capacity: { dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 },
+      dueCount: 10, fitCount: 2,
+    }),
+    urgencyFinding([...Array(8).fill(88), ...Array(12).fill(68), ...Array(3).fill(50), ...Array(3).fill(30)]),
+    concentrationFinding({ rows, scheduledCount: 0 }),
+  ].filter(f => f !== null)
+
+  const total = rows.reduce((n, r) => n + r.minutesLeft, 0)
+  const panel = (label: string, have: number, need: number, unit: [string, string],
+                 unlocks: string, readyText: string) =>
+    ({ label, data: thinData({ have, need, unit, unlocks: () => unlocks, readyText }) })
+
+  return (
+    <div className="rounded-xl border border-line overflow-hidden h-[820px] overflow-y-auto">
+      <InsightsView
+        findings={findings}
+        rows={rows}
+        workload={workloadFinding(rows)}
+        totalMinutes={total}
+        activeCount={rows.reduce((n, r) => n + r.activeCount, 0)}
+        doneAllTime={37}
+        panels={[
+          panel('Estimate accuracy', 4, 12, ['reflection', 'reflections'],
+            'Reflect on eight more finished tasks and this becomes a reliable multiplier.', ''),
+          panel('Per-project bias', 1, 7, ['project', 'projects'],
+            'Only one project has enough samples. Six do not.', ''),
+          panel('Energy and output', 6, 21, ['day', 'days'],
+            '15 more days of energy logs before a time-of-day pattern is worth reading.', ''),
+        ]}
+      />
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -1201,12 +1244,10 @@ export default function DesignPreview() {
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Analytics</h2>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Insights</h2>
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800">
-                  <AnalyticsView data={ANALYTICS} />
-                </div>
+                <InsightsSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
