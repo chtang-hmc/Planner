@@ -21,7 +21,7 @@
 
 import { useState, useSyncExternalStore } from 'react'
 import { notFound } from 'next/navigation'
-import { Project } from '@/types'
+import { Project, Task } from '@/types'
 import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
@@ -39,9 +39,7 @@ import TaskList from '@/app/(app)/tasks/TaskList'
 import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
 import { CapacityBand } from '@/components/ds/CapacityBand'
 import { DaySection } from '@/components/ds/DaySection'
-import { ProjectTable } from '@/components/ds/ProjectTable'
-import { buildProjectRows, projectsSummary, projectsFinding } from '@/lib/projects'
-import { formatMinutes } from '@/lib/task-format'
+import ProjectsView from '@/app/(app)/projects/ProjectsView'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
@@ -820,67 +818,69 @@ function DaySectionSpecimen() {
 }
 
 /**
- * The projects table, built from the same `buildProjectRows` the page uses —
- * so what is drawn here is what the real data would produce, not a hand-typed
- * row that agrees with the design until the rules move.
+ * The whole Projects page, not just its table — the header, the sort control,
+ * an expanded row and the archive strip, which is where the composition
+ * problems live rather than in any one component.
  *
  * The fixture is shaped to fire every status chip at once: the real table on
- * 2026-09-21 shows one red row and five "On track", which is the honest
- * answer and a poor specimen.
+ * 2026-09-21 shows one red row and five "On track", which is the honest answer
+ * and a poor specimen. It still runs through the real `buildProjectRows`, so
+ * it cannot drift from the rules.
  */
-function ProjectTableSpecimen() {
-  const p = (id: string, name: string, color: string) =>
-    ({ id, name, color, archived: false, created_at: '2026-01-01T00:00:00Z' })
+function ProjectsPageSpecimen() {
+  const TODAY = todayIn(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  const p = (id: string, name: string, color: string, archived = false): Project =>
+    ({ id, name, color, archived, created_at: '2026-01-01T00:00:00Z' })
   const projects = [
     p('res', 'Research', '#3B7048'), p('pol', 'Public Policy', '#8F6B08'),
     p('job', 'Jobs', '#B25A12'), p('ta', 'TA', '#2B7570'),
     p('cs', 'CS134', '#4C4AA0'),
   ]
-  const t = (project_id: string | null, o: Record<string, unknown> = {}) => ({
-    project_id, parent_id: null, status: 'active' as const, type: 'task' as const,
-    estimated_minutes: 60, adjusted_minutes: null, due_date: null, completed_at: null,
+  const archived = [p('old', 'Thesis proposal', '#A63A66', true)]
+
+  let n = 0
+  type Fixture = Omit<Task, 'project'> & { project: Project | null }
+  const t = (project_id: string | null, o: Partial<Fixture> = {}): Fixture => ({
+    id: `t${n++}`, project_id, parent_id: null,
+    status: 'active', type: 'task', priority: 2, energy_required: 'medium',
+    title: 'A task with a reasonably long name', description: null,
+    estimated_minutes: 60, adjusted_minutes: null, actual_minutes: null,
+    due_date: null, start_date: null, urgency_score: 60, urgency_curve: 'linear',
+    rrule: null, weekly_target: null, exclusive_group: null,
+    location: 'anywhere', span_minutes: null, buffer_minutes: null,
+    gcal_event_id: null, scheduled_start: null, scheduled_end: null,
+    created_at: '2026-01-01T00:00:00Z', completed_at: null,
+    project: projects.find(x => x.id === project_id) ?? null,
     ...o,
   })
   const tasks = [
-    // Research: over the concentration threshold and the largest row.
-    ...Array.from({ length: 5 }, () => t('res', { estimated_minutes: 180, due_date: '2026-09-20' })),
-    ...Array.from({ length: 4 }, () => t('res', { status: 'done' as const, completed_at: '2026-09-21' })),
-    // Public Policy: a completion, but not for a long time.
-    t('pol', { estimated_minutes: 240, due_date: '2026-09-22' }),
-    t('pol', { status: 'done' as const, completed_at: '2026-08-20' }),
-    // Jobs: nothing ever finished and already behind.
-    t('job', { estimated_minutes: 60, due_date: '2026-09-18' }),
-    // TA: the ordinary case.
-    t('ta', { estimated_minutes: 45, due_date: '2026-09-24' }),
-    t('ta', { status: 'done' as const, completed_at: '2026-09-15' }),
-    // CS134: finished its work and nobody archived it.
-    t('cs', { status: 'done' as const, completed_at: '2026-09-21' }),
-    // Inbox.
-    ...Array.from({ length: 7 }, () => t(null, { estimated_minutes: 55, due_date: '2026-09-19' })),
-    ...Array.from({ length: 20 }, () => t(null, { status: 'done' as const, completed_at: '2026-09-21' })),
+    ...['Read Pausas & Keeley', 'Draft the methods section', 'Rerun the alignment',
+        'Email the reviewer', 'Rebuild the figure'].map((title, i) =>
+      t('res', { title, estimated_minutes: 180, due_date: `${TODAY}T00:00:00Z`, urgency_score: 90 - i * 7 })),
+    ...Array.from({ length: 4 }, () => t('res', { status: 'done', completed_at: `${TODAY}T09:00:00Z` })),
+    t('pol', { title: 'Policy memo', estimated_minutes: 240, due_date: '2026-09-22T00:00:00Z', rrule: 'FREQ=WEEKLY' }),
+    t('pol', { status: 'done', completed_at: '2026-08-20T09:00:00Z' }),
+    t('job', { title: 'Finish the application', estimated_minutes: 60, due_date: '2026-09-18T00:00:00Z' }),
+    t('ta', { title: 'Grade problem set 3', estimated_minutes: 45, due_date: '2026-09-24T00:00:00Z',
+              scheduled_start: `${TODAY}T17:45:00` }),
+    t('ta', { status: 'done', completed_at: '2026-09-15T09:00:00Z' }),
+    t('cs', { status: 'done', completed_at: `${TODAY}T09:00:00Z` }),
+    ...['Organize laundry', 'Clinic work log', 'Renew the parking permit',
+        'Book the dentist', 'Return the library books', 'Fix the bike light',
+        'Call about the deposit'].map(title =>
+      t(null, { title, estimated_minutes: 55, due_date: '2026-09-19T00:00:00Z' })),
+    ...Array.from({ length: 20 }, () => t(null, { status: 'done', completed_at: `${TODAY}T09:00:00Z` })),
+    t('old', { status: 'done', completed_at: '2026-05-01T09:00:00Z' }),
   ]
 
-  const rows = buildProjectRows({ projects, tasks, todayStr: '2026-09-21' })
-  const sum  = projectsSummary(rows)
-  const [open, setOpen] = useState<string | null>('res')
-
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="text-meta text-ink-muted">
-          {sum.projectCount} projects · {sum.activeCount} active tasks ·{' '}
-          <span className="num">{formatMinutes(sum.minutesLeft)}</span> of work left
-        </span>
-        <span className="text-small text-danger">{projectsFinding(rows)}</span>
-      </div>
-      <ProjectTable rows={rows} todayStr="2026-09-21" expanded={open} onToggle={setOpen} onOpen={() => {}}>
-        {row => (
-          <div className="px-4 py-3 text-micro text-ink-faint">
-            {row.activeCount} task rows for {row.name} go here — the shared task row,
-            wired when the page is.
-          </div>
-        )}
-      </ProjectTable>
+    /* Boxed, because the page draws its own full-height ground and a sticky
+       header, neither of which belongs loose in the middle of this one. */
+    <div className="rounded-xl border border-line overflow-hidden h-[720px] overflow-y-auto">
+      <ProjectsView
+        projects={projects} archivedProjects={archived}
+        tasks={tasks} kidCounts={{}} todayStr={TODAY}
+      />
     </div>
   )
 }
@@ -980,10 +980,10 @@ export default function DesignPreview() {
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Projects — the table</h2>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Projects — the page</h2>
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
-                <ProjectTableSpecimen />
+                <ProjectsPageSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">

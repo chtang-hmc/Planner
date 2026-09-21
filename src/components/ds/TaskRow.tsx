@@ -36,9 +36,17 @@ export interface TaskRowModel {
   done?:     boolean
 }
 
-export function TaskRow({ task, narrow = false, onToggle, onOpen }: {
+export function TaskRow({ task, narrow = false, hideProject = false, onToggle, onOpen }: {
   task:      TaskRowModel
   narrow?:   boolean
+  /**
+   * Drop the project column inside a list that is already one project's.
+   *
+   * The same rule the chip follows: a row says what its container does not.
+   * `RESEARCH` printed five times inside a row headed Research is the noise
+   * the chip rule was written against.
+   */
+  hideProject?: boolean
   onToggle?: () => void
   onOpen?:   () => void
 }) {
@@ -71,8 +79,9 @@ export function TaskRow({ task, narrow = false, onToggle, onOpen }: {
         <button onClick={onOpen} className="min-w-0 flex-1 text-left">
           <p className="text-[14px] text-ink truncate leading-snug">{task.title}</p>
           <p className="text-micro text-ink-faint mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <span className="uppercase tracking-wider">{task.project}</span>
-            <span aria-hidden>·</span>
+            {!hideProject && (
+              <><span className="uppercase tracking-wider">{task.project}</span><span aria-hidden>·</span></>
+            )}
             <span className="num">{formatDuration(task.minutes)}</span>
             {task.chip && <><span aria-hidden>·</span><span>{task.chip}</span></>}
             {task.lateLabel && (
@@ -115,9 +124,11 @@ export function TaskRow({ task, narrow = false, onToggle, onOpen }: {
         />
       </div>
 
-      <span className="w-[84px] shrink-0 text-right text-micro uppercase tracking-wider text-ink-faint truncate">
-        {task.project}
-      </span>
+      {!hideProject && (
+        <span className="w-[84px] shrink-0 text-right text-micro uppercase tracking-wider text-ink-faint truncate">
+          {task.project}
+        </span>
+      )}
       <span className="num w-[52px] shrink-0 text-right text-small text-ink-2">
         {formatDuration(task.minutes)}
       </span>

@@ -1,58 +1,44 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { Task, Project, EstimationProfile } from '@/types'
+import { Task, Project } from '@/types'
+import { fetchTimezone, todayStr } from '@/lib/day'
 import ProjectsView from './ProjectsView'
 
 export const dynamic = 'force-dynamic'
 
-export interface ProjectData {
-  project: Project
-  activeTasks: (Task & { project: Project })[]
-  doneCount: number
-  bias: EstimationProfile | null
-}
-
 export default async function ProjectsPage() {
   const db = createServiceClient()
 
-  const [
-    { data: projects },
-    { data: activeTasks },
-    { data: doneCounts },
-    { data: biasProfiles },
-  ] = await Promise.all([
-    db.from('projects').select('*').eq('archived', false).order('name'),
-    db
-      .from('tasks')
-      .select('*, project:projects(id, name, color, archived, created_at)')
-      .in('status', ['inbox', 'active'])
-      .order('urgency_score', { ascending: false }),
-    db
-      .from('tasks')
-      .select('project_id')
-      .eq('status', 'done'),
-    db.from('estimation_profiles').select('*'),
+  const [tz, { data: projects }, { data: tasks }] = await Promise.all([
+    fetchTimezone(db),
+    db.from('projects').select('*').order('name'),
+    /**
+     * Every task at every status, not just the open ones.
+     *
+     * `buildProjectRows` needs the completed ones to compute progress and to
+     * know when a project last finished anything — a table built from the open
+     * tasks alone cannot tell a never-started project from a finished one.
+     */
+    db.from('tasks').select('*, project:projects(id, name, color, archived, created_at)'),
   ])
 
-  const doneByProject: Record<string, number> = {}
-  for (const t of doneCounts ?? []) {
-    doneByProject[t.project_id] = (doneByProject[t.project_id] ?? 0) + 1
+  const allTasks = (tasks ?? []) as (Task & { project: Project | null })[]
+
+  // Subtasks per parent, for the `N steps` chip. Counted here because only the
+  // fetch knows whether the children came back.
+  const kidCounts: Record<string, number> = {}
+  for (const t of allTasks) {
+    if (t.parent_id) kidCounts[t.parent_id] = (kidCounts[t.parent_id] ?? 0) + 1
   }
 
-  const biasMap: Record<string, EstimationProfile> = {}
-  for (const b of biasProfiles ?? []) {
-    biasMap[b.project_id] = b as EstimationProfile
-  }
+  const all = (projects ?? []) as Project[]
 
-  const projectDataList: ProjectData[] = (projects ?? []).map((p) => ({
-    project: p as Project,
-    activeTasks: ((activeTasks ?? []) as (Task & { project: Project })[]).filter(
-      (t) => t.project_id === p.id
-    ),
-    doneCount: doneByProject[p.id] ?? 0,
-    bias: biasMap[p.id] ?? null,
-  }))
-
-  const allProjects = (projects ?? []) as Project[]
-
-  return <ProjectsView projectDataList={projectDataList} allProjects={allProjects} />
+  return (
+    <ProjectsView
+      projects={all.filter(p => !p.archived)}
+      archivedProjects={all.filter(p => p.archived)}
+      tasks={allTasks}
+      kidCounts={kidCounts}
+      todayStr={todayStr(tz)}
+    />
+  )
 }

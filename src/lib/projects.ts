@@ -246,16 +246,27 @@ export const PROJECT_SORTS: { key: ProjectSort; label: string }[] = [
  */
 export function sortProjectRows(rows: ProjectRow[], by: ProjectSort): ProjectRow[] {
   const byName = (a: ProjectRow, b: ProjectRow) => a.name.localeCompare(b.name)
-  const copy = [...rows]
-  switch (by) {
-    case 'left':     return copy.sort((a, b) => b.minutesLeft - a.minutesLeft || byName(a, b))
-    case 'progress': return copy.sort((a, b) => (b.progress ?? -1) - (a.progress ?? -1) || byName(a, b))
-    case 'name':     return copy.sort(byName)
-    case 'due':      return copy.sort((a, b) =>
+
+  /**
+   * Comparators, not a switch with four returns.
+   *
+   * The switch had no default. TypeScript was happy — `by` is a union of
+   * exactly these four — but a value from outside the union at runtime fell
+   * through and returned `undefined`, and the caller's next line is
+   * `projectsSummary(rows)`. A lookup cannot fall through, and an unknown key
+   * lands on name order rather than on nothing.
+   */
+  const compare: Record<ProjectSort, (a: ProjectRow, b: ProjectRow) => number> = {
+    left:     (a, b) => b.minutesLeft - a.minutesLeft || byName(a, b),
+    progress: (a, b) => (b.progress ?? -1) - (a.progress ?? -1) || byName(a, b),
+    name:     byName,
+    due:      (a, b) =>
       (a.nextDue === null ? 1 : 0) - (b.nextDue === null ? 1 : 0)
       || (a.nextDue ?? '').localeCompare(b.nextDue ?? '')
-      || byName(a, b))
+      || byName(a, b),
   }
+
+  return [...rows].sort(compare[by] ?? byName)
 }
 
 /** The line under the heading: what the table adds up to. */
