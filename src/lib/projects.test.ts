@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   isActiveTask, buildProjectRows, projectStatus, sortProjectRows,
-  projectsSummary, projectsFinding, dueShort, CONCENTRATION_THRESHOLD, STALL_DAYS,
+  projectsSummary, projectsFinding, dueShort, PROJECT_SORTS,
+  CONCENTRATION_THRESHOLD, STALL_DAYS, type ProjectSort,
 } from '@/lib/projects'
 import type { Task, Project } from '@/types'
 
@@ -228,5 +229,22 @@ describe('dueShort — the narrow row reads as a sentence', () => {
 
   it('has words for no deadline at all', () => {
     expect(dueShort(null, TODAY)).toBe('no date')
+  })
+})
+
+describe('sortProjectRows never returns nothing', () => {
+  const rows = build([task({ project_id: 'a' }), task({ project_id: 'b' })], [proj('a'), proj('b')])
+
+  it('falls back to name order for a key outside the union', () => {
+    // The switch this replaced had no default: an unexpected key fell through
+    // and returned undefined, and the caller's next line reduces over it.
+    const out = sortProjectRows(rows, 'nonsense' as ProjectSort)
+    expect(out.map(r => r.name)).toEqual(['a', 'b'])
+  })
+
+  it('returns a row for every row, on every sort', () => {
+    for (const { key } of PROJECT_SORTS) {
+      expect(sortProjectRows(rows, key)).toHaveLength(rows.length)
+    }
   })
 })
