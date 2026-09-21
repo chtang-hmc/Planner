@@ -453,6 +453,16 @@ body {
   --text-display-s:  31px;
   --text-display-xs: 23px;
 
+  /* The three tiers, as Tailwind variants: `narrow:`, `mid:`, `wide:`. Same
+     numbers as the --bp-* tokens above, which document what each one is for.
+     They are declared here as well because a token a stylesheet only comments
+     on is documentation; these generate the variants the project table sheds
+     its columns with. `narrow` and Tailwind's own `sm` coincide at 640px —
+     the design's vocabulary is narrow/mid/wide and the components use it. */
+  --breakpoint-narrow:  640px;
+  --breakpoint-mid:     900px;
+  --breakpoint-wide:   1200px;
+
   --text-meta:    12.5px;
   --text-small:   11.5px;
   --text-micro:   11px;
