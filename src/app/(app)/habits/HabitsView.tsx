@@ -1,272 +1,30 @@
 'use client'
 
+/**
+ * Habits, as a list.
+ *
+ * Five habits in the space one card used. Each card carried a header, three
+ * tiles holding the same number on four of five habits, and a 16-week heatmap
+ * — 448 squares to represent twelve piano sessions. The row keeps what is
+ * acted on; the heatmap shrinks to four weeks of dots, and its useful part
+ * comes back below as a week of squares you can actually click.
+ */
+
 import { useState, useEffect, useTransition } from 'react'
-import { TimeIcon, StreakIcon, CalendarIcon } from '@/components/icons'
-import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
+import { CalendarIcon } from '@/components/icons'
+import { Task, Project, HabitStreak } from '@/types'
 import { completeTask, setHabitCompletion, syncScheduledHabits } from '@/app/actions/tasks'
-import { rruleToLabel } from '@/lib/rrule-utils'
 import AddTaskModal from '@/components/AddTaskModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import TaskDetail from '@/components/TaskDetail'
-import { daysSinceWeekStart, weekDayOrder } from '@/lib/week'
-import { addDays, dayOfWeek, todayStr as todayIn } from '@/lib/day'
-
-// ── Date helpers ──────────────────────────────────────────────────────────────
-
-const DAY_LETTERS_BY_DOW = ['S','M','T','W','T','F','S']   // indexed by Date#getDay()
-const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-
-/** Month of a day string, 0-11 — parsed as a pure date, no timezone in play. */
-function monthOf(dayStr: string) {
-  return parseInt(dayStr.slice(5, 7), 10) - 1
-}
-
-// ── Streak computation (from raw completion dates) ────────────────────────────
-
-function computeStreak(dates: string[], today: string): { current: number; longest: number; total: number } {
-  const unique = [...new Set(dates)].sort()
-  if (unique.length === 0) return { current: 0, longest: 0, total: 0 }
-
-  const yesterday = addDays(today, -1)
-  const desc      = [...unique].reverse()
-
-  // Current streak: consecutive days backwards from today or yesterday
-  let current = 0
-  if (desc[0] === today || desc[0] === yesterday) {
-    let prev = desc[0]; current = 1
-    for (let i = 1; i < desc.length; i++) {
-      if (desc[i] === addDays(prev, -1)) { current++; prev = desc[i] } else break
-    }
-  }
-
-  // Longest streak
-  let longest = 0, run = 1
-  for (let i = 1; i < unique.length; i++) {
-    if (unique[i] === addDays(unique[i-1], 1)) { run++; longest = Math.max(longest, run) }
-    else run = 1
-  }
-  longest = Math.max(longest, run, current)
-
-  return { current, longest, total: unique.length }
-}
-
-// ── 16-week completion calendar ───────────────────────────────────────────────
-
-function CompletionCalendar({ dates, today, weekStartDay, onToggle }: {
-  dates: string[]
-  /** Today in the user's timezone — the grid is built from day strings only. */
-  today: string
-  weekStartDay: number
-  onToggle: (dateStr: string, done: boolean) => void
-}) {
-  const dateSet = new Set(dates)
-
-  // Grid: 16 weeks, starting 15 weeks back on the user's first day of the week
-  // so each column is one of their weeks, not a fixed Sunday-Saturday block.
-  //
-  // Stepped as day strings rather than Date objects: the old version built
-  // local Dates and read them back as UTC, which shifted every cell by a day
-  // for anyone west of the meridian.
-  const startDate = addDays(today, -(15 * 7 + daysSinceWeekStart(dayOfWeek(today), weekStartDay)))
-  const allDays   = Array.from({ length: 16 * 7 }, (_, i) => addDays(startDate, i))
-
-  // Chunk into weeks (columns of 7)
-  const weeks: string[][] = []
-  for (let i = 0; i < allDays.length; i += 7) weeks.push(allDays.slice(i, i + 7))
-
-  // Month labels: first col where month changes
-  const monthMarkers: { col: number; label: string }[] = []
-  let lastMonth = -1
-  weeks.forEach((week, col) => {
-    const m = monthOf(week[0])
-    if (m !== lastMonth) { monthMarkers.push({ col, label: MONTH_NAMES[m] }); lastMonth = m }
-  })
-
-  return (
-    <div className="overflow-x-auto -mx-1 px-1">
-      <div className="inline-flex flex-col gap-0 min-w-full">
-        {/* Month row */}
-        <div className="flex gap-px mb-1 ml-5">
-          {weeks.map((_, col) => {
-            const m = monthMarkers.find(x => x.col === col)
-            return (
-              <div key={col} className="w-3.5 shrink-0 text-[9px] text-slate-300 dark:text-slate-600">
-                {m?.label ?? ''}
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="flex gap-px">
-          {/* Day labels */}
-          <div className="flex flex-col gap-px mr-1 w-4">
-            {weekDayOrder(weekStartDay).map((dow, i) => (
-              <div key={i} className={`h-3.5 text-[9px] flex items-center text-slate-300 dark:text-slate-600 ${i % 2 === 0 ? 'invisible' : ''}`}>
-                {DAY_LETTERS_BY_DOW[dow]}
-              </div>
-            ))}
-          </div>
-
-          {/* Cells */}
-          {weeks.map((week, col) => (
-            <div key={col} className="flex flex-col gap-px">
-              {week.map((ds, row) => {
-                const done    = dateSet.has(ds)
-                const future  = ds > today
-                const isToday = ds === today
-                return (
-                  <button
-                    key={row}
-                    disabled={future}
-                    onClick={() => onToggle(ds, !done)}
-                    title={future ? ds : `${ds}${done ? ' ✓ — click to remove' : ' — click to log'}`}
-                    className={`w-3.5 h-3.5 rounded-sm transition-colors ${
-                      future    ? 'bg-slate-50 dark:bg-slate-900/30 cursor-default' :
-                      done      ? 'bg-accent-500 dark:bg-accent-400 hover:opacity-70' :
-                      isToday   ? 'ring-1 ring-accent-300 dark:ring-accent-700 bg-slate-100 dark:bg-slate-800 hover:bg-accent-200 dark:hover:bg-accent-800' :
-                                  'bg-slate-100 dark:bg-slate-800 hover:bg-accent-200 dark:hover:bg-accent-800'
-                    }`}
-                  />
-                )
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Individual habit card ─────────────────────────────────────────────────────
-
-function HabitCard({
-  habit,
-  dates,
-  today,
-  doneToday,
-  onDone,
-  onOpen,
-  pending,
-  weeklyDone,
-  weekStartDay,
-  onToggleDate,
-  onLogAtTime,
-}: {
-  habit: Task & { project: Project }
-  dates: string[]
-  today: string
-  doneToday: boolean
-  onDone: () => void
-  onOpen: () => void
-  pending: boolean
-  weeklyDone: number
-  weekStartDay: number
-  onToggleDate: (dateStr: string, done: boolean) => void
-  onLogAtTime: () => void
-}) {
-  const { current, longest, total } = computeStreak(dates, today)
-  const freq = habit.rrule ? rruleToLabel(habit.rrule) : 'Anytime'
-  const proj = habit.project ?? INBOX_PROJECT
-
-  return (
-    <div className={`bg-white dark:bg-slate-900 border rounded-2xl p-5 flex flex-col gap-4 transition-opacity ${
-      doneToday
-        ? 'border-accent-200 dark:border-accent-900 opacity-60'
-        : 'border-slate-200 dark:border-slate-800'
-    }`}>
-      {/* Header row */}
-      <div className="flex items-start gap-3">
-        <div className="flex-1 min-w-0">
-          <button
-            onClick={onOpen}
-            className="text-left w-full group"
-            title="Edit habit"
-          >
-            <h3 className="font-semibold text-slate-900 dark:text-slate-100 leading-snug group-hover:text-accent-600 dark:group-hover:text-accent-400 transition-colors">
-              {habit.title}
-            </h3>
-          </button>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span
-              className="text-xs font-medium px-1.5 py-0.5 rounded"
-              style={{ background: proj.color + '20', color: proj.color }}
-            >
-              {proj.name}
-            </span>
-            <span className="text-xs text-slate-400">
-              {habit.rrule ? `↻ ${freq}` : '● Anytime'}
-            </span>
-            {habit.weekly_target && (
-              <span className={`text-xs font-medium tabular-nums ${
-                weeklyDone >= habit.weekly_target
-                  ? 'text-emerald-500'
-                  : 'text-violet-500 dark:text-violet-400'
-              }`}>
-                {weeklyDone}/{habit.weekly_target} this week
-                {weeklyDone >= habit.weekly_target ? ' ✓' : ''}
-              </span>
-            )}
-            {habit.estimated_minutes && (
-              <span className="text-xs text-slate-400 font-mono">{habit.estimated_minutes}m</span>
-            )}
-          </div>
-        </div>
-
-        {/* Log at a time — for when the hour matters, or it happened earlier */}
-        <button
-          onClick={onLogAtTime}
-          title="Log with a time, and optionally put it on your calendar"
-          className="shrink-0 w-9 h-9 rounded-full border-2 border-slate-200 dark:border-slate-700 flex items-center justify-center text-sm text-slate-400 hover:border-violet-400 hover:text-violet-500 transition-colors"
-        >
-          <TimeIcon size={12} />
-        </button>
-
-        {/* Complete button */}
-        <button
-          onClick={onDone}
-          disabled={doneToday || pending}
-          title={doneToday ? 'Done for today' : 'Mark done now'}
-          className={`shrink-0 w-9 h-9 rounded-full border-2 flex items-center justify-center text-sm font-bold transition-all ${
-            doneToday
-              ? 'bg-accent-500 border-accent-500 text-white cursor-default'
-              : pending
-                ? 'border-accent-300 dark:border-accent-700 text-accent-300 animate-pulse cursor-wait'
-                : 'border-slate-300 dark:border-slate-600 text-slate-400 hover:border-accent-500 hover:text-accent-500 hover:bg-accent-50 dark:hover:bg-accent-950'
-          }`}
-        >
-          {doneToday ? '✓' : pending ? '…' : '+'}
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-2 text-center">
-        {[
-          { label: 'Streak', value: current, suffix: '', color: current >= 7 ? 'text-orange-500' : current >= 3 ? 'text-accent-500' : 'text-slate-700 dark:text-slate-300' },
-          { label: 'Best',   value: longest, suffix: '', color: 'text-slate-500 dark:text-slate-400' },
-          { label: 'Total',  value: total,   suffix: '', color: 'text-slate-500 dark:text-slate-400' },
-        ].map(({ label, value, suffix, color }) => (
-          <div key={label} className="py-2 bg-slate-50 dark:bg-slate-800 rounded-xl">
-            <p className={`text-xl font-bold tabular-nums leading-none ${color}`}>
-              {value}{suffix}
-            </p>
-            <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">{label}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* 16-week calendar */}
-      <div>
-        <div className="flex items-baseline justify-between mb-2">
-          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">Last 16 weeks</p>
-          <p className="text-[10px] text-slate-300 dark:text-slate-600">click a day to log it</p>
-        </div>
-        <CompletionCalendar dates={dates} today={today} weekStartDay={weekStartDay} onToggle={onToggleDate} />
-      </div>
-    </div>
-  )
-}
-
-// ── Main view ─────────────────────────────────────────────────────────────────
+import { HabitRow, HabitTableHeader, type HabitRowModel } from '@/components/ds/HabitRow'
+import { HabitWeekGrid } from '@/components/ds/HabitWeekGrid'
+import {
+  cadence, weekProgress, habitStreak, habitsHeadline,
+} from '@/lib/habit-stats'
+import { formatTimeOfDay } from '@/lib/task-format'
+import { weekStartOfDay } from '@/lib/week'
+import { todayStr as todayIn, localDayStr } from '@/lib/day'
 
 interface Props {
   habits:           (Task & { project: Project })[]
@@ -280,6 +38,9 @@ interface Props {
   tz:               string
 }
 
+const clock = (minutes: number | null) =>
+  minutes == null ? null : formatTimeOfDay(minutes).toLowerCase().replace(' ', '')
+
 export default function HabitsView({
   habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled, weekStartDay, tz,
 }: Props) {
@@ -290,6 +51,9 @@ export default function HabitsView({
   // Dates un-logged this session, subtracted in getDates
   const [removedDates, setRemovedDates] = useState<Record<string, string[]>>({})
   const [toggleError, setToggleError]   = useState<string | null>(null)
+  /* `title|day` keys being written from the week grid, so one square can be
+     disabled without freezing the other thirty-four. */
+  const [gridPending, setGridPending]   = useState<Set<string>>(new Set())
   const [showAdd,     setShowAdd]     = useState(false)
   const [detailTask,  setDetailTask]  = useState<(Task & { project: Project }) | null>(null)
   // Habit whose "log at a time" sheet is open
@@ -358,19 +122,30 @@ export default function HabitsView({
   function handleToggleDate(habit: Task & { project: Project }, dateStr: string, done: boolean) {
     const add    = (m: Record<string, string[]>) => ({ ...m, [habit.title]: [...(m[habit.title] ?? []), dateStr] })
     const remove = (m: Record<string, string[]>) => ({ ...m, [habit.title]: (m[habit.title] ?? []).filter(d => d !== dateStr) })
+    const key = `${habit.title}|${dateStr}`
 
     // Optimistic: the two maps are mirrors, so always set both
     setLocalDates(done ? add : remove)
     setRemovedDates(done ? remove : add)
+    setGridPending(p => new Set([...p, key]))
+
+    /* Un-logging today also has to move the row out of "done": `sessionDone`
+       is keyed by id and nothing else clears it, so without this the tick
+       stayed filled while the day's dot vanished. */
+    if (!done && dateStr === todayStr) {
+      setSessionDone(p => { const n = new Set(p); n.delete(habit.id); return n })
+    }
 
     startTransition(async () => {
       const res = await setHabitCompletion(habit.title, dateStr, done)
       if (res.error) {
         setLocalDates(done ? remove : add)      // roll back
         setRemovedDates(done ? add : remove)
+        if (!done && dateStr === todayStr) setSessionDone(p => new Set([...p, habit.id]))
         setToggleError(res.error)
         setTimeout(() => setToggleError(null), 4000)
       }
+      setGridPending(p => { const n = new Set(p); n.delete(key); return n })
     })
   }
 
@@ -399,65 +174,94 @@ export default function HabitsView({
   // logged today sitting in the active list with a live "+", which would record
   // it a second time.
   const isDoneToday = (h: Task) => sessionDone.has(h.id) || getDates(h).includes(todayStr)
-  const active   = habits.filter(h => !isDoneToday(h))
-  const doneList = habits.filter(isDoneToday)
+  const doneCountToday = habits.filter(isDoneToday).length
 
-  const doneCountToday = doneList.length
+  const weekStartStr = weekStartOfDay(todayStr, weekStartDay)
+
+  /** Habits with a calendar block on today that have not been logged. */
+  const scheduledToday = habits
+    .filter(h => h.scheduled_start
+      && localDayStr(h.scheduled_start, tz) === todayStr
+      && !isDoneToday(h))
+    .map(h => h.title)
+
+  function toRowModel(habit: Task & { project: Project }): HabitRowModel {
+    const days = getDates(habit)
+    return {
+      id:      habit.id,
+      title:   habit.title,
+      cadence: cadence(habit.weekly_target),
+      minutes: habit.adjusted_minutes ?? habit.estimated_minutes,
+      /* `7pm`, not `7 PM`: this sits in a run of dot-separated meta where the
+         space reads as another separator. Same shape the calendar block uses. */
+      timeLabel: clock(
+        habit.due_time_minutes != null ? habit.due_time_minutes
+        : habit.scheduled_start && localDayStr(habit.scheduled_start, tz) === todayStr
+          ? new Date(habit.scheduled_start).getHours() * 60
+            + new Date(habit.scheduled_start).getMinutes()
+        : null),
+      days,
+      week:   weekProgress({ weeklyTarget: habit.weekly_target, days, weekStartStr }),
+      /* Computed here, not read from `habit_streaks`. That table is keyed by
+         task_id and a habit is a family of rows: on 2026-09-21 every row in it
+         said `current_streak: 1`, including Piano's, which had run 14 days. */
+      streak: habitStreak({
+        weeklyTarget: habit.weekly_target, days, todayStr, weekStartDay,
+      }),
+      doneToday: isDoneToday(habit),
+      pending:   pending.has(habit.id),
+    }
+  }
+
+  /* One list, in a stable order. The old page moved a habit to a "done today"
+     section the moment you logged it, so the row you had just aimed at jumped
+     somewhere else — and the ordering of the page changed all day. */
+  const rows = [...habits].sort((a, b) => a.title.localeCompare(b.title))
 
   return (
     <>
-      <div className="min-h-full bg-slate-50 dark:bg-slate-950">
-        {/* Header */}
-        <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
-          <div className="px-6 py-3 flex items-center justify-between">
-            <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Habits</h1>
-            <div className="flex items-center gap-3">
-              {habits.length > 0 && (
-                <span className="text-xs text-slate-400 tabular-nums">
-                  {doneCountToday} / {habits.length} today
-                </span>
-              )}
-              <button
-                onClick={() => setShowAdd(true)}
-                className="text-xs bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 rounded-lg font-medium hover:opacity-80 transition-opacity"
-              >
-                + New habit
-              </button>
+      <div className="min-h-full bg-surface-sunk">
+        <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
+          <div className="px-6 py-3 flex items-baseline justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-display-xs display text-ink leading-tight">Habits</h1>
+              <p className="text-meta text-ink-muted mt-0.5">
+                {habitsHeadline({
+                  total: habits.length, doneToday: doneCountToday, scheduled: scheduledToday,
+                })}
+              </p>
             </div>
+            <button
+              onClick={() => setShowAdd(true)}
+              className="h-9 px-4 rounded-ctrl bg-accent-600 text-white text-[13px] font-semibold hover:bg-accent-700 transition-colors"
+            >
+              New habit
+            </button>
           </div>
         </header>
 
-        {/* max-w-3xl with no mx-auto pinned everything to the left and left the
-            rest of the panel empty. The cards were already a two-column grid,
-            so they just need the room and one more column when there is width
-            for it — a habit card holds a header, three stats and a 16-week
-            heatmap, and stays readable down to about 380px. */}
-        <div className="px-6 py-5">
+        <div className="px-6 py-4 flex flex-col gap-4">
           {habits.length === 0 ? (
-            /* Empty state */
-            <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-              <StreakIcon size={40} className="mx-auto text-slate-300 dark:text-slate-700" />
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">No habits yet</h2>
-              <p className="text-sm text-slate-400 max-w-xs">
-                Add habits you want to build — gym, reading, meditation — and track your streaks over time.
+            <div className="rounded-xl border border-line bg-surface py-16 text-center flex flex-col items-center gap-3">
+              <h2 className="text-meta font-semibold text-ink">No habits yet</h2>
+              <p className="text-micro text-ink-muted max-w-xs">
+                Add the things you want to do regularly — gym, reading, practice — and the
+                page will keep the count.
               </p>
-              <button
-                onClick={() => setShowAdd(true)}
-                className="mt-2 px-5 py-2.5 bg-accent-500 hover:bg-accent-600 text-white rounded-xl text-sm font-semibold transition-colors"
-              >
-                Add your first habit
+              <button onClick={() => setShowAdd(true)}
+                      className="text-meta font-medium text-accent-600 hover:underline underline-offset-2">
+                Add your first habit →
               </button>
             </div>
           ) : (
             <>
-              {toggleError && (
-                <p className="text-xs text-red-500 mb-3">{toggleError}</p>
-              )}
+              {toggleError && <p className="text-small text-danger">{toggleError}</p>}
 
               {autoLogged.length > 0 && (
-                <div className="mb-4 flex items-start gap-3 px-3.5 py-2.5 rounded-xl border border-accent-200 dark:border-accent-900 bg-accent-50 dark:bg-accent-950/40">
+                <div className="flex items-start gap-3 px-3.5 py-2.5 rounded-xl border border-accent-200"
+                     style={{ background: 'var(--accent-tint)' }}>
                   <CalendarIcon size={14} className="shrink-0" />
-                  <p className="text-xs text-slate-600 dark:text-slate-300 flex-1 leading-relaxed">
+                  <p className="text-micro text-ink-2 flex-1 leading-relaxed">
                     Filled in from your calendar:{' '}
                     <span className="font-medium">
                       {autoLogged.slice(0, 4).map(l => `${l.title} (${l.dateStr.slice(5)})`).join(', ')}
@@ -465,78 +269,40 @@ export default function HabitsView({
                     </span>
                     . Days that were blocked out and have since finished.
                   </p>
-                  <button
-                    onClick={undoAutoLogged}
-                    className="text-xs font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 shrink-0 underline"
-                  >
+                  <button onClick={undoAutoLogged}
+                          className="text-micro font-medium text-ink-muted hover:text-ink-2 shrink-0 underline underline-offset-2">
                     Undo
                   </button>
                 </div>
               )}
 
-              {/* Daily progress bar — a full-width 1px rule across a wide panel
-                  reads as a divider, not a measure, so it keeps a sane width. */}
-              <div className="mb-5 max-w-md">
-                <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
-                  <span>Today</span>
-                  <span className="font-mono text-slate-600 dark:text-slate-300">{doneCountToday}/{habits.length}</span>
-                </div>
-                <div className="h-1.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-accent-500 rounded-full transition-all duration-500"
-                    style={{ width: habits.length > 0 ? `${(doneCountToday / habits.length) * 100}%` : '0%' }}
-                  />
-                </div>
-              </div>
-
-              {/* Active habits (not done today) */}
-              {active.length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4 items-start">
-                  {active.map(habit => (
-                    <HabitCard
-                      key={habit.id}
-                      habit={habit}
-                      dates={getDates(habit)}
-                      today={todayStr}
-                      doneToday={false}
-                      onDone={() => handleDone(habit)}
-                      onOpen={() => setDetailTask(habit)}
-                      pending={pending.has(habit.id)}
-                      weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
-                      weekStartDay={weekStartDay}
-                      onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
-                      onLogAtTime={() => setLogging(habit)}
+              <div className="rounded-xl border border-line bg-surface overflow-hidden">
+                <HabitTableHeader />
+                <div className="border-t border-line-soft divide-y divide-line-soft">
+                  {rows.map(h => (
+                    <HabitRow
+                      key={h.id}
+                      habit={toRowModel(h)}
+                      todayStr={todayStr}
+                      onLog={() => isDoneToday(h)
+                        ? handleToggleDate(h, todayStr, false)
+                        : handleDone(h)}
+                      onOpen={() => setDetailTask(h)}
                     />
                   ))}
                 </div>
-              )}
+              </div>
 
-              {/* Done today — shown greyed at the bottom */}
-              {doneList.length > 0 && (
-                <>
-                  {active.length > 0 && (
-                    <p className="text-xs text-slate-400 uppercase tracking-wide font-medium mb-3 mt-2">Done today</p>
-                  )}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
-                    {doneList.map(habit => (
-                      <HabitCard
-                        key={habit.id}
-                        habit={habit}
-                        dates={getDates(habit)}
-                        today={todayStr}
-                        doneToday={true}
-                        onDone={() => {}}
-                        onOpen={() => setDetailTask(habit)}
-                        pending={false}
-                        weeklyDone={streaks[habit.id]?.completions_this_week ?? 0}
-                        weekStartDay={weekStartDay}
-                        onToggleDate={(d, v) => handleToggleDate(habit, d, v)}
-                        onLogAtTime={() => setLogging(habit)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
+              <HabitWeekGrid
+                rows={rows.map(h => ({ id: h.id, title: h.title, days: getDates(h) }))}
+                weekStartStr={weekStartStr}
+                todayStr={todayStr}
+                pending={gridPending}
+                onToggle={(title, day, next) => {
+                  const habit = habits.find(h => h.title === title)
+                  if (habit) handleToggleDate(habit, day, next)
+                }}
+              />
             </>
           )}
         </div>

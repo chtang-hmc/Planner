@@ -494,6 +494,60 @@ Keeping completed instances as `status: 'done'` rows lets analytics queries (foc
 
 ## Habits Page
 
+### The list, and the week you can click (2026-09-21)
+
+Five cards became five rows. Each card carried a header, three tiles holding
+the same number on four of five habits, and a 16-week heatmap — 448 squares to
+represent twelve piano sessions. What survives is what is acted on.
+
+**The streak is computed, not read from `habit_streaks`.** That table is keyed
+by `task_id` and a habit is a family of rows, so the id on screen is usually an
+occurrence created *after* the completions being counted. On 2026-09-21 every
+row in it said `current_streak: 1` — including Piano's, which had run fourteen
+days. `habitStreak` derives it from the same completion days the dot strip
+draws, so the number and the picture cannot disagree.
+
+**Counted in the habit's own unit, and the unit is in the cell.** `14d` for a
+daily habit, `1w` for a weekly-target one — consecutive weeks that met the
+target being the only sensible reading of a streak for something done twice a
+week. A column headed `STREAK` cannot say which of the two it is holding.
+
+**Today's absence does not break a streak.** A daily streak counts back from
+today when today is logged and from yesterday when it is not, so a habit you
+have not got to at nine in the morning still reads as a streak rather than
+resetting to zero and recovering at lunchtime. The same grace applies to the
+current week.
+
+**An anytime habit has no streak and no fraction.** `1/—` is not a number.
+With no cadence there is nothing for anything to be consecutive in, so the
+streak cell is `—` and the week cell is a plain count.
+
+**Over-target keeps its true numerator.** `3/2` reads oddly as a fraction, but
+capping it at the target would be lying about the week; the colour says the
+target is met and the third session stays a fact.
+
+**One list, in a stable alphabetical order.** The old page moved a habit into a
+"done today" section the moment you logged it, so the row you had just aimed at
+jumped elsewhere and the page reordered itself all day.
+
+**The heatmap's useful half comes back as `This week`** — five habits by seven
+days, every square a control. The heatmap could only be read; the common
+failure is having done the thing and forgotten to log it, and there was nowhere
+on the page to say so. `setHabitCompletion` already existed for it. A future
+square is drawn but is not a button: the action refuses a future date, and a
+control that is always rejected is a control that lies.
+
+**The first column is the configured week start**, and the letters derive from
+it. Monday was an accident of the reference drawing.
+
+**The headline says what the table cannot.** `2 of 5 logged today · Gym and
+Piano are already on the calendar today` — the rows each carry their own count,
+so restating the total would be the heading reading the table back. It says
+*on* today rather than *later* today deliberately: knowing whether a block is
+still ahead means reading the clock during render, which is impure and would
+have the server and the client disagree about the sentence.
+
+
 ### Route
 
 `/habits` — dedicated page separate from `/tasks`.

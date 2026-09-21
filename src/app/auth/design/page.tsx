@@ -41,12 +41,12 @@ import { CapacityBand } from '@/components/ds/CapacityBand'
 import { DaySection } from '@/components/ds/DaySection'
 import ProjectsView from '@/app/(app)/projects/ProjectsView'
 import ProjectDetailView from '@/app/(app)/projects/[id]/ProjectDetailView'
+import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
 import { freeGaps, localMidnight, workWindowFor, type Interval, type WorkingHours } from '@/lib/scheduler'
 import { todayStr as todayIn, addDays as addDaysStr } from '@/lib/day'
-import HabitsView from '@/app/(app)/habits/HabitsView'
 import type { AnalyticsData } from '@/app/(app)/analytics/page'
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -956,6 +956,75 @@ function ProjectDetailSpecimen() {
   )
 }
 
+/**
+ * The habits page: five rows where five cards were, four weeks of dots, and
+ * the week of clickable squares that replaces the heatmap's only useful part.
+ *
+ * The fixture carries one of each shape — a daily habit on a long run, a
+ * weekly target met and exceeded, one met exactly, one with no target at all,
+ * and one that has never been done.
+ */
+function HabitsSpecimen() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const TODAY = todayIn(tz)
+  const back = (n: number) =>
+    new Date(Date.parse(TODAY + 'T00:00:00') - n * 86_400_000).toISOString().slice(0, 10)
+
+  const project: Project = {
+    id: 'inbox', name: 'Inbox', color: '#8A8478', archived: false,
+    created_at: '2026-01-01T00:00:00Z', description: null,
+  }
+  let n = 0
+  const habit = (o: Partial<Task> = {}): Task & { project: Project } => ({
+    id: `h${n++}`, project_id: null, parent_id: null,
+    status: 'active', type: 'habit', priority: 2, energy_required: 'medium',
+    title: 'A habit', description: null,
+    estimated_minutes: 30, adjusted_minutes: null, actual_minutes: null,
+    due_date: `${TODAY}T00:00:00Z`, start_date: null, urgency_score: 50,
+    urgency_curve: 'linear', rrule: 'FREQ=DAILY', weekly_target: null,
+    exclusive_group: null, location: 'anywhere', span_minutes: null,
+    buffer_minutes: null, gcal_event_id: null, scheduled_start: null,
+    scheduled_end: null, created_at: '2026-01-01T00:00:00Z', completed_at: null,
+    project,
+    ...o,
+  })
+
+  const habits = [
+    habit({ id: 'piano', title: 'Piano', weekly_target: 7, estimated_minutes: 60,
+            due_time_minutes: 19 * 60 }),
+    habit({ id: 'gym', title: 'Gym', weekly_target: 2, estimated_minutes: 120,
+            scheduled_start: `${TODAY}T20:00:00` }),
+    habit({ id: 'run', title: 'Run', weekly_target: 2, estimated_minutes: 120 }),
+    habit({ id: 'lang', title: 'Learn Language', weekly_target: null, estimated_minutes: 30 }),
+    habit({ id: 'job', title: 'Job Application', weekly_target: 5, estimated_minutes: 30 }),
+  ]
+
+  const completionMap: Record<string, string[]> = {
+    // Twelve days running, including today.
+    Piano: Array.from({ length: 12 }, (_, i) => back(i)).sort(),
+    // Three this week against a target of two, and two the week before.
+    Gym: [back(0), back(1), back(3), back(7), back(9)].sort(),
+    Run: [back(1), back(4), back(8), back(11)].sort(),
+    'Learn Language': [back(3)],
+    'Job Application': [],
+  }
+
+  return (
+    <div className="rounded-xl border border-line overflow-hidden h-[720px] overflow-y-auto">
+      <HabitsView
+        habits={habits}
+        completionMap={completionMap}
+        doneToday={['piano', 'gym']}
+        projects={[project]}
+        streaks={{}}
+        gcalWriteEnabled={false}
+        weekStartDay={1}
+        tz={tz}
+      />
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -1065,6 +1134,13 @@ export default function DesignPreview() {
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Habits</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <HabitsSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
                   <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Home — today</h2>
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
@@ -1122,30 +1198,6 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <ChromePreview />
-              </section>
-              <section>
-                <div className="flex items-baseline gap-3 mb-4">
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Habits page</h2>
-                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
-                </div>
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800">
-                  <HabitsView
-                    habits={HABITS.map(h => h.t)}
-                    completionMap={Object.fromEntries(HABITS.map(h => [
-                      h.t.title,
-                      Array.from({ length: 30 }, (_, i) => {
-                        const d = new Date(); d.setDate(d.getDate() - i)
-                        return i % 3 === 0 ? d.toISOString().slice(0, 10) : ''
-                      }).filter(Boolean),
-                    ]))}
-                    doneToday={[]}
-                    projects={[HOME]}
-                    streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
-                    gcalWriteEnabled
-                    weekStartDay={1}
-                    tz="America/Los_Angeles"
-                  />
-                </div>
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
