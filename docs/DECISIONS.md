@@ -1033,7 +1033,48 @@ Width and collapsed state live in `localStorage` (`src/lib/sidebar-prefs.ts`), r
 - Pointer events, not mouse events, so a trackpad or pen drags too. The listeners are on the window because the pointer leaves a 6px grip almost immediately and a handler bound to the grip would stop receiving moves. Cursor and `user-select` are set on `<body>` for the duration so they survive the pointer crossing other elements.
 - The drag measures from the sidebar's **own left edge**, not from `clientX` alone. They are identical in the app, but assuming x=0 makes the component work in exactly one position and misbehave anywhere it is previewed or embedded — which is how the bug showed up.
 
-### Analytics
+### Insights, and the three charts that went (2026-09-21)
+
+Analytics is Insights. The route stays `/analytics` — renaming it means
+touching five `revalidatePath` calls and breaking any bookmark to buy nothing;
+the name the user reads is the sidebar label.
+
+**Three charts deleted, for one reason.** The estimate-accuracy donut (50% from
+four samples), the urgency histogram (its one finding is now a card) and the
+seven-day energy chart (five bars between 2.0 and 3.0) all drew a picture of
+data too thin to carry one. `thinData` says the same thing in words, with how
+close the threshold is.
+
+**If a finding cannot name a number, it is not a finding.** Each of the three
+cards returns null rather than render a hedge, and the page shows what
+survives. On 2026-09-21 that is two: Research sits at 32%, below the 35%
+concentration threshold, so that card stays silent — the same rule the project
+table uses, so the two pages cannot disagree about whether it is worth
+mentioning. A page with one card on it is telling the truth about how much it
+knows, and the no-findings state is a sentence rather than an apology.
+
+**The capacity card is null, not zeroes, on a day off.** A day with working
+hours switched off and a day with no calendar connected both produce
+`free = 0`, and "today holds 10h of work and 0h of time" is a finding about
+your settings, not your workload.
+
+**One stacked bar replaces seven project bars.** Each of those was scaled to
+itself, which made the only comparison worth having — how the whole is divided
+— the one thing you could not read. Inbox gets a real `done %` in the table:
+C7 settled that it is not exempt from `done / (active + done)`, and the
+reference board's `—` there was wrong.
+
+**No range control.** The design drew `This week / Month / All time` and never
+decided what they did. With no `daily_capacity` history only one window is
+honest, so two of the three would lie. When the history exists the page splits
+— a Today band outside the range entirely, and a ranged section where the range
+*recomputes* the findings rather than re-scoping the same three.
+
+**Review's permanent entry point is here.** It is a weekly ritual rather than a
+daily destination, so it does not earn a narrow tab slot — but acting on
+findings is what it is for, which makes the top of this page its home.
+
+### Analytics — the previous pass, superseded above
 
 Six chart components each carried their own copy of the card shell — border, radius, padding, heading — so they had already drifted between `tracking-wide` and `tracking-wider`. `Panel` is now the one shell, with `Empty` for the no-data state.
 
