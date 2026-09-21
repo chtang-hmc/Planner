@@ -13,6 +13,12 @@ export interface Project {
   color: string       // hex, e.g. "#4338c9"
   archived: boolean
   created_at: string
+  /**
+   * What the project is for (migration 0021). Optional, not nullable-only:
+   * reads from before the migration have no such key at all, and NULL, '' and
+   * absent all mean the same thing — never written.
+   */
+  description?: string | null
 }
 
 export interface Task {

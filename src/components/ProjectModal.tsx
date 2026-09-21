@@ -22,25 +22,34 @@ export const PRESET_COLORS = [
 interface Props {
   /** Pass an existing project to edit; omit to create */
   project?: Project
+  /**
+   * Which field opens focused. The About panel's empty state is a prompt to
+   * write a description, so arriving with the cursor in the name field would
+   * answer a different question than the one that was clicked.
+   */
+  focus?: 'name' | 'description'
   onClose: () => void
 }
 
-export default function ProjectModal({ project, onClose }: Props) {
+export default function ProjectModal({ project, focus = 'name', onClose }: Props) {
   const isEdit = !!project
 
   const [name, setName]   = useState(project?.name ?? '')
   const [color, setColor] = useState(project?.color ?? PRESET_COLORS[0])
+  const [description, setDescription] = useState(project?.description ?? '')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const descRef  = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    inputRef.current?.focus()
+    if (focus === 'description') descRef.current?.focus()
+    else inputRef.current?.focus()
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
+  }, [onClose, focus])
 
   function handleSubmit() {
     if (!name.trim()) { setError('Name is required'); return }
@@ -48,9 +57,9 @@ export default function ProjectModal({ project, onClose }: Props) {
     startTransition(async () => {
       try {
         if (isEdit) {
-          await updateProject(project!.id, name, color)
+          await updateProject(project!.id, name, color, description)
         } else {
-          await createProject(name, color)
+          await createProject(name, color, description)
         }
         onClose()
       } catch (err) {
@@ -88,6 +97,22 @@ export default function ProjectModal({ project, onClose }: Props) {
             onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
             placeholder="Project name"
             className="flex-1 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        {/* What it is for. Optional, and it says so — a required field here
+            would turn "make a project" into a writing exercise. */}
+        <div>
+          <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
+            Description <span className="normal-case tracking-normal">· optional</span>
+          </p>
+          <textarea
+            ref={descRef}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            rows={3}
+            placeholder="What is this project for?"
+            className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm leading-relaxed bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
           />
         </div>
 

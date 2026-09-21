@@ -1221,6 +1221,51 @@ always does and PostgREST returns `null` rather than omitting the key. The view
 types it as `Omit<Task, 'project'> & { project: Project | null }` instead of
 intersecting, which would give the impossible `undefined & null`.
 
+### Inside a project (2026-09-21)
+
+Four billboard numbers that between them said "2 tasks", above 60% empty page.
+It was not too short — it was loud and empty at the same time. One stat line
+carries every number the billboards did; the space goes to the three things
+the page never said.
+
+**`projects.description` (migration 0021).** The page had nowhere to say what a
+project is for, which the designer called the main reason it felt hollow.
+NULL, `''` and absent all mean "never written" and draw one empty state —
+distinguishing them would invent a state nobody asked for, and "absent" is what
+a `select('*')` returns before the migration runs.
+
+**The calendar block follows `task_event_links`, not a field on the event.** An
+event belongs to Google; the only thing tying one to a project is a task the
+user confirmed it covers. Unconfirmed suggestions are excluded — a guess is not
+a commitment, and the block is read as a record of what is booked.
+
+**The window is local midnight, not `todayStr + 'T00:00:00Z'`.** The first
+version used UTC and would have dropped an evening event from a window that is
+supposed to start today, anywhere west of London. `startOfLocalDay` exists for
+exactly this.
+
+**Repeating collapses occurrences by title**, the same key habits use: every
+occurrence is its own row, so a weekly task that has run a term is twenty rows
+with one name. Its history line is derived from the finished ones and is null
+when there are none — "it has never been late" about a task that has never run
+is a claim about nothing.
+
+**`estimateAccuracy` will not quote a bias ratio below the threshold.** One
+sample at 0.33 is not "67% faster", it is one task. Under three samples the
+panel says what arriving unlocks; at three it says what the number means.
+
+**The thin-data panel's right-hand value always carries a noun** — `1 of 3
+samples`, `1 of 7 projects`. Two denominators in one component with no units is
+how the same widget ends up meaning two things.
+
+**The done list is no longer capped.** The old page fetched active and done
+separately with `.limit(50)` on done, so the completion percentage quietly
+stopped being a percentage on the 51st finished task. One query, every status.
+
+**`projectContext` returns null on an ordinary project**, which is the common
+case. A line that always renders has to invent something, and an invented
+finding is worse than a blank — the same rule the week strip's finding follows.
+
 ### Creating and changing from where you are
 
 `ProjectPicker` is a dropdown with inline creation, shared by the add-task modal and the task detail panel. Choosing "+ New project…" swaps the select for a name field and a colour row; creating selects the new project immediately.

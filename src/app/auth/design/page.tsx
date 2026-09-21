@@ -40,6 +40,7 @@ import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow
 import { CapacityBand } from '@/components/ds/CapacityBand'
 import { DaySection } from '@/components/ds/DaySection'
 import ProjectsView from '@/app/(app)/projects/ProjectsView'
+import ProjectDetailView from '@/app/(app)/projects/[id]/ProjectDetailView'
 import type { BandInput } from '@/lib/band'
 import type { Capacity } from '@/lib/capacity'
 import { buildHome, resolveAgainstParent, rightNowFrom, rightNowSentence, MIN_GAP_MINUTES, type HomeEvent, type HomeTask } from '@/lib/home'
@@ -885,6 +886,76 @@ function ProjectsPageSpecimen() {
   )
 }
 
+/**
+ * A project from the inside — the stat line, the tabbed list, the calendar
+ * block and the three right-hand panels, all at once.
+ *
+ * Clinic, with the shape the board draws: two tasks left, both due within the
+ * day, one weekly repeat, two meetings this week, and an estimate profile one
+ * sample short of being trusted.
+ */
+function ProjectDetailSpecimen() {
+  const TODAY = todayIn(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const project: Project = {
+    id: 'clinic', name: 'Clinic', color: '#2E5FA3', archived: false,
+    created_at: '2026-01-01T00:00:00Z', description: null,
+  }
+  type Fixture = Omit<Task, 'project'> & { project: Project | null }
+  let n = 0
+  const t = (o: Partial<Fixture> = {}): Fixture => ({
+    id: `c${n++}`, project_id: 'clinic', parent_id: null,
+    status: 'active', type: 'task', priority: 2, energy_required: 'medium',
+    title: 'A Clinic task', description: null,
+    estimated_minutes: 60, adjusted_minutes: null, actual_minutes: null,
+    due_date: `${TODAY}T00:00:00Z`, start_date: null, urgency_score: 70,
+    urgency_curve: 'linear', rrule: null, weekly_target: null, exclusive_group: null,
+    location: 'anywhere', span_minutes: null, buffer_minutes: null,
+    gcal_event_id: null, scheduled_start: null, scheduled_end: null,
+    created_at: '2026-01-01T00:00:00Z', completed_at: null, project,
+    ...o,
+  })
+  /* Built from local midnight, so the specimen prints the hours it is meant
+     to show rather than whatever they slide to in the reader's zone. */
+  const at = (h: number) => new Date(Date.parse(TODAY + 'T00:00:00') + h * 3_600_000).toISOString()
+  const tasks = [
+    t({ id: 'sow', title: 'Clinic SOW', estimated_minutes: 60, urgency_score: 90,
+        scheduled_start: `${TODAY}T17:45:00` }),
+    t({ id: 'rep', title: 'Clinic Status Report', estimated_minutes: 15, urgency_score: 87,
+        rrule: 'FREQ=WEEKLY', due_date: `${TODAY}T00:00:00Z` }),
+    t({ id: 'rep0', title: 'Clinic Status Report', rrule: 'FREQ=WEEKLY', status: 'done',
+        estimated_minutes: 15, due_date: '2026-09-14T00:00:00Z', completed_at: '2026-09-14T10:00:00Z' }),
+    t({ id: 'old', title: 'Clinic kickoff deck', status: 'done',
+        due_date: '2026-09-08T00:00:00Z', completed_at: '2026-09-08T10:00:00Z' }),
+  ]
+  const events: CalendarEvent[] = [
+    { id: 'e1', gcal_id: 'g1', title: 'Diderot Clinic Team Meeting',
+      start_time: at(36), end_time: at(37), all_day: false, source: 'google_calendar' },
+    { id: 'e2', gcal_id: 'g2', title: 'Clinic Overall Meeting',
+      start_time: at(59), end_time: at(60.25), all_day: false, source: 'google_calendar' },
+  ]
+  const fromMs = Date.parse(TODAY + 'T00:00:00')
+
+  return (
+    <div className="rounded-xl border border-line overflow-hidden h-[760px] overflow-y-auto">
+      <ProjectDetailView
+        project={project}
+        tasks={tasks}
+        allProjects={[project]}
+        bias={{ id: 'b', project_id: 'clinic', sample_count: 1, bias_ratio: 1.25,
+                updated_at: '2026-09-15T00:00:00Z' }}
+        streaks={{}}
+        gcalWriteEnabled={false}
+        links={[{ task_id: 'sow', event_id: 'e1' }, { task_id: 'rep', event_id: 'e2' }]}
+        events={events}
+        todayStr={TODAY}
+        tz={tz}
+        windowMs={[fromMs, fromMs + 7 * 86_400_000]}
+      />
+    </div>
+  )
+}
+
 export default function DesignPreview() {
   // A development tool, not a feature. It lives under /auth so the proxy lets
   // it through without a session — the only way to look at these components in
@@ -984,6 +1055,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <ProjectsPageSpecimen />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Projects — inside one</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <ProjectDetailSpecimen />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
