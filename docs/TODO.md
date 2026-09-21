@@ -69,25 +69,24 @@ proves itself when something recurring is finished late.
 
 ---
 
-## Thin data, not broken charts
+## Thin data, said out loud
 
-*Checked 2026-09-17.* `energy_patterns` 2 rows, `energy_logs` 4,
-`focus_sessions` 9.
+*Checked 2026-09-21.* `energy_patterns` 9 rows, `energy_logs` 11 across 6
+distinct days, `focus_sessions` 18 of which **5 carry a reflection**,
+`estimation_profiles` 6 rows of which **3 clear the 3-sample threshold**.
 
-The pg_cron jobs are running now, so these will fill on their own. Until they
-do, most of Analytics is drawn from single-digit sample sizes — worth knowing
-before concluding a chart is broken.
+This used to be a warning that Analytics was drawing charts from single-digit
+samples. It no longer is: #71 deleted the three charts that did that, and
+Insights now states the sample counts in words through `ThinData` — "4 of 12
+reflections", "1 of 7 projects" — with a line saying what arriving unlocks. The
+numbers above are what that panel reads.
+
+The pg_cron jobs are running, so these fill on their own. Nothing here is
+broken; the page simply knows less than it eventually will, and now says so.
 
 ---
 
 ## Standing costs, accepted deliberately
-
-### Four row layouts means four implementations
-
-Every feature touching a task row is built four times. `TaskRowProps` makes the
-compiler point at whichever layout has not handled a new field, and anything a
-layout skips is declared in its `omits` list — but the work is still 4×.
-Revisit if adding a row feature starts to feel expensive.
 
 ### `/projects` fetches every task ever, at every status
 
