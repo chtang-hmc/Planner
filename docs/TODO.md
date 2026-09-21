@@ -89,6 +89,18 @@ compiler point at whichever layout has not handled a new field, and anything a
 layout skips is declared in its `omits` list — but the work is still 4×.
 Revisit if adding a row feature starts to feel expensive.
 
+### `/projects` fetches every task ever, at every status
+
+`buildProjectRows` needs the completed tasks — progress is
+`done / (active + done)`, and "stalled" is measured from the last completion —
+so the page reads the whole `tasks` table rather than the open ones. 71 rows on
+2026-09-21, which is nothing; it grows by one per completion and never shrinks.
+
+Accepted because the app is single-user and the alternative is two aggregate
+queries that would have to keep agreeing with `buildProjectRows` in
+application code. Worth revisiting somewhere in the low thousands of rows, or
+sooner if the page feels slow.
+
 ### Tests stop at the database
 
 `npm test` covers the pure logic: the scheduler, urgency, relevance, the

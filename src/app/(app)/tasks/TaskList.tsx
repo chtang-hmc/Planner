@@ -16,8 +16,8 @@ import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
-import { TaskRow, GroupHeader, type TaskRowModel } from '@/components/ds/TaskRow'
-import { formatTimeOfDay } from '@/lib/task-format'
+import { TaskRow, GroupHeader } from '@/components/ds/TaskRow'
+import { toTaskRowModel } from '@/lib/task-row'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { formatMinutes } from '@/lib/task-format'
 import { addDays } from '@/lib/day'
@@ -273,41 +273,8 @@ export default function TaskList({
     setShowAddTask(true)
   }
 
-  /**
-   * A task as the shared row draws it.
-   *
-   * The chip carries only what the group header does not. A "TODAY" badge on
-   * every row inside a group headed Today is the noise this replaces; what
-   * earns a chip is the thing the header cannot say — that this one already
-   * has a slot, or repeats, or is a run of steps.
-   */
-  function toRowModel(task: TaskRow, kidCount: number): TaskRowModel {
-    const late = task.due_date && task.due_date.slice(0, 10) < todayStr
-      ? Math.round(
-          (Date.parse(todayStr + 'T00:00:00Z') - Date.parse(task.due_date.slice(0, 10) + 'T00:00:00Z'))
-          / 86_400_000)
-      : 0
-
-    const chip =
-      task.scheduled_start
-        ? `scheduled ${formatTimeOfDay(
-            new Date(task.scheduled_start).getHours() * 60 + new Date(task.scheduled_start).getMinutes(),
-          ).toLowerCase()}`
-        : kidCount > 0 ? `${kidCount} steps`
-        : task.rrule ? 'repeats'
-        : null
-
-    return {
-      id: task.id,
-      title: task.title,
-      color: task.project?.color ?? null,
-      project: task.project?.name ?? 'Inbox',
-      minutes: task.adjusted_minutes ?? task.estimated_minutes,
-      urgency: task.urgency_score,
-      chip,
-      lateLabel: late > 0 ? `${late} day${late === 1 ? '' : 's'} late` : null,
-    }
-  }
+  const toRowModel = (task: TaskRow, kidCount: number) =>
+    toTaskRowModel(task, { kidCount, todayStr })
 
   /**
    * Date groups, in the order a day arrives: what is already late, then today,

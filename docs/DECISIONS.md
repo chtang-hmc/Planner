@@ -1188,6 +1188,39 @@ Measured against the live database on 2026-09-21: 7 projects, 20 active tasks,
 no project fires that chip today. The handoff's "Research is 35%" and "19 active
 tasks · 27h 55m" are the reference day's numbers, not the current ones.
 
+### Wiring the table to the page (2026-09-21)
+
+**`toRowModel` moved out of `TaskList` into `src/lib/task-row.ts`.** The
+project table's expanded rows are the second caller, and the chip rule — "say
+what the container does not" — is a judgement that would not survive being
+re-derived in a second place.
+
+**`TaskRow` gained `hideProject`**, and the expansion uses it. `RESEARCH`
+printed five times inside a row headed Research is precisely the noise that
+chip rule was written against.
+
+**Completing a task from the overview opens the same `MicroReflection` the list
+does.** Calling `completeTask(id, null, null, null)` directly would have been
+one line, and would have silently dropped the logged actual — the only thing
+feeding the estimate bias.
+
+**Edit and Archive moved from a per-card `⋯` menu into the expanded row's
+footer**, beside `Open <project> →`. A table has no room for a menu button per
+row, and both are things you do having just looked at a project's tasks.
+
+**The estimate-accuracy chip is gone from this page.** It is internal plumbing
+("Need 2 more samples"), and the project detail page already shows it.
+
+**The sort control has two shapes.** Four segments need about 300px; at 390
+they wrap into a two-line control with uneven segments. Narrow gets the board's
+pill — implemented as a real `<select>`, so it is keyboard-navigable and gets
+the platform picker on a phone.
+
+`Task['project']` is optional because most queries do not join it, but this one
+always does and PostgREST returns `null` rather than omitting the key. The view
+types it as `Omit<Task, 'project'> & { project: Project | null }` instead of
+intersecting, which would give the impossible `undefined & null`.
+
 ### Creating and changing from where you are
 
 `ProjectPicker` is a dropdown with inline creation, shared by the add-task modal and the task detail panel. Choosing "+ New project…" swaps the select for a name field and a colour row; creating selects the new project immediately.
