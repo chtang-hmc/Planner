@@ -516,6 +516,7 @@ export default function TaskList({
             freeByDay={freeByDay}
             gapsByDay={gapsByDay}
             todayStr={todayStr}
+            tz={tz}
           />
         )}
 

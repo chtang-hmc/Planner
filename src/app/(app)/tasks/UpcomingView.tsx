@@ -10,6 +10,8 @@ import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { WeekStrip } from '@/components/ds/WeekStrip'
 import { buildWeekStrip, stripFinding } from '@/lib/week-strip'
+import { DaySection, type DayRowModel, type DaySlotModel, type DayAllDayModel } from '@/components/ds/DaySection'
+import { findConflicts, conflictedIds } from '@/lib/conflicts'
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -40,21 +42,6 @@ function toDateStr(d: Date): string {
     + String(d.getMonth() + 1).padStart(2, '0') + '-'
     + String(d.getDate()).padStart(2, '0')
 }
-function dayLabel(d: Date, today: Date): string {
-  const ds = toDateStr(d), ts = toDateStr(today)
-  if (ds === ts) return 'Today'
-  if (ds === toDateStr(addDays(today, 1))) return 'Tomorrow'
-  return ''
-}
-function formatTime(iso: string): string {
-  const d = new Date(iso)
-  let h = d.getHours(); const m = d.getMinutes()
-  const p = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12
-  return m === 0 ? `${h} ${p}` : `${h}:${String(m).padStart(2,'0')} ${p}`
-}
-function formatTimeRange(start: string, end: string, allDay: boolean): string {
-  return allDay ? 'All day' : `${formatTime(start)}–${formatTime(end)}`
-}
 function monthHeader(days: Date[]): string {
   const first = days[0], last = days[6]
   if (first.getMonth() === last.getMonth())
@@ -81,18 +68,14 @@ interface Props {
   gapsByDay:     Record<string, [number, number][]>
   /** Today in the configured timezone, from the server. */
   todayStr:      string
+  /** The viewer's timezone, for the clock column in each day. */
+  tz:            string
 }
 
 export default function UpcomingView({
   tasks, events, projectFilter, doneIds, onTaskClick, onTaskDone, onAddTask, weekStartDay,
-  freeByDay, gapsByDay, todayStr: serverToday,
+  freeByDay, gapsByDay, todayStr: serverToday, tz,
 }: Props) {
-  // Threaded through and not yet drawn: `DaySection` replaces the day blocks
-  // below in the next change, and the gaps are what put its free slots where
-  // they actually fall. Accepted here now so the page and the list are not
-  // touched again for it.
-  void gapsByDay
-
   const { query } = useSearch()
   const q = query.trim().toLowerCase()
   const today    = startOfDay(new Date())
@@ -146,6 +129,19 @@ export default function UpcomingView({
   const [, startTransition] = useTransition()
 
   const contentRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Expanded by proximity, not by preference.
+   *
+   * Today and tomorrow are open because they are the days you can still act
+   * on; the rest collapse to their header. A fortnight of fully expanded days
+   * is a scroll, and the strip above already carries the comparison across
+   * them. Local state, not a setting — it is a reading position, not a
+   * preference, and it should reset when you come back tomorrow.
+   */
+  const [openDays, setOpenDays] = useState<Set<string>>(
+    () => new Set([toDateStr(today), toDateStr(addDays(today, 1))]),
+  )
 
   // Same layout the list view draws, read the same way — the server renders the
   // default and the client swaps in the stored value without a mismatch.
@@ -459,17 +455,58 @@ export default function UpcomingView({
           </section>
         )}
 
-        {/* Continuous day sections */}
+        {/* Continuous day sections.
+
+            The header is new: capacity, verdict, a clash count and a collapse.
+            The rows beneath it are the same draggable rows as before — drag
+            between days is the reason this view exists, and it predates the
+            redesign, so it is preserved rather than rebuilt.
+
+            Tighter than the `gap-6` around them: the day's name used to sit
+            outside its card and needed the air to read as a heading. It is
+            inside the card now, so the same gap would just be a gutter between
+            fourteen mostly-collapsed rows. */}
+        <div className="flex flex-col gap-2">
         {allDays.map(d => {
           const ds      = toDateStr(d)
           const evts    = dayEvents(d)
           const dtasks  = dayTasks(d)
           const isToday = ds === todayStr
-          const special = dayLabel(d, today)
           const isDropTarget = dropTarget === ds && draggingId !== null
 
+          const timedEvents = evts.filter(e => !e.all_day)
+          const clashes = findConflicts(timedEvents.map(e => ({
+            id: e.id, title: e.title,
+            startMs: Date.parse(e.start_time), endMs: Date.parse(e.end_time),
+          })))
+          const clashing = conflictedIds(clashes)
+
+          const rows: DayRowModel[] = timedEvents.map(e => ({
+            key: e.id,
+            startMs: Date.parse(e.start_time),
+            endMs: Date.parse(e.end_time),
+            title: e.title,
+            color: null,
+            minutes: Math.round((Date.parse(e.end_time) - Date.parse(e.start_time)) / 60_000),
+            clashes: clashing.has(e.id),
+          }))
+
+          const slots: DaySlotModel[] = (gapsByDay[ds] ?? []).map(([gS, gE]) => ({
+            key: `slot-${gS}`,
+            startMs: gS,
+            minutes: Math.round((gE - gS) / 60_000),
+            reason: null,
+          }))
+
+          const allDay: DayAllDayModel[] = evts
+            .filter(e => e.all_day)
+            .map(e => ({ key: e.id, title: e.title, color: null }))
+
+          const free = freeByDay[ds]
+          const due = dtasks.reduce((n, t) => n + (t.adjusted_minutes ?? t.estimated_minutes ?? 0), 0)
+
           return (
-            <section
+            <div
               key={ds}
               id={`day-${ds}`}
               data-date={ds}
@@ -478,75 +515,51 @@ export default function UpcomingView({
               onDragLeave={e => handleDragLeave(ds, e)}
               onDrop={e => handleDrop(ds, e)}
             >
-              {/* Day header */}
-              <div className="flex items-baseline gap-2 mb-2">
-                <h2 className={`text-sm font-bold ${
-                  isToday ? 'text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400'
-                }`}>
-                  {SHORT_MONTHS[d.getMonth()]} {d.getDate()}
-                </h2>
-                {special && (
-                  <span className={`text-xs font-semibold ${isToday ? 'text-red-500' : 'text-slate-400'}`}>
-                    · {special}
-                  </span>
-                )}
-                <span className="text-xs text-slate-400">· {DAY_ABBR[d.getDay()]}</span>
-              </div>
-
-              <div className={`bg-white dark:bg-slate-900 rounded-xl border overflow-hidden transition-all ${
-                isDropTarget
-                  ? 'border-accent-400 dark:border-accent-500 ring-1 ring-accent-300 dark:ring-accent-600 shadow-sm'
-                  : 'border-slate-200 dark:border-slate-800'
-              }`}>
-                {/* Calendar events */}
-                {evts.length > 0 && (
-                  <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
-                    {evts.map(ev => (
-                      <div key={ev.id} className="flex items-start gap-2.5 py-1">
-                        <div className="w-0.5 min-h-[1.25rem] self-stretch bg-sky-400 dark:bg-sky-500 rounded-full shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <span className="text-xs text-slate-400 font-mono mr-2 shrink-0">
-                            {formatTimeRange(ev.start_time, ev.end_time, ev.all_day)}
-                          </span>
-                          <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">{ev.title}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Tasks */}
-                {dtasks.length > 0 && (
-                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {renderRows(dtasks)}
-                  </div>
-                )}
-
-                {/* Drop hint when dragging over an empty/future day */}
-                {isDropTarget && dtasks.length === 0 && evts.length === 0 && (
-                  <div className="px-4 py-3 text-xs text-accent-500 dark:text-accent-400 font-medium">
+              <DaySection
+                label={`${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`}
+                weekday={DAY_ABBR[d.getDay()]}
+                isToday={isToday}
+                tz={tz}
+                /* A day with no working hours has no ratio to draw, and
+                   `freeByDay` simply has no entry for one. */
+                capacity={free
+                  ? { dueTotal: due, freeBeforeCutoff: free.before, freeAfterCutoff: free.after }
+                  : null}
+                rows={rows}
+                slots={slots}
+                allDay={allDay}
+                expanded={openDays.has(ds)}
+                conflictCount={clashes.length}
+                /* The footer needs the packer to know what genuinely will not
+                   fit, which is Triage's job. Counting "due and unscheduled"
+                   here would call a task unplaceable that fits the next gap. */
+                unplacedCount={0}
+                unplacedMinutes={0}
+                action={null}
+                dropActive={isDropTarget}
+                onToggle={() => setOpenDays(prev => {
+                  const next = new Set(prev)
+                  if (next.has(ds)) next.delete(ds); else next.add(ds)
+                  return next
+                })}
+              >
+                {dtasks.length > 0 && renderRows(dtasks)}
+                {isDropTarget && dtasks.length === 0 && (
+                  <div className="px-4 py-3 text-micro text-accent-600 font-medium">
                     Drop to schedule here
                   </div>
                 )}
-
-                {/* Empty state placeholder */}
-                {!isDropTarget && evts.length === 0 && dtasks.length === 0 && (
-                  <div className="px-4 py-2 text-xs text-slate-300 dark:text-slate-600 select-none">
-                    Free
-                  </div>
-                )}
-
-                {/* Add task */}
                 <button
                   onClick={() => onAddTask(ds)}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-xs text-slate-400 hover:text-accent-600 dark:hover:text-accent-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  className="w-full flex items-center gap-2 px-4 py-2 text-micro text-ink-faint hover:text-accent-600 hover:bg-surface-quiet transition-colors"
                 >
                   <span className="text-base leading-none">+</span> Add task
                 </button>
-              </div>
-            </section>
+              </DaySection>
+            </div>
           )
         })}
+        </div>
 
         {/* Sentinel */}
         <div data-sentinel="true" className="h-4" />

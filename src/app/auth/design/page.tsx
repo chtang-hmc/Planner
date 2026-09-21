@@ -795,6 +795,7 @@ function DaySectionSpecimen() {
         label="Sunday 20" weekday="Sun" isToday tz={tzName}
         capacity={{ dueTotal: 650, freeBeforeCutoff: 105, freeAfterCutoff: 210 }}
         rows={rows} slots={slots} expanded conflictCount={1}
+        allDay={[{ key: 'ad', title: 'Fall break', color: null }]}
         unplacedCount={7} unplacedMinutes={335}
         action="Triage 5h 35m"
       />

@@ -32,6 +32,19 @@ export interface DayRowModel {
   clashes?: boolean
 }
 
+/**
+ * An event with no time in the day, only the day itself.
+ *
+ * Drawn above the timeline rather than in it, because it has no place in it: a
+ * clock column would have to invent one, and sorting it by its UTC midnight
+ * would file it before the first working hour of every day.
+ */
+export interface DayAllDayModel {
+  key:   string
+  title: string
+  color: string | null
+}
+
 export interface DaySlotModel {
   key:     string
   startMs: number
@@ -41,8 +54,9 @@ export interface DaySlotModel {
 }
 
 export function DaySection({
-  label, weekday, isToday, capacity, rows, slots, expanded, conflictCount,
-  unplacedCount, unplacedMinutes, tz, action, onToggle, onOpen, onAction,
+  label, weekday, isToday, capacity, rows, slots, allDay = [], expanded, conflictCount,
+  unplacedCount, unplacedMinutes, tz, action, dropActive, children,
+  onToggle, onOpen, onAction,
 }: {
   label:         string
   weekday:       string
@@ -51,6 +65,8 @@ export function DaySection({
   capacity:      Capacity | null
   rows:          DayRowModel[]
   slots:         DaySlotModel[]
+  /** Events that belong to the day but not to a time in it. */
+  allDay?:       DayAllDayModel[]
   expanded:      boolean
   conflictCount: number
   unplacedCount:   number
@@ -58,6 +74,17 @@ export function DaySection({
   tz:            string
   /** "Move 2h here from today" on a day with slack, "Push work here" on an empty one. */
   action:        string | null
+  /** A task is being dragged over this day — see UpcomingView. */
+  dropActive?:   boolean
+  /**
+   * The day's tasks, drawn by the caller.
+   *
+   * They sit below the timeline rather than inside it because they are a
+   * different kind of thing: the timeline is when the day happens, and these
+   * are what is owed on it, most of which has no time yet. They are also what
+   * you drag between days, which is the reason this view exists.
+   */
+  children?:     React.ReactNode
   onToggle?:     () => void
   onOpen?:       (key: string) => void
   onAction?:     () => void
@@ -72,7 +99,9 @@ export function DaySection({
   ].sort((a, b) => a.at - b.at)
 
   return (
-    <section className="rounded-xl border border-line bg-surface overflow-hidden">
+    <section className={`rounded-xl border bg-surface overflow-hidden transition-colors ${
+      dropActive ? 'border-accent-400 ring-1 ring-accent-300' : 'border-line'
+    }`}>
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-quiet transition-colors flex-wrap"
@@ -109,8 +138,10 @@ export function DaySection({
 
       {expanded && (
         <div className="border-t border-line-soft divide-y divide-line-soft">
+          {allDay.map(a => <AllDayRow key={a.key} row={a} onOpen={onOpen} />)}
           {timeline.map(t => t.node)}
-          {timeline.length === 0 && (
+          {children}
+          {timeline.length === 0 && allDay.length === 0 && !children && (
             <p className="px-4 py-5 text-center text-micro text-ink-ghost">Nothing on this day.</p>
           )}
         </div>
@@ -166,6 +197,22 @@ function DayRow({ row, tz, onOpen }: {
       <span className="num w-[56px] shrink-0 text-right text-micro text-ink-2">
         {formatDuration(row.minutes)}
       </span>
+    </button>
+  )
+}
+
+function AllDayRow({ row, onOpen }: {
+  row: DayAllDayModel; onOpen?: (key: string) => void
+}) {
+  return (
+    <button
+      onClick={() => onOpen?.(row.key)}
+      className="w-full flex items-center gap-3 px-4 h-[34px] text-left hover:bg-surface-quiet transition-colors"
+    >
+      <span className="w-[46px] shrink-0 text-right text-micro text-ink-ghost">all day</span>
+      <span aria-hidden className="w-[3px] h-[18px] rounded-full shrink-0"
+            style={{ background: row.color ?? 'var(--line-strong)' }} />
+      <span className="text-[13px] text-ink truncate flex-1">{row.title}</span>
     </button>
   )
 }

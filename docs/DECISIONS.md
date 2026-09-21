@@ -958,6 +958,18 @@ Upcoming had its own `TaskRow`, so switching between List and Upcoming changed w
 
 **Dragging wraps the row rather than living inside it.** It is specific to this view, and putting it in `TaskRowProps` would mean building a drag handle four times for one caller. The row-level drag handle is gone; the whole row is the grip.
 
+### Upcoming's day sections (2026-09-20)
+
+`DaySection` draws the day; `UpcomingView` supplies what goes in it. Three calls worth keeping:
+
+**Tasks are passed as `children`, below the timeline, not merged into it.** The timeline is *when the day happens* — events, and the free slots between them, in clock order. A due task mostly has no time at all, so it has no place on that axis; forcing one would mean inventing a start. They are also what you drag between days, which is the reason this view exists, so they stay rows the caller owns and the drag handlers keep working untouched.
+
+**All-day events get their own row above the timeline** (`DayAllDayModel`). Sorting one by its UTC-midnight start would file "Fall break" before the first working hour of every day, and the clock column would have to print a time it does not have. It prints `all day` instead.
+
+**Collapse state is local component state, not a setting.** Today and tomorrow open; the rest collapse. It is a reading position, not a preference — it should reset when you come back tomorrow, and a persisted one would mean a day you opened in March is still open in April.
+
+**The day's unplaced footer is not drawn here.** `unplacedCount` is passed as 0. Saying a task has nowhere to go requires the packer's answer, which is Triage's; counting "due and unscheduled" here would call a task unplaceable that fits the very next gap the section is drawing.
+
 ### Sidebar: collapse and resize
 
 Width and collapsed state live in `localStorage` (`src/lib/sidebar-prefs.ts`), read the same way as the task layout — the server renders the defaults, `useSyncExternalStore` swaps in the stored values on hydrate, and anything changed since load is held in an override.
