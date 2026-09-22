@@ -382,9 +382,12 @@ export default function UpcomingView({
 
         {/* Month + nav */}
         <div className="px-6 pt-4 pb-2 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+          {/* Not an `h1`: the page is Tasks, and this is where in it you are.
+              It was `text-xl font-bold`, which outranked the page title above
+              it and gave the screen two competing headings. */}
+          <h2 className="text-[15px] font-semibold text-ink-2">
             {monthHeader(stripDays)}
-          </h1>
+          </h2>
           <div className="flex items-center gap-1">
             <button
               onClick={goToPrevWeek}

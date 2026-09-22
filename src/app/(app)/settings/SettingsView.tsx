@@ -372,9 +372,13 @@ export function TaskLayoutSection() {
 
   return (
     <section>
-      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Task list layout</h2>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">Upcoming row layout</h2>
+      {/* Was "Task list layout", which stopped being true: Tasks·List draws the
+          one shared row in every grouping now, and Upcoming is the last caller
+          of these four. Renamed rather than left claiming a page it no longer
+          reaches. It goes when Upcoming does — see #73. */}
       <p className="text-xs text-slate-400 mb-4">
-        How a task is drawn in the list. Takes effect next time you open Tasks.
+        How a task is drawn on Upcoming. Takes effect next time you open it.
       </p>
 
       <div className="grid grid-cols-2 gap-2">
@@ -583,7 +587,7 @@ export default function SettingsView({
     <div className="min-h-full bg-slate-50 dark:bg-slate-950">
       <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
         <div className="px-6 py-3 flex items-center justify-between gap-4">
-          <h1 className="font-semibold text-sm text-slate-900 dark:text-slate-100">Settings</h1>
+          <h1 className="display text-display-m text-ink leading-tight">Settings</h1>
           <Segmented
             value={tab}
             onChange={v => writeStored(() => localStorage.setItem(TAB_KEY, v))}

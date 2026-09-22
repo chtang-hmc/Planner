@@ -965,6 +965,34 @@ Google Calendar sits in Simple despite being the most technical thing there: it 
 
 Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
 
+## Page titles
+
+### One treatment, and it is the display face (2026-09-21)
+
+Reported: the Tasks title does not match the other pages. It did not — there
+were four treatments across eight headers.
+
+| page | was |
+|---|---|
+| Home, Tasks | `text-lg font-semibold` — 18px sans |
+| Upcoming | `text-xl font-bold` — 20px sans, **inside** the Tasks page |
+| Review, Settings | `text-sm font-semibold` — 14px sans |
+| Projects, project detail, Habits, Insights | `text-display-xs display` — 23px serif |
+
+Every board in the handoff sets its page title in Instrument Serif at 34px, and
+Today at 38px. All eight now do: `display text-display-m`, with
+`text-display-l` on Today. The three redesigned pages were wrong too — I had
+set them at `display-xs`, which is the size for a finding headline, not a page.
+
+**`September 2026` is not a page title.** It was an `h1` at 20px bold, nested
+inside the Tasks page's own `h1` at 18px — two competing headings on one
+screen, with the subordinate one larger. It is where you are in a scroll, so it
+is now an `h2` at 15px.
+
+This is the kind of drift no test catches and nothing fails over. `.display` is
+one class and the sizes are four tokens; the only way they stay consistent is
+that every page title uses them.
+
 ## Task Row Layouts
 
 The task list draws a row four ways, chosen in **Settings → Task list layout** and stored per browser in `localStorage['planner-task-layout']`.

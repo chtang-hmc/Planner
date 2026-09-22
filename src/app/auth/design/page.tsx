@@ -126,7 +126,7 @@ function ToolbarPreview() {
       <div className="px-6 pt-4 pb-3 flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-4">
           <div className="flex items-baseline gap-3 min-w-0">
-            <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tasks</h1>
+            <h1 className="display text-display-m text-ink leading-tight">Tasks</h1>
             <span className="text-xs text-slate-400 tabular-nums truncate">9 tasks · 8h 10m</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">

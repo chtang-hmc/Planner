@@ -14,11 +14,9 @@ import AddTaskModal from '@/components/AddTaskModal'
 import SchedulePreviewModal, { type PreviewBlock } from '@/components/SchedulePreviewModal'
 import LogHabitModal from '@/components/LogHabitModal'
 import UpcomingView from './UpcomingView'
-import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { TaskRow, GroupHeader } from '@/components/ds/TaskRow'
 import { toTaskRowModel } from '@/lib/task-row'
-import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { formatMinutes } from '@/lib/task-format'
 import { addDays } from '@/lib/day'
 import { isRelevant, relevanceHint, RELEVANCE_DEFAULT, type RelevanceConfig } from '@/lib/relevance'
@@ -77,6 +75,11 @@ export default function TaskList({
   // Parents whose subtasks are showing. Tracking what's OPEN rather than what's
   // shut means the default — an empty set — is everything tucked away.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const toggleFold = (id: string) => setExpanded(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
   /**
    * One grouping, chosen once.
    *
@@ -90,12 +93,6 @@ export default function TaskList({
   // into something you can survey, so it opens compact and you expand the one
   // project you came for.
   const [openProjects, setOpenProjects] = useState<Set<string>>(new Set())
-  // Which row layout to draw. localStorage can only be read in the browser, so
-  // the server renders the default and the client swaps in the stored value —
-  // useSyncExternalStore does that without a hydration mismatch or an effect.
-  const layoutId = useStored(getStoredTaskLayout, DEFAULT_TASK_LAYOUT)
-  const Layout = TASK_LAYOUT_IMPLS[layoutId]
-
   // Completing a regular task (opens MicroReflection)
   const [completingTask, setCompletingTask] = useState<(Task & { project: Project }) | null>(null)
   const [doneIds, setDoneIds]               = useState<Set<string>>(new Set())
@@ -318,36 +315,34 @@ export default function TaskList({
    * src/lib/task-layouts.ts. This function owns which rows exist and in what
    * order; the layout owns what one looks like.
    */
+  /**
+   * One row, whatever the grouping.
+   *
+   * This used to draw `Layout.Row` — one of the four interchangeable layouts —
+   * while the date-grouped branch below drew the shared `ds/TaskRow`. So the
+   * same task was 13px semibold under *Group: Project* and 14px regular under
+   * *Group: Date*, on one screen. See #73 for the rest of the removal;
+   * Upcoming still has the old rows.
+   */
   function renderTaskRows(list: TaskRow[]) {
-    const rows = list.flatMap(parentTask => {
-      const kids = childrenOf.get(parentTask.id) ?? []
-      const isCollapsed = !expanded.has(parentTask.id)
-      return (isCollapsed ? [parentTask] : [parentTask, ...kids]).map(task => ({
-        task, parentTask, kids, isCollapsed,
-      }))
-    })
-
     return (
-      <Layout.Shell>
-        {rows.map(({ task, parentTask, kids, isCollapsed }) => (
-          <Layout.Row
-            key={task.id}
-            task={task}
-            isChild={task.id !== parentTask.id}
-            kidCount={task.id === parentTask.id ? kids.length : 0}
-            collapsed={isCollapsed}
-            streak={streaks[task.id] ?? null}
-            onToggleFold={() => setExpanded(prev => {
-              const next = new Set(prev)
-              if (next.has(parentTask.id)) next.delete(parentTask.id)
-              else next.add(parentTask.id)
-              return next
-            })}
-            onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
-            onDone={e => handleDone(task, e)}
-          />
-        ))}
-      </Layout.Shell>
+      <div className="rounded-xl border border-line bg-surface overflow-hidden">
+        {list.flatMap(parentTask => {
+          const kids = childrenOf.get(parentTask.id) ?? []
+          const folded = !expanded.has(parentTask.id)
+          return (folded ? [parentTask] : [parentTask, ...kids]).map(task => (
+            <TaskRow
+              key={task.id}
+              task={toRowModel(task, task.id === parentTask.id ? kids.length : 0)}
+              isChild={task.id !== parentTask.id}
+              folded={task.id === parentTask.id && kids.length > 0 ? folded : undefined}
+              onFold={task.id === parentTask.id && kids.length > 0 ? () => toggleFold(parentTask.id) : undefined}
+              onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+              onToggle={() => setCompletingTask({ ...task, project: task.project ?? INBOX_PROJECT })}
+            />
+          ))
+        })}
+      </div>
     )
   }
 
@@ -367,7 +362,7 @@ export default function TaskList({
 
             <div className="flex items-baseline justify-between gap-4">
               <div className="flex items-baseline gap-3 min-w-0">
-                <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tasks</h1>
+                <h1 className="display text-display-m text-ink leading-tight">Tasks</h1>
                 {view === 'list' && (
                   <span className="text-xs text-slate-400 tabular-nums truncate">
                     {filtered.length} {filtered.length === 1 ? 'task' : 'tasks'}
@@ -522,13 +517,20 @@ export default function TaskList({
                         ? { dueTotal: due, freeBeforeCutoff: free.before, freeAfterCutoff: free.after }
                         : null}
                     />
+                    {/* `expanded` was read here and never written: the only
+                        thing calling `setExpanded` lived in `Layout.Row`, which
+                        this branch does not draw. A parent showed `3 steps` and
+                        there was no way to open it. */}
                     {g.rows.flatMap(parentTask => {
                       const kids = childrenOf.get(parentTask.id) ?? []
-                      const collapsed = !expanded.has(parentTask.id)
-                      return (collapsed ? [parentTask] : [parentTask, ...kids]).map(task => (
+                      const folded = !expanded.has(parentTask.id)
+                      return (folded ? [parentTask] : [parentTask, ...kids]).map(task => (
                         <TaskRow
                           key={task.id}
                           task={toRowModel(task, task.id === parentTask.id ? kids.length : 0)}
+                          isChild={task.id !== parentTask.id}
+                          folded={task.id === parentTask.id && kids.length > 0 ? folded : undefined}
+                          onFold={task.id === parentTask.id && kids.length > 0 ? () => toggleFold(parentTask.id) : undefined}
                           onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                           onToggle={() => setCompletingTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                         />
@@ -549,7 +551,7 @@ export default function TaskList({
               ? projectGroups.map(g => {
                   const open = openProjects.has(g.key)
                   return (
-                  <div key={g.key} className={`flex flex-col ${Layout.groupGap}`}>
+                  <div key={g.key} className="flex flex-col gap-1.5">
                     <button
                       onClick={() => setOpenProjects(prev => {
                         const next = new Set(prev)

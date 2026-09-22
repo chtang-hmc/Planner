@@ -84,7 +84,7 @@ export default function ProjectsView({
         <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
           <div className="px-6 py-3 flex items-baseline justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="text-display-xs display text-ink leading-tight">Projects</h1>
+              <h1 className="display text-display-m text-ink leading-tight">Projects</h1>
               <p className="text-meta text-ink-muted mt-0.5">
                 {summary.projectCount} project{summary.projectCount === 1 ? '' : 's'} ·{' '}
                 {summary.activeCount} active task{summary.activeCount === 1 ? '' : 's'} ·{' '}
