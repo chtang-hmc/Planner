@@ -125,7 +125,10 @@ export default function Sidebar({ projects, todayStr }: {
     <aside
       ref={asideRef}
       style={{ width: collapsed ? SIDEBAR_RAIL_WIDTH : width }}
-      className={`relative shrink-0 flex flex-col h-full border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-5 ${
+      /* Gone below 640: 236px of a 390px viewport, and its collapsed rail is
+         still 56px of furniture on a screen that has none to spare.
+         `MobileTabBar` replaces it rather than shrinking it. */
+      className={`hidden narrow:flex relative shrink-0 flex-col h-full border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-5 ${
         collapsed ? 'px-2' : 'px-3'
       }`}
     >

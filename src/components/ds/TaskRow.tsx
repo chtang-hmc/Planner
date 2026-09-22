@@ -97,12 +97,20 @@ export function TaskRow({
     />
   )
 
-  if (narrow) {
-    // 56px, two lines, no fixed columns. The urgency meter is absent by
-    // design: its length duplicates the sort order, which is the same reason
-    // its four colours were deleted from the palette.
-    return (
-      <div className="flex items-start gap-2.5 px-4 py-2 border-t border-line-soft min-h-[56px]">
+  /**
+   * Both shapes render; CSS picks one.
+   *
+   * `narrow` began as a prop and nothing in the app ever passed it, so at
+   * 390px every row drew the wide form — 170px of fixed columns against a
+   * ~343px viewport, which left about two words of title. It is a viewport
+   * fact, so it belongs to a media query rather than to a caller who would
+   * have to measure the window and risk disagreeing with the server about it.
+   *
+   * The prop survives as a *force*, for `/auth/design`, which shows both
+   * shapes side by side at one width.
+   */
+  const narrowRow = (
+      <div className={`${narrow ? '' : 'narrow:hidden '}flex items-start gap-2.5 px-4 py-2 border-t border-line-soft min-h-[56px]`}>
         <span className="pt-[3px]">{caret}</span>
         <span className="pt-0.5">{check}</span>
         <span className="pt-[7px]">{dot}</span>
@@ -121,11 +129,14 @@ export function TaskRow({
           </p>
         </button>
       </div>
-    )
-  }
+  )
+
+  if (narrow) return narrowRow
 
   return (
-    <div className="flex items-center gap-3 px-4 h-[44px] border-t border-line-soft group">
+    <>
+      {narrowRow}
+    <div className="hidden narrow:flex items-center gap-3 px-4 h-[44px] border-t border-line-soft group">
       {caret}
       {check}
       {dot}
@@ -166,6 +177,7 @@ export function TaskRow({
         {formatDuration(task.minutes)}
       </span>
     </div>
+    </>
   )
 }
 
@@ -197,7 +209,10 @@ export function GroupHeader({ label, count, capacity, action, narrow = false }: 
         {capacity && <> · {formatDuration(capacity.dueTotal)}</>}
       </span>
 
-      {capacity && !narrow && <CapacityMeter capacity={capacity} className="w-[110px]" />}
+      {capacity && (
+        <CapacityMeter capacity={capacity}
+                       className={`${narrow ? 'hidden ' : 'hidden narrow:block '}w-[110px]`} />
+      )}
       {verdict && verdict.tone !== 'empty' && (
         <span className={`text-micro ${VERDICT_CLASS[verdict.tone]}`}>{verdict.text}</span>
       )}
@@ -212,8 +227,10 @@ export function GroupHeader({ label, count, capacity, action, narrow = false }: 
           {action.label}
         </button>
       )}
-      {capacity && narrow && (
-        <CapacityMeter capacity={capacity} className="w-full mt-1" />
+      {/* Full width on its own line where the inline meter does not fit. */}
+      {capacity && (
+        <CapacityMeter capacity={capacity}
+                       className={`${narrow ? '' : 'narrow:hidden '}w-full mt-1`} />
       )}
     </div>
   )

@@ -419,6 +419,25 @@ body {
 
 /* Claims only. A page title, the capacity sentence, a finding headline —
    never a label, a control, or a table cell. */
+/* A page's own title, and the only heading in the app set in the display face.
+   Two sizes, because 34px of serif on a 390px screen is a headline where the
+   design's own narrow boards draw 26. `.page-title-today` is Today's, which
+   the boards set larger than everyone else's at full width. */
+.page-title {
+  font-family: var(--font-display-src), Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  font-size: 24px;
+  line-height: 1.1;
+}
+/* Applied alongside `.page-title`, not instead of it — `composes:` is a CSS
+   Modules feature and this is a plain stylesheet. */
+@media (min-width: 640px) {
+  .page-title       { font-size: var(--text-display-m); }
+  .page-title-today { font-size: var(--text-display-l); }
+}
+
 .display {
   font-family: var(--font-display-src), Georgia, serif;
   font-weight: 400;

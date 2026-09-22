@@ -361,10 +361,12 @@ export default function TaskList({
           <div className="px-6 pt-4 pb-3 flex flex-col gap-3">
 
             <div className="flex items-baseline justify-between gap-4">
-              <div className="flex items-baseline gap-3 min-w-0">
-                <h1 className="display text-display-m text-ink leading-tight">Tasks</h1>
+              {/* Wraps: at 390 the count sat beside a 24px serif title and
+                  truncated to `14 tasks · 1…`, which is not a count. */}
+              <div className="flex items-baseline gap-x-3 gap-y-0.5 min-w-0 flex-wrap">
+                <h1 className="page-title text-ink">Tasks</h1>
                 {view === 'list' && (
-                  <span className="text-xs text-slate-400 tabular-nums truncate">
+                  <span className="text-xs text-slate-400 tabular-nums">
                     {filtered.length} {filtered.length === 1 ? 'task' : 'tasks'}
                     {totalMinutes > 0 && ` · ${formatMinutes(totalMinutes)}`}
                   </span>

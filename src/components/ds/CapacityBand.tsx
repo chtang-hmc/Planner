@@ -60,8 +60,12 @@ export function CapacityBand({ input, onPrimary, onSecondary }: {
 
   return (
     <section className="rounded-xl border border-line bg-surface px-5 py-4 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-5 flex-wrap">
-        <div className="min-w-0 flex-1">
+      {/* Column below 640, row above. `flex-wrap` alone did not do it: the
+          headline is `min-w-0 flex-1` and the action is `shrink-0`, so at 390
+          the action kept its width and the sentence wrapped to one word a
+          line instead of the action dropping beneath it. */}
+      <div className="flex flex-col narrow:flex-row narrow:items-start narrow:justify-between gap-3 narrow:gap-5 narrow:flex-wrap">
+        <div className="min-w-0 narrow:flex-1">
           <p className="text-eyebrow uppercase tracking-wider text-ink-faint mb-1.5">Today’s capacity</p>
           <h2 className="display text-ink" style={{ fontSize: 'var(--text-display-s)', lineHeight: 1.15 }}>
             {copy.headline}
@@ -75,11 +79,14 @@ export function CapacityBand({ input, onPrimary, onSecondary }: {
             six states lead to Triage, which does not exist yet, and a button
             that does nothing teaches people not to press buttons — the band's
             job is to say what is true, and it does that without them. */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-3 narrow:shrink-0">
           {copy.primary && onPrimary && (
             <button
               onClick={onPrimary}
-              className="bg-accent-600 text-white text-[13px] font-medium px-4 rounded-ctrl
+              /* Full width below 640, per A2: it is the one action on the
+                 most important card on the screen, and a 140px button beside
+                 nothing reads as an afterthought. */
+              className="w-full narrow:w-auto bg-accent-600 text-white text-[13px] font-medium px-4 rounded-ctrl
                          hover:bg-accent-700 transition-colors"
               style={{ minHeight: 'var(--tap-min)' }}
             >

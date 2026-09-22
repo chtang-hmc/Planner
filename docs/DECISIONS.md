@@ -965,6 +965,53 @@ Google Calendar sits in Simple despite being the most technical thing there: it 
 
 Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
 
+## Navigation
+
+### Below 640px the sidebar is replaced, not shrunk (2026-09-21)
+
+236px of a 390px viewport, and its collapsed rail is still 56px of furniture
+on a screen that has none to spare. `MobileTabBar` takes over below
+`--bp-narrow`: five destinations at 62px, in the column rather than fixed over
+it, so a page's last row is never hidden underneath.
+
+**Five tabs, and which five.** Today, Tasks, Habits, Projects, Insights — the
+comfortable maximum at 390 and exactly the set that earns a permanent slot.
+Review is a weekly ritual rather than a daily destination and keeps its link at
+the top of Insights. Settings is a gear in the top bar, shown only below 640
+where the sidebar that holds it is gone; it was never a peer of Today and
+Tasks.
+
+**The sidebar's project list does not come with it.** It is a workload glance,
+not navigation, and the Projects tab carries the same information with room to
+read it.
+
+### The shapes that existed and were never reached
+
+Building the chrome exposed two components whose narrow form had been written
+and then never rendered:
+
+- **`TaskRow`'s narrow shape was behind a prop nothing passed.** At 390 every
+  row drew the wide form — about 170px of fixed columns against a ~343px
+  viewport, leaving two words of title. Which shape to draw is a viewport fact,
+  so it is a media query now; the prop survives as a *force* for
+  `/auth/design`, which shows both at one width.
+- **`CapacityBand` kept its action beside the headline.** `flex-wrap` alone did
+  not help: the headline is `min-w-0 flex-1` and the action `shrink-0`, so the
+  action kept its width and the sentence wrapped to one word a line. It is a
+  column below 640 with a full-width primary, per A2.
+
+The lesson is the same both times: a narrow form that no caller selects is a
+narrow form that does not exist. `ProjectTable` and `ds/TaskRow` now both pick
+their own shape from the viewport, which is the pattern to copy.
+
+### Page titles are two sizes
+
+`.page-title` in `globals.css`, 24px below 640 and `--text-display-m` above —
+the handoff's narrow boards draw 26px where the wide ones draw 34, and 34px of
+serif on a 390px screen is a headline rather than a title.
+`.page-title-today` takes `--text-display-l` at width, which is the one page
+the boards set larger.
+
 ## Page titles
 
 ### One treatment, and it is the display face (2026-09-21)
