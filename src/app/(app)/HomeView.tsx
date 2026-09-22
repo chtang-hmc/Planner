@@ -302,7 +302,7 @@ export default function HomeView({
         <header className="sticky top-0 z-10 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/90 backdrop-blur">
           <div className="px-6 pt-4 pb-3 flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+              <h1 className="display text-display-l text-ink leading-tight">
                 {heading}
               </h1>
               {/* Section 1 — one sentence, and the reason the page exists. */}

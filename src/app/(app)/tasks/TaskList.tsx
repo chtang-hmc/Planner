@@ -362,7 +362,7 @@ export default function TaskList({
 
             <div className="flex items-baseline justify-between gap-4">
               <div className="flex items-baseline gap-3 min-w-0">
-                <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tasks</h1>
+                <h1 className="display text-display-m text-ink leading-tight">Tasks</h1>
                 {view === 'list' && (
                   <span className="text-xs text-slate-400 tabular-nums truncate">
                     {filtered.length} {filtered.length === 1 ? 'task' : 'tasks'}
