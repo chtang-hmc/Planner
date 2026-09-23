@@ -35,6 +35,14 @@ export async function proxy(request: NextRequest) {
                      || pathname.startsWith('/help') || pathname === '/403'
 
   /**
+   * Scheduled jobs carry no session, so the gate cannot judge them and would
+   * bounce every one to `/login`. They authenticate themselves against
+   * `CRON_SECRET` instead — see `api/cron/sync-calendar`. Exempted by exact
+   * prefix, and every route under it must do its own check.
+   */
+  const isCronRoute = pathname.startsWith('/api/cron/')
+
+  /**
    * A real static file, not "anything with a dot in it".
    *
    * This used to be `pathname.includes('.')`, which is true of `/logo.png` and
@@ -56,7 +64,7 @@ export async function proxy(request: NextRequest) {
   const isStaticFile = pathname.startsWith('/_next')
     || /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?|ttf)$/i.test(pathname)
 
-  if (isStaticFile) return supabaseResponse
+  if (isStaticFile || isCronRoute) return supabaseResponse
 
   // Send unauthenticated users to login
   if (!user && !isAuthRoute) {

@@ -967,6 +967,55 @@ Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely differ
 
 ## Calendar sync
 
+### It syncs on its own, and the table stops growing (2026-09-23)
+
+Two problems that presented as one. A deleted event still showing on Home was
+reported as a sync bug; the sync was fine by then, it had simply not run.
+
+**Nothing pulled the calendar on a schedule.** The only triggers were the OAuth
+callback on first connect and the `refresh` link on Home, so Home could show a
+day that changed hours ago and the only hint was a "synced 36m ago" label
+nobody reads as a warning. `/api/cron/sync-calendar` runs it via `vercel.json`.
+
+**`vercel.json` takes no comments, of any kind.** The first version explained
+the schedule in a `"comment"` key beside it. Vercel validates the file against
+a closed schema and **fails the build** on an unrecognised property — `Invalid
+vercel.json - crons[0] should NOT have additional property comment`. JSON has
+no comment syntax either, so the file stays bare and the reasoning lives here.
+
+**Daily, not hourly.** Hourly was written first, and the build carrying it
+failed with a link to Vercel's cron pricing page. The account is on Hobby
+(checked 2026-09-23), where crons run at most once a day. The schedule is
+`0 13 * * *`, early morning Pacific, so the first look at Today each day is on
+fresh data; the `refresh` link on Home forces one in between. Hourly costs $20
+a month for Pro, or an external scheduler — a GitHub Actions `schedule:` on
+this public repo is free — calling the same route with the same bearer token.
+The route does not care who calls it.
+
+**The cron route authenticates itself**, because a scheduled request carries no
+session and the edge gate would bounce it to `/login`. `proxy.ts` exempts
+`/api/cron/` by exact prefix and every route under it must do its own check;
+this one compares `Authorization` against `CRON_SECRET` and **refuses
+everything when that variable is unset** rather than defaulting open. It also
+returns 200 on a failed pull: Vercel retries nothing, and an expired Google
+token should not read as a broken deployment.
+
+**Retention, not a cleanup script.** The window only moves forward, so a row
+that falls behind it is never asked about again — it cannot be reconciled,
+corrected or removed by any later sync. There were 72 such rows against 118
+live ones. Every query over `calendar_events` is bounded at today or later, so
+nothing reads them.
+
+Each sync now expires rows whose event *ended* before the window starts —
+judged on the end, so a meeting running into the window survives. **Rows a task
+is linked to are kept regardless**, because `task_event_links` cascades and a
+confirmed link is a decision made by hand; reclaiming a row nobody reads is not
+worth destroying one. Dry-run against the live table: 71 expired, 0 kept for a
+link, 119 remaining.
+
+A rule rather than a script, because a script is a thing you have to remember
+to run and this is a thing that keeps happening.
+
 ### The sync deletes now, and had to learn to paginate first (2026-09-23)
 
 Reported: events deleted in Google still showed on Home. They did — the sync
