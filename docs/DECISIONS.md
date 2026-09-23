@@ -967,6 +967,27 @@ Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely differ
 
 ## Signing in from somewhere other than this machine
 
+### The login page does not depend on hydration (2026-09-22)
+
+The sign-in button was a client component calling the server action from
+`onClick`. That works only once React has hydrated; when it has not — a phone
+on a flaky connection, a chunk that did not arrive, anything that throws during
+hydration — the button is inert and the page has no way to say so. The reported
+symptom was exactly that: tap, nothing, no error.
+
+It is a `<form action={signInWithGoogle}>` now. With JS, Next intercepts and
+posts it; without, the browser posts it natively and follows the 303 itself.
+Verified over the LAN address with no JavaScript involved at all: a plain POST
+returns `303 See Other` to Supabase with
+`redirect_to=http://172.28.151.110:3000/auth/callback`.
+
+The one page you cannot get past when it fails should be the page that needs
+the least to work. `useFormStatus` still gives the pending label when there is
+JS, and the failure message moved from `useState` to the `?error=` the callback
+already redirects with — a state variable does not survive the full page load
+that a native form post causes.
+
+
 ### The OAuth return address comes from the request (2026-09-22)
 
 `redirectTo` was `NEXT_PUBLIC_SITE_URL`, baked in at build time as
