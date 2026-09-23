@@ -138,7 +138,7 @@ export default function ProjectDetailView({
 
             <div className="flex items-center gap-3 flex-wrap">
               <span aria-hidden className="w-3 h-3 rounded-full shrink-0" style={{ background: project.color }} />
-              <h1 className="display text-display-m text-ink leading-tight truncate">{project.name}</h1>
+              <h1 className="page-title text-ink truncate">{project.name}</h1>
               <span className="flex-1" />
               <button onClick={() => setEditFocus('name')}
                       className="h-8 px-3 rounded-ctrl border border-line text-small text-ink-2 hover:bg-surface-quiet transition-colors">

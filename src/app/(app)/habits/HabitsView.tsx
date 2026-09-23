@@ -224,7 +224,7 @@ export default function HabitsView({
         <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
           <div className="px-6 py-3 flex items-baseline justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="display text-display-m text-ink leading-tight">Habits</h1>
+              <h1 className="page-title text-ink">Habits</h1>
               <p className="text-meta text-ink-muted mt-0.5">
                 {habitsHeadline({
                   total: habits.length, doneToday: doneCountToday, scheduled: scheduledToday,

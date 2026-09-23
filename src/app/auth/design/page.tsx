@@ -41,6 +41,7 @@ import { DaySection } from '@/components/ds/DaySection'
 import ProjectsView from '@/app/(app)/projects/ProjectsView'
 import ProjectDetailView from '@/app/(app)/projects/[id]/ProjectDetailView'
 import HabitsView from '@/app/(app)/habits/HabitsView'
+import MobileTabBar from '@/components/MobileTabBar'
 import InsightsView from '@/app/(app)/analytics/AnalyticsView'
 import { buildProjectRows } from '@/lib/projects'
 import { capacityFinding, urgencyFinding, concentrationFinding, workloadFinding } from '@/lib/insights'
@@ -126,7 +127,7 @@ function ToolbarPreview() {
       <div className="px-6 pt-4 pb-3 flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-4">
           <div className="flex items-baseline gap-3 min-w-0">
-            <h1 className="display text-display-m text-ink leading-tight">Tasks</h1>
+            <h1 className="page-title text-ink">Tasks</h1>
             <span className="text-xs text-slate-400 tabular-nums truncate">9 tasks · 8h 10m</span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1234,6 +1235,23 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <QuickAddPreview />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Narrow — the tab bar</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                {/* The real component. It hides itself above 640, so it is
+                    forced visible here — this page is a component board and is
+                    read at every width. On a phone, the live one sits at the
+                    bottom of the viewport; this one sits in the flow. */}
+                <div className="rounded-xl border border-line overflow-hidden [&>nav]:!flex">
+                  <MobileTabBar />
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  Five destinations at 62px. Review lives at the top of Insights; Settings is
+                  the gear in the top bar.
+                </p>
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
