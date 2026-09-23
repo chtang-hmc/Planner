@@ -6,6 +6,18 @@ import { listDailyBreaks } from '@/app/actions/scheduling'
 
 export const metadata = { title: 'Settings — Planner' }
 
+/**
+ * The only page under `(app)` that was not dynamic, and it reads the database
+ * in its own body and in the shared layout.
+ *
+ * Next prerendered it at build time, so the build ran `createServiceClient()`
+ * — and on a Vercel Preview, where the environment variables are
+ * Production-scoped, that is `supabaseUrl is required` and a failed
+ * deployment. It is per-user, live configuration; there was never a static
+ * version of it to serve.
+ */
+export const dynamic = 'force-dynamic'
+
 export default async function SettingsPage() {
   const db = createServiceClient()
 

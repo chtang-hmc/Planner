@@ -965,6 +965,55 @@ Google Calendar sits in Simple despite being the most technical thing there: it 
 
 Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
 
+## Deployment
+
+### Vercel, single-user, `planner-nine-snowy.vercel.app` (2026-09-22)
+
+Hosted on Vercel because it is a Next app and there is one user; Supabase keeps
+holding the data and the nightly pg_cron jobs, so nothing needed a worker.
+`next build` had **never been run anywhere** — CI did types, lint and tests
+only — so the first thing was to run it. It passed. It is now a CI step, with a
+throwaway `NEXT_PUBLIC_SUPABASE_*` pair because those are inlined at build time
+and the build needs *a* value; nothing the app talks to is configured there.
+
+**Two fire-and-forget calendar syncs had to become `after()`.** Both OAuth
+callbacks kicked off `syncCalendarEvents()` without awaiting, which is fine on
+a long-running server and silently killed on a serverless one — the function is
+frozen the moment the response goes out. `after` is the supported way to say
+"once the response is sent".
+
+**`/auth/design` is not in production, and already was not.**
+`src/app/auth/design/page.tsx` calls `notFound()` when `NODE_ENV` is
+`production`, so the route matches, renders nothing, and returns 404. Worth
+knowing before anyone tries to check a component on a real phone against the
+deployment: it will not be there. The page is a development tool and reachable
+only from a dev server, including over the LAN.
+
+### Closing the gate, before the URL was public
+
+The deployment made two long-standing weaknesses matter.
+
+**`pathname.includes('.')` meant "this is a static file".** That is true of
+`/logo.png` and equally true of `/projects/anything.else`, and the test returned
+*before* the session and owner checks. Verified against the live deployment:
+`/projects/a.b` returned 404 from the page itself with nobody signed in, having
+already queried the database with the service-role key, while `/projects/abc`
+redirected to `/login`. Nothing was exploitable — the only dynamic route takes
+UUIDs and a UUID has no dot — but that is luck, and it expires the first time
+someone adds a route with a slug. It is an extension allow-list now.
+
+**`ALLOWED_EMAIL` was checked in one place, and 63 service-role call sites
+trusted it.** The middleware was the only thing between a signed-in stranger
+and everything, because service role bypasses RLS and the policies are
+`using (true)` (see #82). The check now also runs in the OAuth callback, which
+is the single place a session can be issued: a wrong email is signed straight
+back out and never holds a cookie. The middleware check stays as the second
+line rather than the only one. Signing out matters — without it the cookies are
+already set and only a redirect stands in the way.
+
+This is not multi-tenancy and does not pretend to be. It makes a middleware
+failure survivable; #82 is the real fix.
+
 ## Signing in from somewhere other than this machine
 
 ### The login page does not depend on hydration (2026-09-22)

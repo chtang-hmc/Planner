@@ -15,6 +15,8 @@
 
 # next.js
 /.next/
+# Alternate dist dirs — see next.config.ts and the CI build step.
+/.next-*/
 /out/
 
 # production
