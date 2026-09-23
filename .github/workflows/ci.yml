@@ -48,16 +48,16 @@ jobs:
       # never been run anywhere until 2026-09-22; it passed, and this is what
       # keeps that true. Its own dist dir so a local run cannot collide with a
       # dev server — see the comment in next.config.ts.
+      # Deliberately with no environment at all. Vercel Preview builds have
+      # none either — the variables are Production-scoped — and that is exactly
+      # how /settings being prerendered got through: it called
+      # createServiceClient() at build time, which needs a URL. Giving CI
+      # placeholder values would let it construct one and go green while the
+      # real build went red, which is worse than not building at all.
       - name: Build
         run: npx next build
         env:
           NEXT_DIST_DIR: .next-ci
-          # Build-time only. `NEXT_PUBLIC_*` are inlined into the client bundle
-          # during the build, so the build needs *a* value; these are throwaway
-          # and never reach a deployment. Everything the app actually talks to
-          # is configured in Vercel.
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
 
       # Migrations are applied by hand against Supabase, and one has been
       # forgotten before — 0013 sat unapplied for days while the feature that
