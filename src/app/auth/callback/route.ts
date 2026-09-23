@@ -1,9 +1,15 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
+import { originOrConfigured } from '@/lib/request-origin'
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
+  /* From the headers, not from `request.url`: on a request to
+     http://172.28.151.110:3000/auth/callback that resolved to
+     http://localhost:3000, so signing in from a phone completed and then
+     redirected to the laptop. */
+  const origin = originOrConfigured(request.headers)
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/'
 

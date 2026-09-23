@@ -988,6 +988,29 @@ already redirects with — a state variable does not survive the full page load
 that a native form post causes.
 
 
+### Both OAuth legs read the same origin, from the headers (2026-09-22)
+
+`lib/request-origin.ts` is the one definition, because two places need it and
+they have to agree: the sign-in action builds `redirectTo` from it, and the
+callback builds the address it sends you to after the exchange. If they
+disagree you are sent to Google from one host and returned to another — a
+sign-in that completes and then lands nowhere.
+
+**The callback used `new URL(request.url).origin` and that was wrong.** On a
+request to `http://172.28.151.110:3000/auth/callback` it resolved to
+`http://localhost:3000`, so signing in from a phone would have succeeded and
+then redirected to the laptop. Found by curling the callback across hosts
+before claiming the flow worked, not by anyone hitting it. `request.url` has
+been through Next; the headers are what the browser sent.
+
+Verified on all three shapes, both legs:
+
+| host | `redirectTo` | callback returns to |
+|---|---|---|
+| `localhost:3000` | localhost | localhost |
+| `172.28.151.110:3000` | the LAN address | the LAN address |
+| forwarded headers | the tunnel host, over https | the tunnel host |
+
 ### The OAuth return address comes from the request (2026-09-22)
 
 `redirectTo` was `NEXT_PUBLIC_SITE_URL`, baked in at build time as
