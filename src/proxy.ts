@@ -33,7 +33,28 @@ export async function proxy(request: NextRequest) {
   // it too: it is public to everyone or it is not public at all.
   const isAuthRoute  = pathname === '/login' || pathname.startsWith('/auth')
                      || pathname.startsWith('/help') || pathname === '/403'
-  const isStaticFile = pathname.startsWith('/_next') || pathname.includes('.')
+
+  /**
+   * A real static file, not "anything with a dot in it".
+   *
+   * This used to be `pathname.includes('.')`, which is true of `/logo.png` and
+   * equally true of `/projects/anything.else` — and the check returns *before*
+   * the session and owner checks below, so a dot in a URL skipped the gate
+   * entirely. Verified against the deployment on 2026-09-22: `/projects/a.b`
+   * returned 404 from the page itself, with nobody signed in, having already
+   * queried the database with the service-role key. `/projects/abc` redirected
+   * to `/login` as it should.
+   *
+   * Nothing was exploitable, because the only dynamic route takes UUIDs and a
+   * UUID has no dot. That is luck rather than a security property, and it
+   * expires the first time someone adds a route that takes a slug.
+   *
+   * An extension allow-list instead. The matcher in `config` already excludes
+   * most of these; this is the second line, and the two should not disagree
+   * about what a file is.
+   */
+  const isStaticFile = pathname.startsWith('/_next')
+    || /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?|ttf)$/i.test(pathname)
 
   if (isStaticFile) return supabaseResponse
 
