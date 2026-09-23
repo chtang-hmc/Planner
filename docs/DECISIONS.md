@@ -965,6 +965,33 @@ Google Calendar sits in Simple despite being the most technical thing there: it 
 
 Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
 
+## Signing in from somewhere other than this machine
+
+### The OAuth return address comes from the request (2026-09-22)
+
+`redirectTo` was `NEXT_PUBLIC_SITE_URL`, baked in at build time as
+`http://localhost:3000`. Open the app from anything that is not the machine
+running it — a phone on the same network, a tunnel — and signing in sent you
+to *your own* localhost, which is nothing. `siteUrl()` reads
+`x-forwarded-host` / `host` instead, so the return address is wherever you
+actually asked from. Verified against all three shapes: localhost, a LAN
+address, and forwarded headers standing in for a tunnel.
+
+**The host header is attacker-controllable and this is deliberately not an
+open redirect.** Supabase refuses any `redirectTo` outside the redirect
+allow-list configured on the project, so the allow-list is the control — one
+list, checked server-side, rather than an env var per host. Adding a host to
+that list is a dashboard step and the only remaining manual one.
+
+**Google never sees the app's own host during sign-in.** The flow is app →
+Supabase `/auth/v1/authorize` → Google → Supabase's own callback → back to
+`redirectTo`, so the only URI registered with Google is Supabase's. The
+separate calendar-write flow in `src/app/api/auth/google/` is not like this:
+it hands Google `GOOGLE_REDIRECT_URI` directly, that URI is registered in the
+console, and Google rejects private addresses — so *granting* calendar write
+only works from localhost. Tokens already granted keep working everywhere,
+which is why this does not block using the app from a phone.
+
 ## Navigation
 
 ### Below 640px the sidebar is replaced, not shrunk (2026-09-21)
