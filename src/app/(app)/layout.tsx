@@ -23,7 +23,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <TimerShell>
       <TimezoneSync />
-      <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+      <div className="app-shell flex overflow-hidden bg-slate-50 dark:bg-slate-950">
         <Sidebar projects={(projects ?? []) as Project[]} todayStr={today} />
 
         {/* Main area: search bar fixed at top, content scrolls below, and

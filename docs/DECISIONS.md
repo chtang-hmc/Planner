@@ -1105,6 +1105,29 @@ Tasks.
 not navigation, and the Projects tab carries the same information with room to
 read it.
 
+### The tab bar was rendered and off the bottom of the screen (2026-09-23)
+
+Reported after the first phone session: no row of five icons. The CSS was
+right — `.narrow\:flex{display:flex}` inside `@media (min-width:640px)`, so
+the sidebar hides and the bar shows below 640 — and the component was in the
+tree. It was simply below the fold and unreachable.
+
+`h-screen` is `100vh`, and on iOS Safari `100vh` is the viewport with the
+browser chrome **retracted** — roughly 110px taller than what is visible while
+the URL bar is showing. The shell is `overflow-hidden`, so the bottom 110px is
+not merely off-screen, there is no way to scroll to it. The tab bar lives
+exactly there.
+
+`.app-shell` uses `100dvh`, which tracks the visible viewport. The fallback is
+an `@supports` block rather than two `height` lines in one rule: **the minifier
+collapses duplicate declarations and keeps the last**, so a plain `100vh;
+100dvh;` pair shipped as `100dvh` alone and a browser without `dvh` would have
+got no height at all. Confirmed by grepping the production bundle both ways.
+
+Worth remembering for the next one of these: emulating 390px in a desktop
+browser does not reproduce it, because desktop `100vh` is the visible height.
+Nothing short of the real device would have found this.
+
 ### The shapes that existed and were never reached
 
 Building the chrome exposed two components whose narrow form had been written

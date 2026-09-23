@@ -419,6 +419,23 @@ body {
 
 /* Claims only. A page title, the capacity sentence, a finding headline —
    never a label, a control, or a table cell. */
+/* The app shell's height, and why it is not `h-screen`.
+   `100vh` on iOS Safari is the viewport with the browser chrome *retracted* —
+   about 110px taller than what you can actually see while the URL bar is
+   showing. The shell is `overflow-hidden`, so everything in that last 110px is
+   not merely below the fold, it is unreachable: on a phone the bottom tab bar
+   was rendered, correctly styled, and off the bottom of the screen.
+   `100dvh` tracks the visible viewport.
+   The fallback is an `@supports` block rather than two `height` lines in one
+   rule: the minifier collapses duplicate declarations and keeps the last, so
+   the plain `100vh` fallback was silently dropped from the production build
+   and a browser without `dvh` would have got no height at all. It will not
+   merge across an `@supports` boundary. */
+.app-shell { height: 100vh; }
+@supports (height: 100dvh) {
+  .app-shell { height: 100dvh; }
+}
+
 /* A page's own title, and the only heading in the app set in the display face.
    Two sizes, because 34px of serif on a 390px screen is a headline where the
    design's own narrow boards draw 26. `.page-title-today` is Today's, which
