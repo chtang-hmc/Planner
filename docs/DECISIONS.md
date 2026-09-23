@@ -977,15 +977,20 @@ callback on first connect and the `refresh` link on Home, so Home could show a
 day that changed hours ago and the only hint was a "synced 36m ago" label
 nobody reads as a warning. `/api/cron/sync-calendar` runs it via `vercel.json`.
 
-**Daily, not hourly, and that is a plan limit rather than a choice.** Hourly was
-written first. Vercel's Hobby plan does not quietly downgrade a sub-daily
-schedule — it **refuses to create the deployment at all**, so `0 * * * *` failed
-the build on PR #86 with a link to the cron pricing page and nothing else.
-Verified 2026-09-23: the account is on Hobby. The schedule is `0 13 * * *`,
-early morning Pacific, so the first look at Today each day is on fresh data.
-Hourly costs $20/month for Pro, or an external scheduler (a GitHub Actions
-`schedule:` on this public repo is free) calling the same route with the same
-bearer token — the route does not care who calls it.
+**`vercel.json` takes no comments, of any kind.** The first version explained
+the schedule in a `"comment"` key beside it. Vercel validates the file against
+a closed schema and **fails the build** on an unrecognised property — `Invalid
+vercel.json - crons[0] should NOT have additional property comment`. JSON has
+no comment syntax either, so the file stays bare and the reasoning lives here.
+
+**Daily, not hourly.** Hourly was written first, and the build carrying it
+failed with a link to Vercel's cron pricing page. The account is on Hobby
+(checked 2026-09-23), where crons run at most once a day. The schedule is
+`0 13 * * *`, early morning Pacific, so the first look at Today each day is on
+fresh data; the `refresh` link on Home forces one in between. Hourly costs $20
+a month for Pro, or an external scheduler — a GitHub Actions `schedule:` on
+this public repo is free — calling the same route with the same bearer token.
+The route does not care who calls it.
 
 **The cron route authenticates itself**, because a scheduled request carries no
 session and the edge gate would bounce it to `/login`. `proxy.ts` exempts
