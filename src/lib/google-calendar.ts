@@ -84,6 +84,36 @@ export function staleEventIds(
 }
 
 /**
+ * Rows whose event finished before the sync window begins.
+ *
+ * The window only ever moves forward, so nothing before it is asked about
+ * again: those rows can never be reconciled, corrected or deleted by a sync,
+ * and they accumulate for as long as the app runs. There were 72 of them
+ * against 118 live ones on 2026-09-23, and nothing reads them — every query
+ * over `calendar_events` is bounded at today or later.
+ *
+ * **Rows a task is linked to are kept.** `task_event_links` cascades on
+ * delete, and a confirmed link is a decision someone made by hand. Expiring
+ * one to reclaim a row nobody reads is a bad trade, and there are four of them.
+ *
+ * A retention rule rather than a one-off script, because a script is something
+ * you have to remember to run and this is a thing that keeps happening.
+ */
+export function expiredEventIds(opts: {
+  local:     { id: string; end_time: string }[]
+  /** Start of the sync window — anything ending before it is unreachable. */
+  windowStart: Date
+  /** Event ids a task is linked to, which are kept regardless. */
+  linkedIds: Set<string>
+}): string[] {
+  const { local, windowStart, linkedIds } = opts
+  const cutoff = windowStart.toISOString()
+  return local
+    .filter(r => r.end_time < cutoff && !linkedIds.has(r.id))
+    .map(r => r.id)
+}
+
+/**
  * Full sync: fetch events from Google, map to DB schema, upsert.
  * Call this directly from server actions instead of going through the API route
  * to avoid self-referential HTTP calls that break in serverless environments.
@@ -167,6 +197,39 @@ export async function syncCalendarEvents(): Promise<number> {
         const { error: delErr } = await db.from('calendar_events').delete().in('id', stale)
         if (delErr) console.error('syncCalendarEvents: could not delete stale events:', delErr.message)
         else console.log(`syncCalendarEvents: removed ${stale.length} event(s) deleted in Google`)
+      }
+    }
+  }
+
+  /**
+   * Expire what the window has left behind.
+   *
+   * Separate from the reconciliation above, and deliberately not conditional
+   * on `rows.length`: these rows are unreachable whatever Google said this
+   * time, because the window has moved past them. Only gated on `complete` for
+   * the same reason as the rest — a half-finished pull is not a fact about
+   * anything.
+   */
+  if (complete) {
+    const { data: old, error: oldErr } = await db
+      .from('calendar_events')
+      .select('id, end_time')
+      .eq('source', 'google_calendar')
+      .lt('end_time', timeMin.toISOString())
+
+    if (oldErr) {
+      console.error('syncCalendarEvents: could not list expired events:', oldErr.message)
+    } else if (old && old.length > 0) {
+      const { data: links } = await db.from('task_event_links').select('event_id')
+      const expired = expiredEventIds({
+        local: old,
+        windowStart: timeMin,
+        linkedIds: new Set((links ?? []).map(l => l.event_id)),
+      })
+      if (expired.length > 0) {
+        const { error: delErr } = await db.from('calendar_events').delete().in('id', expired)
+        if (delErr) console.error('syncCalendarEvents: could not expire old events:', delErr.message)
+        else console.log(`syncCalendarEvents: expired ${expired.length} event(s) older than the window`)
       }
     }
   }

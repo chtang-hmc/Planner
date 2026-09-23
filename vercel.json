@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "comment": "Pull the calendar so Home is not showing yesterday. Hourly is well inside Google's quota and matches how often a day actually changes; Vercel's Hobby plan only runs crons once a day, so on Hobby this fires daily and the refresh link on Home remains the way to force one.",
+      "path": "/api/cron/sync-calendar",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
