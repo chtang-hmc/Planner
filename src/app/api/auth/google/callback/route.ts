@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
 
@@ -49,9 +49,11 @@ export async function GET(request: NextRequest) {
     connected_at: new Date().toISOString(),
   })
 
-  // Kick off the initial sync (fire-and-forget is fine — call the lib directly,
-  // not via fetch, per CLAUDE.md "No HTTP self-calls in server actions")
-  syncCalendarEvents().catch(console.error)
+  /* Call the lib directly rather than via fetch, per CLAUDE.md's "no HTTP
+     self-calls". Wrapped in `after` because a bare promise does not survive
+     the response on a serverless host — the function is frozen as soon as the
+     redirect goes out, and the sync was being killed mid-flight. */
+  after(() => syncCalendarEvents().catch(console.error))
 
   return NextResponse.redirect(`${origin}/tasks`)
 }

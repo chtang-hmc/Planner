@@ -43,6 +43,22 @@ jobs:
       - name: Tests
         run: npm test
 
+      # The app is deployed now, and a build that only ever runs on Vercel is a
+      # build whose failures arrive as a broken deployment. It had genuinely
+      # never been run anywhere until 2026-09-22; it passed, and this is what
+      # keeps that true. Its own dist dir so a local run cannot collide with a
+      # dev server — see the comment in next.config.ts.
+      - name: Build
+        run: npx next build
+        env:
+          NEXT_DIST_DIR: .next-ci
+          # Build-time only. `NEXT_PUBLIC_*` are inlined into the client bundle
+          # during the build, so the build needs *a* value; these are throwaway
+          # and never reach a deployment. Everything the app actually talks to
+          # is configured in Vercel.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+
       # Migrations are applied by hand against Supabase, and one has been
       # forgotten before — 0013 sat unapplied for days while the feature that
       # needed it silently did nothing. CI cannot see the database, but it can
