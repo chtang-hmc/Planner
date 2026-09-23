@@ -975,8 +975,17 @@ reported as a sync bug; the sync was fine by then, it had simply not run.
 **Nothing pulled the calendar on a schedule.** The only triggers were the OAuth
 callback on first connect and the `refresh` link on Home, so Home could show a
 day that changed hours ago and the only hint was a "synced 36m ago" label
-nobody reads as a warning. `/api/cron/sync-calendar` runs it hourly via
-`vercel.json`.
+nobody reads as a warning. `/api/cron/sync-calendar` runs it via `vercel.json`.
+
+**Daily, not hourly, and that is a plan limit rather than a choice.** Hourly was
+written first. Vercel's Hobby plan does not quietly downgrade a sub-daily
+schedule — it **refuses to create the deployment at all**, so `0 * * * *` failed
+the build on PR #86 with a link to the cron pricing page and nothing else.
+Verified 2026-09-23: the account is on Hobby. The schedule is `0 13 * * *`,
+early morning Pacific, so the first look at Today each day is on fresh data.
+Hourly costs $20/month for Pro, or an external scheduler (a GitHub Actions
+`schedule:` on this public repo is free) calling the same route with the same
+bearer token — the route does not care who calls it.
 
 **The cron route authenticates itself**, because a scheduled request carries no
 session and the edge gate would bounce it to `/login`. `proxy.ts` exempts
