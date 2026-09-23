@@ -965,6 +965,51 @@ Google Calendar sits in Simple despite being the most technical thing there: it 
 
 Unlike Analytics, this grid keeps `items-start`. Its cards hold genuinely different amounts, and stretching a three-option radio group to match a working-hours table gives it a field of empty space rather than a matching neighbour.
 
+## Calendar sync
+
+### The sync deletes now, and had to learn to paginate first (2026-09-23)
+
+Reported: events deleted in Google still showed on Home. They did — the sync
+only ever upserted. Nothing removed a row, so a deleted event stayed in
+`calendar_events` for good. Measured against the live calendar the day this was
+written: Google returned 120 events for the window, the table held **150**, so
+**31 were phantoms**.
+
+Google does not report deletions. With `singleEvents=true` a deleted event is
+simply absent, so the only way to see one is to compare the whole window
+against what came back.
+
+**Pagination came first, because it had to.** The pull asked for
+`maxResults: 250` and took whatever arrived. That was survivable while the sync
+only added — a truncated page meant a few missing events until next time. It
+stops being survivable the moment the sync deletes, because a truncated
+response is indistinguishable from "the user deleted the rest". `complete` says
+whether the last page really was the last one, and reconciliation is skipped
+when it was not.
+
+**Three things the deletion refuses to do:**
+
+- Touch anything outside the window that was fetched. Rows beyond ±7/+30 were
+  never asked about and their absence means nothing. The local filter is on
+  `start_time` while Google filters on overlap, which makes the two disagree at
+  the edges — always in the direction of deleting less.
+- Touch a row from another `source`.
+- Run on an empty or incomplete response. `task_event_links` cascades on
+  delete, so a fluke empty page would not merely drop a cache: it would discard
+  hand-confirmed task↔event links, and the next sync would re-add the events
+  under new ids with nothing pointing at them. An emptied calendar is the one
+  case this will not reconcile, which is rarer than a bad response.
+
+**The links that do cascade are supposed to.** Three of the four confirmed
+links pointed at events in the stale set. A link says "this event covers this
+task", and it stops being true when the event is gone — `capacity()` should
+stop excluding those minutes, which is exactly what the cascade produces.
+
+`staleEventIds` is a separate pure function, tested, rather than a
+`not in (…)` filter. The ids are Google's strings and that filter has to be
+built by concatenating them into a quoted list, which is the shape of a
+problem; and a query cannot be unit-tested while a function can.
+
 ## Deployment
 
 ### Vercel, single-user, `planner-nine-snowy.vercel.app` (2026-09-22)
