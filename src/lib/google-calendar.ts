@@ -67,6 +67,23 @@ export interface GCalEvent {
 }
 
 /**
+ * Local rows whose event is no longer in Google's answer for the same window.
+ *
+ * Separated out because it is the whole of the deletion rule and the rest of
+ * the sync cannot be tested — this part can. `liveIds` is what the pull
+ * actually returned, already filtered to events that still exist; anything in
+ * the window and not in that set has been deleted in Google, because a pull
+ * with `singleEvents=true` reports a deleted event by omitting it.
+ */
+export function staleEventIds(
+  local: { id: string; gcal_id: string }[],
+  liveIds: string[],
+): string[] {
+  const live = new Set(liveIds)
+  return local.filter(r => !live.has(r.gcal_id)).map(r => r.id)
+}
+
+/**
  * Full sync: fetch events from Google, map to DB schema, upsert.
  * Call this directly from server actions instead of going through the API route
  * to avoid self-referential HTTP calls that break in serverless environments.
@@ -75,7 +92,7 @@ export async function syncCalendarEvents(): Promise<number> {
   const token = await getValidToken()
   if (!token) throw new Error('Google Calendar not connected')
 
-  const events = await fetchCalendarEvents(token.access_token)
+  const { events, timeMin, timeMax, complete } = await fetchCalendarEvents(token.access_token)
 
   const rows = events
     .filter(e => e.status !== 'cancelled' && (e.start?.dateTime || e.start?.date))
@@ -106,6 +123,52 @@ export async function syncCalendarEvents(): Promise<number> {
       .from('calendar_events')
       .upsert(rows, { onConflict: 'gcal_id', ignoreDuplicates: false })
     if (error) throw new Error(error.message)
+  }
+
+  /**
+   * Delete what Google no longer has.
+   *
+   * The sync only ever upserted, so an event deleted in Google stayed in the
+   * table for good and kept showing on Home. Google does not report deletions
+   * — with `singleEvents=true` a deleted event is simply absent — so the only
+   * way to see one is to compare the window against what came back.
+   *
+   * Three things this is careful about:
+   *
+   *   - **Only inside the window that was fetched.** Rows outside ±7/+30 were
+   *     never asked about and their absence means nothing.
+   *   - **Only rows from Google.** `source` distinguishes them from anything
+   *     parsed out of mail, which this pull knows nothing about.
+   *   - **Never on an incomplete or empty response.** `task_event_links`
+   *     cascades on delete, so a fluke empty page would not just drop the
+   *     cache — it would permanently discard the task↔event links the user
+   *     confirmed by hand, and the next sync would re-add the events under new
+   *     ids with nothing pointing at them. An emptied calendar is the one case
+   *     this refuses to reconcile; it is rarer than a bad response, and the
+   *     rows are harmless until the next real one.
+   */
+  if (complete && rows.length > 0) {
+    const { data: local, error: listErr } = await db
+      .from('calendar_events')
+      .select('id, gcal_id')
+      .eq('source', 'google_calendar')
+      .gte('start_time', timeMin.toISOString())
+      .lt('start_time', timeMax.toISOString())
+
+    if (listErr) {
+      console.error('syncCalendarEvents: could not list events in the window:', listErr.message)
+    } else {
+      /* Compared in JS rather than as a `not in (…)` filter. The ids are
+         Google's strings and that filter has to be built by concatenating them
+         into a quoted list, which is the shape of a problem; and it makes the
+         rule testable, which a query is not. The window is ~150 rows. */
+      const stale = staleEventIds(local ?? [], rows.map(r => r.gcal_id))
+      if (stale.length > 0) {
+        const { error: delErr } = await db.from('calendar_events').delete().in('id', stale)
+        if (delErr) console.error('syncCalendarEvents: could not delete stale events:', delErr.message)
+        else console.log(`syncCalendarEvents: removed ${stale.length} event(s) deleted in Google`)
+      }
+    }
   }
 
   // Stamp the pull so Home can say how stale it is showing (migration 0018).
@@ -305,32 +368,71 @@ export async function deleteTaskBlock(
   }
 }
 
-/** Fetch events from the user's primary calendar in a ±7 / +30 day window. */
-export async function fetchCalendarEvents(accessToken: string): Promise<GCalEvent[]> {
+/** How far back and forward a sync looks. Everything outside is left alone. */
+export const SYNC_DAYS_BACK = 7
+export const SYNC_DAYS_FORWARD = 30
+
+export interface CalendarWindow {
+  events:  GCalEvent[]
+  timeMin: Date
+  timeMax: Date
+  /** False when a page failed to arrive, which makes the result incomplete. */
+  complete: boolean
+}
+
+/**
+ * Every event in the sync window, following pagination to the end.
+ *
+ * It used to ask for `maxResults: 250` and take whatever came back. That was
+ * survivable while the sync only ever *added* rows — a truncated page just
+ * meant a few events missing until the next pull. It stops being survivable
+ * the moment the sync also deletes: a truncated response would look exactly
+ * like "the user deleted the rest", and the reconciliation below would act on
+ * it. There are already 150 events inside this window on the live calendar,
+ * so the cap is not hypothetical headroom.
+ *
+ * The window is returned with the events so the caller reconciles against the
+ * same range that was asked about, rather than a second guess at it.
+ */
+export async function fetchCalendarEvents(accessToken: string): Promise<CalendarWindow> {
   const timeMin = new Date()
-  timeMin.setDate(timeMin.getDate() - 7)
+  timeMin.setDate(timeMin.getDate() - SYNC_DAYS_BACK)
 
   const timeMax = new Date()
-  timeMax.setDate(timeMax.getDate() + 30)
+  timeMax.setDate(timeMax.getDate() + SYNC_DAYS_FORWARD)
 
-  const params = new URLSearchParams({
-    timeMin:      timeMin.toISOString(),
-    timeMax:      timeMax.toISOString(),
-    singleEvents: 'true',
-    orderBy:      'startTime',
-    maxResults:   '250',
-  })
+  const events: GCalEvent[] = []
+  let pageToken: string | undefined
+  let pages = 0
+  /* A stop, not a limit: 20 pages is 5,000 events in a 37-day window, which is
+     not a calendar, it is a loop that will not end. */
+  const MAX_PAGES = 20
 
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  )
+  do {
+    const params = new URLSearchParams({
+      timeMin:      timeMin.toISOString(),
+      timeMax:      timeMax.toISOString(),
+      singleEvents: 'true',
+      orderBy:      'startTime',
+      maxResults:   '250',
+    })
+    if (pageToken) params.set('pageToken', pageToken)
 
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`Google Calendar API ${res.status}: ${body}`)
-  }
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
 
-  const data = await res.json()
-  return (data.items ?? []) as GCalEvent[]
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(`Google Calendar API ${res.status}: ${body}`)
+    }
+
+    const data = await res.json()
+    events.push(...((data.items ?? []) as GCalEvent[]))
+    pageToken = data.nextPageToken
+    pages++
+  } while (pageToken && pages < MAX_PAGES)
+
+  return { events, timeMin, timeMax, complete: !pageToken }
 }
