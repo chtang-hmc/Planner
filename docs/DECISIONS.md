@@ -168,9 +168,10 @@ Urgency is also recomputed immediately in `updateTask()` when a urgency-affectin
 
 `src/proxy.ts` (Next.js 16 edge middleware) intercepts every request:
 - Refreshes the session cookie on every request (required by `@supabase/ssr`).
-- Redirects `/` → `/tasks`.
 - Redirects unauthenticated users to `/login`.
-- Redirects authenticated users away from `/login`.
+- Redirects authenticated users away from `/login`, to Home at `/`.
+
+**The session is verified locally, with `getClaims()`, not `getUser()` (2026-09-28, #95).** `getUser()` asks Supabase Auth over the network on every request the gate sees, including every prefetch and Server Action, and nothing renders until it answers. `getClaims()` checks the access token's signature against the project's public ES256 key instead; `auth-js` caches the key list per server instance for ten minutes. Measured 2026-09-28: the removed round trip was 118–410ms from a laptop, and once the keys were cached a forged token was rejected in 3–4ms. Supabase's latency from Vercel will be lower than from the laptop, so the real saving is smaller than that range but still a round trip per request. Tokens signed with the legacy HS256 secret fall back to `getUser()` inside the library. **The trade:** a session revoked elsewhere stays valid until its access token expires (an hour), because nothing asks the server. That is acceptable for one owner behind `ALLOWED_EMAIL`, but would need revisiting if revocation ever had to be immediate.
 
 ---
 
