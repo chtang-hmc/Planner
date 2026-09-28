@@ -67,6 +67,16 @@ write. First real click is the first real test.
 `rrule_from_completion` is set. Works in tests; no task uses it yet. It only
 proves itself when something recurring is finished late.
 
+### The quick-add field on a real phone
+
+*Checked 2026-09-28, in an emulated 375 and 414px viewport only.* The sheet,
+the sideways receipt and the 16px field were measured there, and the
+highlights line up on desktop Chrome. Two things only a real iPhone can show:
+iOS Safari is known to inset textarea text by about 3px a side, which the
+backdrop does not copy, so marks could sit a few pixels left of their words;
+and the `visualViewport` lift that keeps the sheet above the keyboard has
+never run against a real keyboard.
+
 ---
 
 ## Thin data, said out loud

@@ -26,7 +26,8 @@ import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
 import { HabitStreak, CalendarEvent } from '@/types'
-import QuickAddInput from '@/components/QuickAddInput'
+import QuickAddInput from '@/components/quick-add/QuickAddInput'
+import AddTaskModal from '@/components/AddTaskModal'
 import SettingsView, { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
 import { relevanceHint } from '@/lib/relevance'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
@@ -264,6 +265,40 @@ function QuickAddPreview() {
         <span>time        {quick.timeMinutes === null ? '—' : formatTimeLabel(quick.timeMinutes)}</span>
         <span>tokens      {quick.tokens.map(t => `${t.type}:"${t.text}"→${t.label}`).join('  ') || '—'}</span>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The real add modal against fixture projects. Add goes to a local stub rather
+ * than the server action, and the payload it would have sent is shown, so the
+ * whole path from sentence to `createTask` can be checked without a session.
+ * ✦ Guess the rest still calls the real route, which needs one.
+ */
+function AddTaskPreview() {
+  const [open, setOpen] = useState<null | 'task' | 'habit'>(null)
+  const [sent, setSent] = useState<unknown>(null)
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex gap-2">
+        <button onClick={() => setOpen('task')} className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium">Add task</button>
+        <button onClick={() => setOpen('habit')} className="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-medium">Add habit</button>
+      </div>
+      {sent !== null && (
+        <pre data-testid="add-payload" className="text-[11px] font-mono text-slate-500 bg-slate-50 dark:bg-slate-900 rounded-lg p-3 overflow-x-auto">
+          {JSON.stringify(sent, null, 2)}
+        </pre>
+      )}
+      {open && (
+        <AddTaskModal
+          key={open}
+          projects={[PP, TEACH, CLIN, HOME, COURSE]}
+          defaultType={open}
+          onClose={() => setOpen(null)}
+          onCreated={() => setOpen(null)}
+          save={async data => { setSent(data) }}
+        />
+      )}
     </div>
   )
 }
@@ -1235,6 +1270,13 @@ export default function DesignPreview() {
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <QuickAddPreview />
+              </section>
+              <section>
+                <div className="flex items-baseline gap-3 mb-4">
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add task and habit</h2>
+                  <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <AddTaskPreview />
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">

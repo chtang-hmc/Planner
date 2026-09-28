@@ -1,8 +1,10 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import QuickAddInput from '@/components/QuickAddInput'
+import QuickAddInput from '@/components/quick-add/QuickAddInput'
+import Receipt from '@/components/quick-add/Receipt'
 import { parseQuickAdd, formatTimeLabel, formatDayLabel } from '@/lib/quick-add'
+import { excludeSpans, receipt, resolve } from '@/lib/add-task-model'
 import { DEFAULT_TZ, isValidTimezone, todayStr } from '@/lib/day'
 
 /**
@@ -81,7 +83,7 @@ const DEMO_PROJECTS = [
 const META_ROWS: Row[] = [
   { syntax: ['#Teaching'], note: 'Files it. A unique prefix is enough — #teach finds Teaching.' },
   { syntax: ['#{Public Policy}'], note: 'Braces for a name with spaces.' },
-  { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Todoist order — p1 is Critical, p4 is Low. The form\u2019s buttons count the other way.' },
+  { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Todoist order: p1 is Critical, p4 is Low. The form\u2019s buttons carry the same tokens.' },
   { syntax: ['for 45m', 'for 2h', 'for 1h30m'], note: 'An estimate.' },
   { syntax: ['#Tecahing'], note: 'Not a project, so it stays in the title. The field says so, and offers the nearest name.' },
   { syntax: ['#t'], note: 'Matches more than one project, so it picks none.' },
@@ -124,8 +126,13 @@ export default function QuickAddDocs() {
   }, [])
 
   const [text, setText] = useState('Email Rosner tomorrow at 5pm')
+  const [kept, setKept] = useState<string[]>([])
   const quick = useMemo(
-    () => parseQuickAdd(text, { tz, projects: DEMO_PROJECTS }), [text, tz])
+    () => parseQuickAdd(text, { tz, projects: DEMO_PROJECTS, exclude: excludeSpans(text, kept) }),
+    [text, tz, kept])
+  // The receipt the add form shows, built the same way — so this page shows
+  // the real component, not a description of it.
+  const chips = receipt(quick, resolve(quick, {}, {}), 'task', { today: todayStr(tz), projects: DEMO_PROJECTS }, kept)
 
   /**
    * A repeat sets a due day without producing a date *token* — nothing in the
@@ -145,16 +152,32 @@ export default function QuickAddDocs() {
           sub={`Resolved live in ${tz}. This is the same parser the add-task field uses.`}
         />
         <QuickAddInput
+          aria-label="Try the syntax"
           value={text}
-          onChange={setText}
+          onChange={t => { setText(t); setKept(k => k.filter(f => t.includes(f))) }}
           tokens={quick.tokens}
+          misses={quick.misses}
           placeholder="Type a task…"
+        />
+        <Receipt
+          mode="task"
+          text={text}
+          title={quick.title}
+          chips={chips}
+          onChip={c => {
+            if (c.kind === 'typed' && c.fragment) setKept(k => [...k, c.fragment!])
+            if (c.kind === 'kept' && c.fragment) setKept(k => k.filter(f => f !== c.fragment))
+          }}
+          misses={quick.misses}
+          onFix={(m, fixed) => setText(text.slice(0, m.start) + fixed + text.slice(m.end))}
+          tz={tz}
+          projectName={DEMO_PROJECTS[1].name}
         />
         <div className="flex flex-wrap gap-1.5">
           {EXAMPLES.map(e => (
             <button
               key={e}
-              onClick={() => setText(e)}
+              onClick={() => { setText(e); setKept([]) }}
               className="text-[11px] px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700
                          text-slate-500 dark:text-slate-400 hover:border-accent-400 hover:text-accent-600
                          dark:hover:text-accent-400 transition-colors"

@@ -15,7 +15,7 @@
 7. [Recurring Tasks & Habits](#recurring-tasks--habits)
 8. [Habits Page](#habits-page)
 9. [Subtasks / Checklists](#subtasks--checklists)
-10. [Add Modal: Compact vs Detailed](#add-modal-compact-vs-detailed)
+10. [Add Modal: one field, one owner per value](#add-modal-one-field-one-owner-per-value)
 11. [Quick Add: natural-language dates](#quick-add-natural-language-dates)
 12. [Task Row Layouts](#task-row-layouts)
 13. [Task List Views](#task-list-views)
@@ -764,22 +764,53 @@ How much of a wait is reusable depends on buffers — a 60-minute wait between t
 
 ---
 
-## Add Modal: Compact vs Detailed
+## Add Modal: one field, one owner per value
 
-`AddTaskModal` is the single add surface for tasks *and* habits (tasks page, projects, review, habits page), so every advanced field the scheduler understands had to live somewhere — and all of them at once made adding "call the dentist" a form to fill in.
+`AddTaskModal` is the single add surface for tasks *and* habits (tasks page, projects, review, habits page), so every field the scheduler understands has to live somewhere — and all of them at once made adding "call the dentist" a form to fill in.
 
-Two views, toggled in the header beside the task/habit switch:
+Redesigned on 2026-09-28 from a brief and a prototype ([design](https://claude.ai/artifact/MAhGz4d7RKMJaLtg71smzv)). What it replaced: a quick-add box *and* a Title field holding the same text, an Enter that copied the parse into the form, a second Enter or click to add, and focus opening in Title rather than the box meant to be fastest.
 
-- **Compact** — title, project, priority, estimate, due date. Quick-add (the ✦ Claude parse) stays in both views; it's the fastest path in either.
-- **Detailed** — adds notes, energy, repeat, "not before", where / ties-me-up / buffer, and the urgency curve. For habits: notes, priority, energy, schedule, the after-meals exclusion, and placement.
+### The sentence is the title field
+
+One field, in both views, for tasks and habits. What the grammar understands lights up in it; the rest is the title. **Enter adds.** There is no apply step and no second title field, because nothing is copied out of the text — the receipt and the rows are both *read* from it. Two copies of one value was the thing that drifted.
+
+### One owner per value (`lib/add-task-model.ts`)
+
+Every attribute is set by exactly one of, in precedence: **typed** (a fragment the grammar understood), **set** (a control, a quick pick, or the page that opened the modal — Upcoming's day, a project page's project), **implied** (a repeat's first day, a bare time's day), **guessed** (✦), **default**. The module is pure and tested on its own; the component only renders it.
+
+- **Changing a typed value from a control removes its fragment from the text**, with Undo. You said the same thing twice and the control is newer. Anything the fragment implied is pinned first, so replacing "at 5pm" doesn't also lose the day it put the task on. The alternative, locking the row until the text is edited, reads as a broken control. Decided with the user, 2026-09-27.
+- **× on a highlight keeps the words in the title** (the parser's `exclude`). The kept fragment shows as a chip with ↺, so it's reversible where it happened.
+- **Initial values are settings, not silent context.** Upcoming's "+ Add task" passing a day now shows as *Due Friday ×* in the receipt.
+
+### The receipt replaces the summary line
+
+Directly under the field: the title as it will be saved, then a chip for everything in effect, in the words the app uses elsewhere — typed ones in source order with their highlight's colour, then settings, then ✦ guesses with a dashed edge, then kept fragments. Every chip undoes where it sits. This replaced three things that each said part of it: a one-colour chip row, the Title field, and "Also applying: …" in the footer. Hidden is fine; hidden *and* in effect is how you create a task you didn't mean to — now nothing is in effect that isn't listed.
+
+The receipt is also what a screen reader gets: a polite live region, spoken once typing settles for 700ms rather than on every keystroke.
+
+### All fields: one row per attribute, and who set it
+
+Rows in four groups (When, Work, Scheduling, Notes; for habits How often, Work, Scheduling, Notes) in a wider modal (680 vs 560), rather than one long column. The right-hand cell says where the value came from — the fragment, `from "every mon"`, ✦ guessed, Reset — or, when nothing has set it, the syntax you could have typed (`p1–p4`, `for 45m`). A typed row rings its control in the fragment's colour, the only link back to text that may be scrolled out of view. On a phone the owner sits beside the label and the control takes the width.
+
+### Priority is named, with its token
+
+`Critical p1 · High p2 · Medium p3 · Low p4`. The inversion between typed `p1` and stored 4 stays in one table in the grammar; the button that lights up for `p1` now says p1.
+
+### Habits get the same field
+
+With `mode: 'habit'` the grammar reads a weekly target, repeat days, session length and priority, and everything else stays in the name. Per week is 1×–7×. Days is seven toggles; none picked reads "Any day", where the old picker showed "No repeat" selected under a label saying "Any day". In compact, whichever of target and session length is missing is offered as quick picks, with the one-sentence plan that was the best copy in the old form. No violet: the task list stopped drawing habits as a different app (`TaskChrome.tsx`), and the modal was the last place doing it.
+
+### The phone
+
+Below 640px the modal is a sheet that covers the tab bar. `visualViewport` lifts it above the on-screen keyboard (iOS shrinks only the visual viewport, so a bottom-pinned sheet would otherwise sit under the keys). The receipt becomes one sideways-scrolling row, the ✦ button drops its label, and All fields takes the full height. Return adds (`enterkeyhint="done"`); autocorrect is off in the field so shorthand like `tmr` and `eom` survives.
 
 ### The choice is remembered
 
-`localStorage['planner.addTask.detailed']`. Someone who reaches for the advanced fields once usually wants them next time; reopening to compact every time makes Detailed feel like it never sticks. Per-viewer convenience, so browser storage is the right home — and it's read through a try/catch, since private windows throw on access.
+`localStorage['planner.addTask.detailed']`, read through `useStored`. Someone who reaches for the advanced fields once usually wants them next time.
 
-### Compact says what it's about to apply
+### /auth/design renders it against fixtures
 
-Quick-add can set an advanced field (energy, most often), and a remembered detailed session leaves values behind. So compact prints a one-line summary — "Also applying: 🔥 high energy · no buffer" — with a link to reveal the full form. Hidden is fine; hidden *and* silently in effect is how you end up with a task you didn't mean to create.
+The modal takes an optional `save`, defaulting to `createTask`. The dev-only preview passes a stub and prints the payload, so the whole path from sentence to `createTask` can be checked without a session — and pressing Add there can't write to the real database.
 
 ### Advanced fields are omitted, not defaulted
 
@@ -843,7 +874,19 @@ The time is stored beside the day, in `tasks.due_time_minutes` (see "A time of d
 
 ### The highlight is two layers, and they must lay out identically
 
-`QuickAddInput` stacks a transparent textarea over a backdrop that renders the same string in transparent ink — the backdrop contributes only the coloured rectangles, the visible glyphs are always the textarea's. Any difference in font, size, line height, padding or border between the two shows up as highlights drifting off their words, worse the further down you read, so the box metrics are written once and shared. The background sits on the *backdrop*: an opaque textarea would paint over the very highlights it is meant to reveal.
+`QuickAddInput` lays a transparent textarea over a backdrop that renders the same string in transparent ink — the backdrop contributes only the field colour, the border and the marks; the visible glyphs are always the textarea's. Any difference in font, size, line height, padding or border between the two shows up as marks drifting off their words, worse the further down you read, so the box metrics are written once (`BOX`) and a mark carries paint only — background and an inset shadow, never padding or weight.
+
+**The backdrop is in flow and sets the height; the textarea covers it exactly** (changed 2026-09-28). The first version had it the other way round: a scrolling textarea over an absolutely placed backdrop, with the scroll offset copied across on every scroll. Now the box grows with the text, the textarea never scrolls on its own, and past 170px a wrapper scrolls both layers together, so there is no offset left to keep in step.
+
+**16px on 24px at every width.** Below 16px iOS zooms the page when the field takes focus, and one size everywhere means one geometry to keep aligned rather than one per breakpoint.
+
+### Highlight colours are grouped by question
+
+Five groups rather than six hues: *when* (date and time), *how often* (repeat, weekly target), project, priority, *how long* (estimate, session). The first version painted dates in the accent, which `ui/tokens.css` rev 2 reserves for interaction, and repeats in the violet habit mode used. The new palette avoids the accent, danger and ok hues. Each colour is a wash plus a 2px rule, because on the dark ground a 30% tint alone went muddy, and each is picked per theme in `globals.css` rather than lightened. Date and time share a colour because the receipt already lists them separately (decided with the user, 2026-09-27). A dashed underline with no wash marks a near-miss: it looked like syntax and wasn't understood.
+
+### The empty field shows a legend the parser draws
+
+The old placeholder, "Submit CS homework by Friday, 45 min, high energy", taught syntax that doesn't parse: only "by Friday" does. The empty receipt now shows a line the real parser highlights as it renders, using one of your real project names. If the grammar stops reading one of those fragments, it visibly loses its mark.
 
 ### The reference page is public and computes itself
 
@@ -907,7 +950,7 @@ This was decided the other way first, and changed. The argument for matching the
 
 The help page states the mapping outright rather than leaving it to be discovered, and the token chip shows the *stored* word ("Critical") rather than echoing the digit, so the inversion is visible before the task is created rather than after.
 
-**The button labels are the remaining inconsistency.** Showing `Low / Med / High / Crit` instead of `1 2 3 4` would remove it at the source; the numbers are currently only a tooltip away from their names.
+The form's buttons used to number 1–4 with 4 as Critical, so `p1` lit up the button marked 4. They are named now, each with its token beside it (`Critical p1`), so what lights up is what you typed.
 
 ### `#project` never creates a project
 
