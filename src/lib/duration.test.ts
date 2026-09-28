@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { formatDuration } from '@/lib/duration'
 import { formatMinutes } from '@/lib/task-format'
 import {
-  capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor, slackWidth,
-  deficit, slack, freeTotal, NO_CAPACITY, type Capacity,
+  capacitySegments, capacityVerdict, capacityFromGaps, dueMinutesFor,
+  deficit, slack, freeTotal, type Capacity, type CapacitySegments,
 } from '@/lib/capacity'
 import { freeGaps, localMidnight, type WorkingHours } from '@/lib/scheduler'
 
@@ -39,7 +39,11 @@ describe('a duration in a column', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+const NO_CAPACITY: Capacity = { dueTotal: 0, freeBeforeCutoff: 0, freeAfterCutoff: 0 }
 const cap = (over: Partial<Capacity>): Capacity => ({ ...NO_CAPACITY, ...over })
+
+/** What the three segments leave as bare track. Pins that they never overflow it. */
+const slackWidth = (seg: CapacitySegments) => Math.max(0, 1 - seg.fits - seg.fitsLate - seg.overflow)
 
 describe('capacity arithmetic', () => {
   it('never reports a negative deficit or negative slack', () => {

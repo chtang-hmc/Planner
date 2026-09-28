@@ -24,7 +24,7 @@ import {
 } from '@/lib/scheduler'
 import {
   buildHome, dayReason, describeAge, formatClock, freeTimeBasis, isCandidate,
-  resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
+  resolveAgainstParent, MIN_GAP_MINUTES, DEFAULT_BUFFER_MINUTES, type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
 import { suggestTaskEventLinks, topSuggestion } from '@/lib/task-events'
@@ -118,7 +118,7 @@ export default async function HomePage() {
     cooldownMinutes: r.cooldown_minutes,
   }))
 
-  const bufferMinutes = configRow?.buffer_minutes ?? 15
+  const bufferMinutes = configRow?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES
 
   const rows = (taskRows ?? []) as (Task & { project: Project | null; parent?: { id: string; title: string } | null })[]
 

@@ -3,6 +3,7 @@ import { normalizeRelevance } from '@/lib/relevance'
 import SettingsView from './SettingsView'
 import { isWeekStartDay, WEEK_START_DEFAULT } from '@/lib/week'
 import { listDailyBreaks } from '@/app/actions/scheduling'
+import { DEFAULT_BUFFER_MINUTES } from '@/lib/home'
 
 export const metadata = { title: 'Settings — Planner' }
 
@@ -46,7 +47,7 @@ export default async function SettingsPage() {
       workingHours={whRows ?? []}
       energySchedule={esRows ?? []}
       maxSession={configRow?.max_session_minutes ?? 90}
-      bufferMinutes={configRow?.buffer_minutes ?? 15}
+      bufferMinutes={configRow?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES}
       weekStartDay={isWeekStartDay(configRow?.week_start_day) ? configRow.week_start_day : WEEK_START_DEFAULT}
       breaks={await listDailyBreaks()}
       relevance={normalizeRelevance(configRow)}

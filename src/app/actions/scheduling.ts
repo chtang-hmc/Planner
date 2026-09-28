@@ -18,6 +18,7 @@ import {
 } from '@/lib/scheduler'
 import { weekStartOf, fetchWeekStartDay, isWeekStartDay } from '@/lib/week'
 import { isValidTimezone, fetchTimezone, localDayStr, startOfLocalDay, addDays as addDayStr } from '@/lib/day'
+import { DEFAULT_BUFFER_MINUTES } from '@/lib/home'
 
 // ── GCal freeBusy ─────────────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ async function fetchSchedulingInputs() {
 
   const schedulerConfig: SchedulerConfig = {
     maxSessionMinutes: configRow?.max_session_minutes ?? 90,
-    bufferMinutes:     configRow?.buffer_minutes ?? 15,
+    bufferMinutes:     configRow?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES,
     timezone:          'UTC',  // overridden per-call via { ...schedulerConfig, timezone }
     breaks,
   }
@@ -702,11 +703,6 @@ export async function saveDailyBreak(
   return {}
 }
 
-/** Read the configured first day of the week (Monday until 0006 is applied). */
-export async function getWeekStartDay(): Promise<number> {
-  return fetchWeekStartDay(createServiceClient())
-}
-
 /**
  * Save the preferred first day of the week. Habit weekly targets count from
  * this day, so changing it re-derives "this week" everywhere at once.
@@ -733,7 +729,7 @@ export async function saveTimezone(tz: string): Promise<{ error?: string; change
   const { error } = data
     ? await db.from('user_scheduling_config').update({ timezone: tz }).eq('id', data.id)
     : await db.from('user_scheduling_config').insert({
-        max_session_minutes: 90, buffer_minutes: 15, timezone: tz,
+        max_session_minutes: 90, buffer_minutes: DEFAULT_BUFFER_MINUTES, timezone: tz,
       })
 
   if (error) {
@@ -758,7 +754,7 @@ export async function saveWeekStartDay(day: number): Promise<{ error?: string }>
   const { error } = data
     ? await db.from('user_scheduling_config').update({ week_start_day: day }).eq('id', data.id)
     : await db.from('user_scheduling_config').insert({
-        max_session_minutes: 90, buffer_minutes: 15, week_start_day: day,
+        max_session_minutes: 90, buffer_minutes: DEFAULT_BUFFER_MINUTES, week_start_day: day,
       })
 
   if (error) {
@@ -818,7 +814,7 @@ export async function saveRelevanceSettings(
   const { error } = data
     ? await db.from('user_scheduling_config').update(patch).eq('id', data.id)
     : await db.from('user_scheduling_config').insert({
-        max_session_minutes: 90, buffer_minutes: 15, ...patch,
+        max_session_minutes: 90, buffer_minutes: DEFAULT_BUFFER_MINUTES, ...patch,
       })
 
   if (error) {
@@ -833,34 +829,3 @@ export async function saveRelevanceSettings(
   return {}
 }
 
-// ── Subtask helpers ───────────────────────────────────────────────────────────
-
-/**
- * Recalculate a parent task's estimated_minutes as the sum of its active subtasks.
- */
-async function recalcParentEstimate(parentId: string): Promise<void> {
-  const db = createServiceClient()
-  const { data: subs } = await db
-    .from('tasks')
-    .select('estimated_minutes')
-    .eq('parent_id', parentId)
-    .neq('status', 'done')
-
-  const total = (subs ?? []).reduce((s, t) => s + (t.estimated_minutes ?? 0), 0)
-  if (total > 0) {
-    await db.from('tasks').update({ estimated_minutes: total }).eq('id', parentId)
-  }
-}
-
-export async function updateSubtask(
-  id: string,
-  patch: { estimated_minutes?: number; energy_required?: string },
-): Promise<void> {
-  const db = createServiceClient()
-  await db.from('tasks').update(patch).eq('id', id)
-
-  const { data: sub } = await db.from('tasks').select('parent_id').eq('id', id).single()
-  if (sub?.parent_id) await recalcParentEstimate(sub.parent_id)
-
-  revalidateTaskViews()
-}
