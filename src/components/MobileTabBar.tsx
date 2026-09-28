@@ -15,6 +15,9 @@
  * a banner on Today on the day it is due. Settings is a gear in the top bar,
  * on every screen; it was never a peer of Today and Tasks.
  *
+ * Padded by the bottom safe-area inset, so installed to the home screen it
+ * clears the iPhone's home indicator (the root viewport is `cover`).
+ *
  * The bar is part of the column rather than fixed over it, so content scrolls
  * above it and nothing is ever hidden underneath. The sidebar's project list
  * has no place here: it is a workload glance, not navigation, and the Projects
@@ -39,7 +42,7 @@ export default function MobileTabBar() {
   return (
     <nav
       aria-label="Main"
-      className="narrow:hidden shrink-0 flex items-stretch h-[62px] border-t border-line bg-surface-sunk"
+      className="narrow:hidden shrink-0 flex items-stretch h-[calc(62px+env(safe-area-inset-bottom))] pb-[env(safe-area-inset-bottom)] border-t border-line bg-surface-sunk"
     >
       {TABS.map(({ href, label, icon: Icon }) => {
         /* Exact match for Home, prefix for the rest: `/` is a prefix of every

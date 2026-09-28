@@ -4,6 +4,7 @@ import MobileTabBar from '@/components/MobileTabBar'
 import TimerShell from '@/components/TimerShell'
 import TopSearchBar from '@/components/TopSearchBar'
 import TimezoneSync from '@/components/TimezoneSync'
+import InstallHint from '@/components/InstallHint'
 import { Project } from '@/types'
 import { todayStr } from '@/lib/day'
 import { fetchUserConfig } from '@/lib/user-config'
@@ -34,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             last row is never hidden underneath it. */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <TopSearchBar />
+          <InstallHint />
           <main className="flex-1 overflow-y-auto">
             {children}
           </main>

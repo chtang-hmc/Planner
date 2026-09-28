@@ -62,7 +62,7 @@ export async function proxy(request: NextRequest) {
    * about what a file is.
    */
   const isStaticFile = pathname.startsWith('/_next')
-    || /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?|ttf)$/i.test(pathname)
+    || /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?|ttf|webmanifest)$/i.test(pathname)
 
   if (isStaticFile || isCronRoute) return supabaseResponse
 
