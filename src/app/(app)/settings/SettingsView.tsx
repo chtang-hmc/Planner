@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react'
 import { ACCENTS, ACCENT_DEFAULT, AccentId, applyAccent, getStoredAccent } from '@/components/Providers'
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
+import NotificationsSection from './NotificationsSection'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
 import { useStored, useHydrated, writeStored } from '@/lib/use-stored'
@@ -615,6 +616,7 @@ export default function SettingsView({
             <Card><AccentSection /></Card>
             <Card><DefaultViewSection /></Card>
             <Card><TaskLayoutSection /></Card>
+            <Card className="xl:col-span-2"><NotificationsSection /></Card>
             <Card className="xl:col-span-2">
               <GoogleCalendarSection
                 connected={gcalConnected}

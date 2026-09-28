@@ -1329,7 +1329,17 @@ Planner installs to an iPhone's home screen as a web app rather than shipping as
 - **`viewport-fit=cover`**, with the tab bar padded by `env(safe-area-inset-bottom)`, so installed it clears the home indicator. The status bar is `default` (opaque), so the top needs no inset.
 - **`InstallHint`** tells iOS Safari users where the button is, since iOS has no install prompt a page can trigger. It isn't shown inside the installed app or on desktop, and a dismissal is remembered per device.
 
-Push notifications are the next step: a service worker, a stored subscription, a send route, and a per-minute scheduler (Supabase `pg_cron`), since the existing hourly and daily jobs are too coarse for "due at 5pm".
+### Push notifications (2026-09-28)
+
+Standard Web Push with VAPID, sent with the `web-push` package: the one thing iOS 16.4+ accepts from an installed web app, and the same code reaches a desktop browser. A hosted service (OneSignal, Firebase Cloud Messaging) was the alternative; it would add an SDK, a third party holding the device list, and an account, for a single user's handful of notifications.
+
+- **`public/sw.js` only shows pushes.** No caching or offline mode: a caching worker is a second copy of the app that can go stale, and nothing asked for offline. It is a plain file in `public/`, so the proxy's `.js` allow-list lets it load signed out.
+- **`push_subscriptions` (0023) is keyed on the endpoint**, so enabling twice on one device is one row. There is no uninstall callback; a 404 or 410 from the push service is how a dead subscription is found, and `lib/push.ts` deletes the row then. Any other failure keeps the row and records `last_error`.
+- **Per device, in Settings.** Each browser subscribes separately and the server sends to all of them. On iOS the button is only offered inside the installed app, because Safari in a tab has no `PushManager`; the tab is told where to go instead. `requestPermission()` is called before any `await` in the tap handler, since iOS only allows the prompt during the tap itself.
+- **`VAPID_SUBJECT` is the app's URL, not an email address**, which the spec allows and keeps a personal address out of every push request's signed header. **The key pair is permanent**: subscriptions are bound to the public key, so rotating it means re-enabling on every device.
+- **TTL is an hour.** A reminder that arrives the next morning, after the phone was off overnight, is worse than one that never arrives.
+
+What sends them, and when, is the next step: a per-minute scheduler (Supabase `pg_cron` calling a `CRON_SECRET`-protected route), since the existing daily job is too coarse for "due at 5pm".
 
 ## Navigation
 

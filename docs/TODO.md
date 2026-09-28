@@ -72,6 +72,16 @@ that **Google sign-in completes inside the installed app**. The installed app
 has its own cookies, separate from Safari's, and the OAuth hop to Google leaves
 the app's scope.
 
+### No push notification has reached a real device
+
+*Checked 2026-09-28, off-device only:* `/sw.js` returns 200 signed out and
+registers at scope `/` in the dev server; `web-push` builds a correctly signed
+request for `web.push.apple.com` from the keys in `.env.local` (JWT `aud` and
+`sub` decoded and checked). Not checked: a real subscribe, a real delivery,
+and tapping a notification into the app. The browser pane has notifications
+blocked, and Settings needs a sign-in. `push_subscriptions` needs migration
+0023, and production needs the three `VAPID_*` variables.
+
 ### `every!` — recurrence anchored on completion
 
 `completeTask` anchors on the completion day rather than the due date when
