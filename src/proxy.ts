@@ -23,8 +23,30 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // Refresh the session — MUST be called before any redirect logic
-  const { data: { user } } = await supabase.auth.getUser()
+  /**
+   * Who is signed in, verified without a network call (#95).
+   *
+   * This used to be `getUser()`, a round trip to Supabase Auth on every page,
+   * RSC payload, prefetch and Server Action — nothing could render until it
+   * came back. `getClaims()` reads the session from the cookies (refreshing it
+   * through the handlers above when it is near expiry, as before) and checks
+   * the access token's signature against the project's public ES256 key. The
+   * key list is fetched once and cached for ten minutes per server instance.
+   * Checked 2026-09-28: the project's JWKS publishes one ES256 key; the
+   * removed round trip measured 118–410ms from a laptop, the local verify
+   * ~0.1ms. A token still signed with the legacy shared secret falls back to
+   * `getUser()` inside the library, so this is never worse than before.
+   *
+   * The cost: a signed-out-elsewhere session stays valid here until its access
+   * token expires (an hour), where `getUser()` would have noticed at once. For
+   * one owner behind an email allow-list that is an acceptable trade.
+   *
+   * MUST run before any redirect logic, so a refreshed session's cookies land
+   * on the response.
+   */
+  const { data: claimsData } = await supabase.auth.getClaims()
+  const claims = claimsData?.claims
+  const user = claims?.sub ? { email: typeof claims.email === 'string' ? claims.email : undefined } : null
 
   const { pathname } = request.nextUrl
   // `/help` is reference material — syntax tables, no data of any kind — and a
