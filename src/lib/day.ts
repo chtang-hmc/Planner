@@ -42,6 +42,15 @@ export function todayStr(tz: string): string {
   return localDayStr(new Date(), tz)
 }
 
+/** What the wall clock reads at `instant` in `tz`, as minutes past local midnight. */
+export function localMinutesOfDay(instant: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(instant)
+  const get = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0)
+  return get('hour') * 60 + get('minute')
+}
+
 /**
  * Offset of `tz` from UTC at a given instant, in ms. Positive east of UTC.
  * DST-aware because it asks Intl what the wall clock actually reads.

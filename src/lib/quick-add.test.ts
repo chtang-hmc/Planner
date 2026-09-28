@@ -747,3 +747,167 @@ describe('metadata alongside the date grammar', () => {
     expect(r.estimateMinutes).toBeNull()
   })
 })
+
+// ── Added for the quick-add redesign ─────────────────────────────────────────
+
+describe('a time with no day', () => {
+  // NOW is noon in Los Angeles.
+  it('means today when the time is still to come', () => {
+    const r = p('Call mom at 5pm')
+    expect(r.dueDay).toBe('2026-09-16')
+    expect(r.dueFrom).toBe('time')
+    expect(r.timeMinutes).toBe(17 * 60)
+  })
+
+  it('means tomorrow when it has already passed', () => {
+    expect(p('Call mom at 9am').dueDay).toBe('2026-09-17')
+  })
+
+  it('counts the current minute as still to come', () => {
+    expect(p('Lunch at noon').dueDay).toBe('2026-09-16')
+  })
+
+  it('asks the local clock, not the UTC one', () => {
+    // At 19:00Z it is 04:00 on the 17th in Tokyo, so 9am there is still ahead.
+    expect(p('x at 9am', { tz: 'Asia/Tokyo' }).dueDay).toBe('2026-09-17')
+  })
+
+  it('leaves a typed day, or a repeat, in charge', () => {
+    expect(p('x tomorrow at 9am').dueFrom).toBe('date')
+    expect(p('x tomorrow at 9am').dueDay).toBe('2026-09-17')
+    expect(p('x every monday at 5pm').dueFrom).toBe('recurrence')
+    expect(p('x').dueFrom).toBeNull()
+  })
+})
+
+describe('keeping a fragment as words', () => {
+  const excluding = (text: string, frag: string, over = {}) => {
+    const start = text.indexOf(frag)
+    return parseQuickAdd(text, { tz: LA, now: NOW, exclude: [{ start, end: start + frag.length }], ...over })
+  }
+
+  it('leaves the fragment in the title and lets the next reading take over', () => {
+    const r = excluding('Call mom monday about friday plans', 'monday')
+    expect(r.dueDay).toBe('2026-09-18')
+    expect(r.title).toBe('Call mom monday about plans')
+  })
+
+  it('does not let a rule reach across the gap it leaves', () => {
+    // Blanked with spaces, "every monday friday" minus "monday" would read as
+    // "every friday". The gap has to be a wall, not whitespace.
+    const r = excluding('Water every monday friday', 'monday')
+    expect(r.rrule).toBeNull()
+    expect(r.dueDay).toBe('2026-09-18')
+  })
+
+  it('works for any token type, and keeps the others’ offsets true', () => {
+    const text = 'Draft memo for 45m tomorrow p1'
+    const r = excluding(text, 'for 45m')
+    expect(r.estimateMinutes).toBeNull()
+    expect(r.title).toBe('Draft memo for 45m')
+    for (const t of r.tokens) expect(text.slice(t.start, t.end)).toBe(t.text)
+  })
+
+  it('ignores a span outside the text', () => {
+    const r = parseQuickAdd('x tomorrow', { tz: LA, now: NOW, exclude: [{ start: 40, end: 50 }] })
+    expect(r.dueDay).toBe('2026-09-17')
+  })
+})
+
+describe('#project that did not match', () => {
+  it('reports a name that matches nothing, and still leaves it in the title', () => {
+    const r = withProjects('Grade essays #Tecahing friday')
+    expect(r.projectId).toBeNull()
+    expect(r.title).toBe('Grade essays #Tecahing')
+    expect(r.misses).toEqual([{
+      start: 13, end: 22, text: '#Tecahing', reason: 'no-project',
+      candidates: [{ id: 'teach', name: 'Teaching' }],
+    }])
+  })
+
+  it('suggests nothing when no project is close', () => {
+    expect(withProjects('x #groceries').misses[0].candidates).toEqual([])
+    // Two letters are close to everything, so they suggest nothing.
+    expect(withProjects('x #tx').misses[0].candidates).toEqual([])
+  })
+
+  it('lists every project an ambiguous prefix matches', () => {
+    const m = withProjects('x #c').misses[0]
+    expect(m.reason).toBe('ambiguous-project')
+    expect(m.candidates.map(c => c.name)).toEqual(['Clinic', 'Coursework'])
+  })
+
+  it('reports nothing when the project matched', () => {
+    expect(withProjects('x #teach').misses).toEqual([])
+  })
+})
+
+describe('habit mode', () => {
+  const h = (text: string) => parseQuickAdd(text, { tz: LA, now: NOW, projects: PROJECTS, mode: 'habit' })
+
+  it('reads a weekly target, a session length and a priority', () => {
+    const r = h('Gym 3x a week for 60m p2')
+    expect(r.weeklyTarget).toBe(3)
+    expect(r.estimateMinutes).toBe(60)
+    expect(r.priority).toBe(3)
+    expect(r.title).toBe('Gym')
+    expect(r.tokens.map(t => t.type)).toEqual(['target', 'duration', 'priority'])
+  })
+
+  it('accepts the usual ways of saying a target', () => {
+    for (const s of ['3x', '3 x', '3×', '3x/week', '3x a week', '3 times a week', '3 times per week'])
+      expect(h(`Gym ${s}`).weeklyTarget).toBe(3)
+    expect(h('Gym twice a week').weeklyTarget).toBe(2)
+    expect(h('Gym once a week').weeklyTarget).toBe(1)
+  })
+
+  it('labels a target the way the habits page does', () => {
+    expect(h('Gym 3x').tokens[0].label).toBe('3× a week')
+    expect(h('Walk 7x a week').tokens[0].label).toBe('Daily')
+  })
+
+  it('declines a count that no week has', () => {
+    expect(h('Gym 8x a week').weeklyTarget).toBeNull()
+    expect(h('Gym 10x').weeklyTarget).toBeNull()
+  })
+
+  it('reads the days a habit repeats on without giving it a due date', () => {
+    const r = h('Run every mon, wed and fri')
+    expect(r.rrule).toBe('FREQ=WEEKLY;BYDAY=MO,WE,FR')
+    expect(r.dueDay).toBeNull()
+  })
+
+  /**
+   * A highlight promises the fragment will be used. A habit has no due date,
+   * time or project, so those stay in the name, unhighlighted.
+   */
+  it('leaves a date, a time and a project in the name', () => {
+    const r = h('Gym tomorrow at 5pm #Teaching')
+    expect(r.dueDay).toBeNull()
+    expect(r.timeMinutes).toBeNull()
+    expect(r.projectId).toBeNull()
+    expect(r.misses).toEqual([])
+    expect(r.title).toBe('Gym tomorrow at 5pm #Teaching')
+  })
+
+  it('is not read in task mode', () => {
+    const r = p('Gym 3x a week')
+    expect(r.weeklyTarget).toBeNull()
+    expect(r.title).toBe('Gym 3x a week')
+  })
+})
+
+describe('the title, tidied', () => {
+  it('leaves no space in front of punctuation a token used to sit before', () => {
+    expect(p('Submit CS homework by Friday, 45 min, high energy').title)
+      .toBe('Submit CS homework, 45 min, high energy')
+  })
+
+  it('drops a comma stranded at the end', () => {
+    expect(p('Pay rent, by friday').title).toBe('Pay rent')
+  })
+
+  it('keeps a question mark that belongs to the task', () => {
+    expect(p('Why is the build failing? tomorrow').title).toBe('Why is the build failing?')
+  })
+})

@@ -819,7 +819,7 @@ Every resolution runs on day strings through `lib/day`. This is the rule the mod
 
 `dueISO` is **UTC midnight of the local day** — the `due_date` convention everything else relies on, since every comparison in the app does `due_date.slice(0, 10)`. A parsed *time* is returned as a separate `timeMinutes` and deliberately **not** folded into that timestamp: doing so would make a task due at 5pm in Los Angeles read as the following day.
 
-There is nowhere to store a time yet — `tasks.due_date` is a day and there is no time-of-day column — so the field says the time was understood and that the task will be due that day. Recognising it and dropping it silently was the one option not on the table.
+The time is stored beside the day, in `tasks.due_time_minutes` (see "A time of day lives beside the day" below). That makes a day a precondition: a time with nothing to happen on can't be saved.
 
 ### Choices the grammar makes on purpose
 
@@ -828,6 +828,7 @@ There is nowhere to store a time yet — `tasks.due_date` is a day and there is 
 - **A month-day with no year means the next one to come round**, searching forward several years rather than one — `feb 29` is a real date whose next occurrence can be three years out.
 - **The first date wins.** "Call mom monday about friday plans" takes only `monday`. One task has one deadline; a second date is nearly always part of what the task is about.
 - **Anything unrecognised stays in the title.** `Buy Tomorrowland tickets` is a festival, not a due date, and `feb 30` is declined rather than rounded to the 28th.
+- **A time with no day means the next one to come round.** `Call mom at 5pm` is due today if 5pm hasn't passed, tomorrow if it has, which is how a bare weekday reads too. Before this the field lit up "at 5pm" and the add form dropped it, because it only stores a time against a day. A highlighted fragment that is then ignored breaks the field's one promise. `dueFrom` says the day was implied (`time`, or `recurrence` for a repeat's first day) rather than typed. Considered: always today, which makes "at 9am" typed at noon overdue the moment it's saved. Decided with the user, 2026-09-27.
 
 ### The highlight is two layers, and they must lay out identically
 
@@ -907,9 +908,23 @@ Creating on a typo would be worse here than elsewhere: the add flow has no undo,
 
 The same discipline as recurrence-before-date, for the same reason. `#{4th floor}` contains an ordinal the monthly-repeat rule would claim; `for 2h` contains a bare number. Each pass masks its span before the next runs, so no later rule can read a digit that already belongs to something else.
 
-### Staged
+### A `#name` that matches nothing says so
 
-Dates, times and recurrence are in, and both are now stored. `#project`, `p1`–`p4` and `for 45m` are not. Their token types are already declared in `TokenType` and already have highlight colours, so adding them changes no consumer contract.
+It still stays in the title, and a project is still never created. But `misses` now reports it: `no-project` with the nearest spelling if one is within two edits (compared against the name cut to the typed length, so a mistyped prefix works too), or `ambiguous-project` with every match. Before this, `#thesys` and `#t` fell into the title with no sign anything had been tried, and the typo was found after the task was saved. One- and two-letter fragments get no suggestion, since everything is two edits from them.
+
+### "Keep as words" is an `exclude` span
+
+The redesigned field lets you × a highlight to keep those words in the title (`Call mom monday about friday plans`: × on "monday" hands the date to "friday"). The parser takes those as `exclude` offsets and blanks them before any scan. It uses NULs, not the spaces `mask` uses between passes, because spaces are whitespace to every rule: excluding "monday" from "every monday friday" would otherwise let `every` reach across the gap and read "every friday". The component maps its dismissed fragments to offsets. The parser stays pure and positional.
+
+### Habit mode reads less
+
+`mode: 'habit'` reads only what a habit has: a weekly target, the days it repeats on, a session length (`for 45m`, the same token as an estimate) and a priority. A date, a time or a `#project` stays in the name, because a highlight promises the fragment will be used, and a habit has nowhere to put them. A repeat doesn't give a habit a due day either.
+
+The target token (`3x`, `3x a week`, `3 times per week`, `twice a week`, 1–7) is labelled through `habit-stats.cadence`, so it reads "3× a week" and "Daily" exactly as the habits page does. It is scanned first, before the other metadata, for the same reason metadata goes before dates.
+
+### Titles are tidied, not just trimmed
+
+Removing a token can leave a space before a comma ("Submit CS homework , 45 min"), or a comma stranded at the end ("Pay rent,"). The title drops both. A closing `?` or `!` belongs to the task and stays.
 
 ---
 
