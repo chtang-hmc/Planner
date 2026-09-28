@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono, Instrument_Serif } from 'next/font/google'
 import './globals.css'
 import Providers from '@/components/Providers'
@@ -22,6 +22,31 @@ const instrumentSerif = Instrument_Serif({
 export const metadata: Metadata = {
   title: 'Planner',
   description: 'Personal task planner',
+  /**
+   * Opened from the home screen, iOS runs this as its own app: full-screen,
+   * its own icon, and — from iOS 16.4 — able to receive web push. `default`
+   * keeps the status bar opaque above the page rather than drawn over it, so
+   * nothing has to pad for the notch at the top.
+   */
+  appleWebApp: { capable: true, title: 'Planner', statusBarStyle: 'default' },
+  /* A real .png path, not the app/apple-icon convention: that one is served
+     at `/apple-icon?<hash>`, which has no extension and so is not a static
+     file to the proxy — a signed-out fetch of it would redirect to /login. */
+  icons: { apple: '/icons/apple-touch-icon.png' },
+}
+
+/**
+ * `cover` lets the page run to the bottom edge of an iPhone, under the home
+ * indicator, so the tab bar can pad itself by the safe-area inset instead of
+ * sitting on a band iOS leaves blank. The theme colours are the paper preset's
+ * ground in each scheme.
+ */
+export const viewport: Viewport = {
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#FAF8F4' },
+    { media: '(prefers-color-scheme: dark)', color: '#141210' },
+  ],
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

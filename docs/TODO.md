@@ -61,6 +61,17 @@ came out right — but that path is read-only. The button runs
 "Schedule week" uses, so the risk is in the one-day window rather than in the
 write. First real click is the first real test.
 
+### The home-screen app has not been installed on a real iPhone
+
+*Checked 2026-09-28, in the dev server only:* the manifest and all four icons
+return 200 with nobody signed in, and the page head carries the manifest,
+the Apple icon, `viewport-fit=cover` and the theme colours. What only a phone
+can show: that the install hint appears in iOS Safari and nowhere else, that
+the tab bar clears the home indicator, and — the one most likely to need work —
+that **Google sign-in completes inside the installed app**. The installed app
+has its own cookies, separate from Safari's, and the OAuth hop to Google leaves
+the app's scope.
+
 ### `every!` — recurrence anchored on completion
 
 `completeTask` anchors on the completion day rather than the due date when

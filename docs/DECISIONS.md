@@ -1319,6 +1319,17 @@ fallback moot. That is one more piece of configuration that has to be right
 forever, to guard a branch that cannot be reached — and if it were ever wrong
 it would fail exactly as quietly as the localhost default did.
 
+## The home-screen app
+
+Planner installs to an iPhone's home screen as a web app rather than shipping as a native one (decided 2026-09-28). Since iOS 16.4 an installed web app opens full-screen from its own icon and can receive push notifications. That covers what was wanted — something that opens easily on the phone and can notify — for no Apple Developer fee, no Xcode build, and every deploy live immediately. A Capacitor wrapper was the alternative: $99 a year for the push capability, a native rebuild every 90 days through TestFlight, and nothing it adds that was asked for. Widgets and Live Activities are what a web app can't do.
+
+- **`src/app/manifest.ts`** makes it installable: standalone, paper-preset ground colours, icons in `public/icons/` drawn by `scripts/make-icons.py`.
+- **The icons are real `.png` paths**, not the `app/apple-icon` convention, which Next serves at `/apple-icon?<hash>` with no extension. The proxy only passes known static extensions through, so a signed-out fetch of that URL would have redirected to `/login`. `.webmanifest` joined the proxy's allow-list for the same reason.
+- **`viewport-fit=cover`**, with the tab bar padded by `env(safe-area-inset-bottom)`, so installed it clears the home indicator. The status bar is `default` (opaque), so the top needs no inset.
+- **`InstallHint`** tells iOS Safari users where the button is, since iOS has no install prompt a page can trigger. It isn't shown inside the installed app or on desktop, and a dismissal is remembered per device.
+
+Push notifications are the next step: a service worker, a stored subscription, a send route, and a per-minute scheduler (Supabase `pg_cron`), since the existing hourly and daily jobs are too coarse for "due at 5pm".
+
 ## Navigation
 
 ### Below 640px the sidebar is replaced, not shrunk (2026-09-21)
