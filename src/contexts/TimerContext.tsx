@@ -2,17 +2,26 @@
 
 import {
   createContext, useContext, useState, useEffect,
-  useRef, useCallback, ReactNode,
+  useRef, useCallback, useMemo, ReactNode,
 } from 'react'
 import { Task, Project } from '@/types'
 import { startFocusSession, finishFocusSession, abandonFocusSession } from '@/app/actions/tasks'
 
 type Phase = 'idle' | 'running' | 'paused'
 
+/**
+ * Two contexts, not one (#97).
+ *
+ * `elapsedMs` changes every 500ms while a timer runs. When it sat in the same
+ * value as everything else, every `useTimer()` consumer — the whole of Home,
+ * the task panel — re-rendered twice a second for a number only the floating
+ * timer shows. Now `useTimer()` carries what changes on a user action (phase,
+ * task, the controls) and `useTimerElapsed()` carries the tick; only
+ * `FloatingTimer` reads the second.
+ */
 interface TimerCtx {
   phase:     Phase
   task:      (Task & { project: Project }) | null
-  elapsedMs: number
   targetMs:  number
   start:   (task: Task & { project: Project }) => Promise<void>
   pause:   () => void
@@ -22,6 +31,7 @@ interface TimerCtx {
 }
 
 const Ctx = createContext<TimerCtx | null>(null)
+const ElapsedCtx = createContext<number | null>(null)
 
 export function TimerProvider({ children }: { children: ReactNode }) {
   const [phase,     setPhase]     = useState<Phase>('idle')
@@ -91,7 +101,12 @@ export function TimerProvider({ children }: { children: ReactNode }) {
   ) => {
     if (!sessionId) return
     clearTick()
-    const durationMinutes = Math.max(1, Math.round(elapsedMs / 60_000))
+    // From the refs rather than `elapsedMs`: exact rather than up to one tick
+    // stale, and it keeps this callback stable across ticks, so the memoised
+    // control value below does not change twice a second.
+    const elapsed = pausedElapsedRef.current
+      + (startedAtRef.current !== null ? Date.now() - startedAtRef.current : 0)
+    const durationMinutes = Math.max(1, Math.round(elapsed / 60_000))
     await finishFocusSession(sessionId, durationMinutes, estimateAccurate, blockerNote)
     setPhase('idle')
     setTask(null)
@@ -99,7 +114,7 @@ export function TimerProvider({ children }: { children: ReactNode }) {
     setElapsedMs(0)
     pausedElapsedRef.current = 0
     startedAtRef.current = null
-  }, [sessionId, elapsedMs, clearTick])
+  }, [sessionId, clearTick])
 
   const abandon = useCallback(async () => {
     clearTick()
@@ -118,9 +133,16 @@ export function TimerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => clearTick(), [clearTick])
 
+  const control = useMemo(
+    () => ({ phase, task, targetMs, start, pause, resume, finish, abandon }),
+    [phase, task, targetMs, start, pause, resume, finish, abandon],
+  )
+
   return (
-    <Ctx.Provider value={{ phase, task, elapsedMs, targetMs, start, pause, resume, finish, abandon }}>
-      {children}
+    <Ctx.Provider value={control}>
+      <ElapsedCtx.Provider value={elapsedMs}>
+        {children}
+      </ElapsedCtx.Provider>
     </Ctx.Provider>
   )
 }
@@ -129,4 +151,11 @@ export function useTimer(): TimerCtx {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useTimer must be inside TimerProvider')
   return ctx
+}
+
+/** Milliseconds on the running timer. Re-renders every tick; read it only where it is drawn. */
+export function useTimerElapsed(): number {
+  const ms = useContext(ElapsedCtx)
+  if (ms === null) throw new Error('useTimerElapsed must be inside TimerProvider')
+  return ms
 }
