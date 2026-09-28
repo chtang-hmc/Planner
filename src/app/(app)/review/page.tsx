@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
-import { fetchTimezone, todayStr, addDays, startOfLocalDay } from '@/lib/day'
+import { weekStartOfDay } from '@/lib/week'
+import { todayStr, addDays, startOfLocalDay } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import { Task, Project, INBOX_PROJECT } from '@/types'
 import ReviewView from './ReviewView'
 
@@ -29,7 +30,8 @@ export interface ReviewData {
 
 export default async function ReviewPage() {
   const db = createServiceClient()
-  const [weekStartDay, tz] = await Promise.all([fetchWeekStartDay(db), fetchTimezone(db)])
+  // One read of the settings row, shared with the layout (#96).
+  const { weekStartDay, timezone: tz } = await fetchUserConfig()
 
   // A due date is a calendar *day*, stored at UTC midnight — so it's compared
   // as a day, against the user's today. Comparing it to the current instant

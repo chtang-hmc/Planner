@@ -17,8 +17,9 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Project, Task } from '@/types'
 import {
-  addDays, fetchTimezone, todayStr as todayIn, startOfLocalDay, localDayStr,
+  addDays, todayStr as todayIn, startOfLocalDay, localDayStr,
 } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import { freeGaps, type WorkingHours, type BreakWindow, type Interval } from '@/lib/scheduler'
 import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
 import { buildProjectRows, isActiveTask, taskMinutes } from '@/lib/projects'
@@ -37,7 +38,8 @@ const ENERGY_DAYS_NEEDED = 21
 export default async function InsightsPage() {
   const db = createServiceClient()
 
-  const tz    = await fetchTimezone(db)
+  // Shared with the layout's read of the same row (#96).
+  const tz    = (await fetchUserConfig()).timezone
   const today = todayIn(tz)
   const startISO = startOfLocalDay(today, tz).toISOString()
   const untilISO = startOfLocalDay(addDays(today, 2), tz).toISOString()

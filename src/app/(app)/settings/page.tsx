@@ -1,9 +1,8 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { normalizeRelevance } from '@/lib/relevance'
 import SettingsView from './SettingsView'
-import { isWeekStartDay, WEEK_START_DEFAULT } from '@/lib/week'
+import { fetchUserConfig } from '@/lib/user-config'
 import { listDailyBreaks } from '@/app/actions/scheduling'
-import { DEFAULT_BUFFER_MINUTES } from '@/lib/home'
 
 export const metadata = { title: 'Settings — Planner' }
 
@@ -26,12 +25,12 @@ export default async function SettingsPage() {
     { data: integration },
     { data: whRows },
     { data: esRows },
-    { data: configRow },
+    config,
   ] = await Promise.all([
     db.from('user_integrations').select('scopes, connected_at').eq('provider', 'google').maybeSingle(),
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
-    db.from('user_scheduling_config').select('*').limit(1).maybeSingle(),
+    fetchUserConfig(),
   ])
 
   const gcalConnected     = !!integration
@@ -46,11 +45,11 @@ export default async function SettingsPage() {
       gcalConnectedAt={integration?.connected_at ?? null}
       workingHours={whRows ?? []}
       energySchedule={esRows ?? []}
-      maxSession={configRow?.max_session_minutes ?? 90}
-      bufferMinutes={configRow?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES}
-      weekStartDay={isWeekStartDay(configRow?.week_start_day) ? configRow.week_start_day : WEEK_START_DEFAULT}
+      maxSession={typeof config.row?.max_session_minutes === 'number' ? config.row.max_session_minutes : 90}
+      bufferMinutes={config.bufferMinutes}
+      weekStartDay={config.weekStartDay}
       breaks={await listDailyBreaks()}
-      relevance={normalizeRelevance(configRow)}
+      relevance={normalizeRelevance(config.row)}
     />
   )
 }

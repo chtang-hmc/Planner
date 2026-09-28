@@ -180,23 +180,19 @@ export async function fetchTodaysHabits(db: Db, opts: {
 }
 
 /**
- * Summaries for whatever habits and repeating tasks a page happens to show —
- * the task list, a project — which have no reason to fetch today's habits.
+ * Completion days by title for every habit and repeating task, all time.
+ *
+ * Needs nothing but the zone, so a page can put it in the same `Promise.all`
+ * as the tasks it will be matched against rather than waiting for those
+ * titles first — one round trip instead of two (#96). Unfiltered by title for
+ * the same reason; it is two narrow columns, 41 rows on 2026-09-28. Pair with
+ * `summariesFor`.
  */
-export async function fetchHabitSummaries(db: Db, opts: {
-  tz:           string
-  today:        string
-  weekStartDay: number
-  rows:         { id: string; title: string; type: string; weekly_target: number | null }[]
-}): Promise<Record<string, HabitSummary>> {
-  const rows = opts.rows.filter(r => r.type === 'habit' || r.type === 'recurring')
-  if (!rows.length) return {}
+export async function fetchCompletionDays(db: Db, tz: string): Promise<Record<string, string[]>> {
   const { data } = await db.from('tasks')
     .select('title, completed_at')
     .in('type', ['habit', 'recurring'])
     .eq('status', 'done')
-    .in('title', [...new Set(rows.map(r => r.title))])
     .not('completed_at', 'is', null)
-  const byTitle = completionDaysByTitle((data ?? []) as CompletionRow[], opts.tz)
-  return summariesFor(rows, byTitle, opts.today, opts.weekStartDay)
+  return completionDaysByTitle((data ?? []) as CompletionRow[], tz)
 }

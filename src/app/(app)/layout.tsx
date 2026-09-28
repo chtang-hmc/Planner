@@ -5,20 +5,22 @@ import TimerShell from '@/components/TimerShell'
 import TopSearchBar from '@/components/TopSearchBar'
 import TimezoneSync from '@/components/TimezoneSync'
 import { Project } from '@/types'
-import { fetchTimezone, todayStr } from '@/lib/day'
+import { todayStr } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const db = createServiceClient()
-  const { data: projects } = await db
-    .from('projects')
-    .select('*')
-    .eq('archived', false)
-    .order('name')
+  // In parallel, and the config read is shared with the page below through
+  // `cache()` — the layout and the page used to read it separately (#96).
+  const [{ data: projects }, config] = await Promise.all([
+    db.from('projects').select('*').eq('archived', false).order('name'),
+    fetchUserConfig(),
+  ])
 
   // The sidebar draws today's date and cannot read the clock itself — see the
   // prop's comment. Resolved in the configured timezone, which is what the app
   // means by "today" everywhere else.
-  const today = todayStr(await fetchTimezone(db))
+  const today = todayStr(config.timezone)
 
   return (
     <TimerShell>

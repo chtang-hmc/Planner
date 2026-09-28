@@ -1,9 +1,9 @@
 import { notFound } from 'next/navigation'
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, EstimationProfile, CalendarEvent } from '@/types'
-import { fetchTimezone, todayStr, startOfLocalDay } from '@/lib/day'
-import { fetchWeekStartDay } from '@/lib/week'
-import { fetchHabitSummaries } from '@/lib/habits'
+import { todayStr, startOfLocalDay } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
+import { fetchCompletionDays, summariesFor } from '@/lib/habits'
 import ProjectDetailView from './ProjectDetailView'
 
 export const dynamic = 'force-dynamic'
@@ -17,16 +17,28 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const db = createServiceClient()
 
+  // The settings row first, shared with the layout (#96). Everything else —
+  // including the calendar window, which needs the zone — then goes in one
+  // batch: two round trips where there were four.
+  const { timezone: tz, weekStartDay } = await fetchUserConfig()
+  const today = todayStr(tz)
+  /* Local midnight, not UTC midnight. `today + 'T00:00:00Z'` is the instant
+     the day begins in London; on the US west coast that is five in the
+     afternoon *yesterday*, so an evening event would fall outside a window
+     that is supposed to start today. */
+  const fromMs = startOfLocalDay(today, tz).getTime()
+  const toMs   = fromMs + CALENDAR_DAYS * 86_400_000
+
   const [
-    tz,
     { data: project, error: pe },
     { data: tasks },
     { data: allProjects },
     { data: bias },
     { data: integration },
     { data: links },
+    { data: events },
+    completionDays,
   ] = await Promise.all([
-    fetchTimezone(db),
     db.from('projects').select('*').eq('id', id).single(),
     /**
      * Every task in this project, at every status.
@@ -46,28 +58,20 @@ export default async function ProjectDetailPage({ params }: Props) {
     /* Confirmed only. A suggestion is a guess, and the calendar block reads as
        a record of what is actually booked. */
     db.from('task_event_links').select('task_id, event_id').eq('status', 'confirmed'),
+    db.from('calendar_events')
+      .select('*')
+      .gte('start_time', new Date(fromMs - 86_400_000).toISOString())
+      .lt('start_time', new Date(toMs + 86_400_000).toISOString()),
+    fetchCompletionDays(db, tz),
   ])
 
   if (pe || !project) notFound()
 
-  const today = todayStr(tz)
-  /* Local midnight, not UTC midnight. `today + 'T00:00:00Z'` is the instant
-     the day begins in London; on the US west coast that is five in the
-     afternoon *yesterday*, so an evening event would fall outside a window
-     that is supposed to start today. */
-  const fromMs = startOfLocalDay(today, tz).getTime()
-  const toMs   = fromMs + CALENDAR_DAYS * 86_400_000
-
-  const { data: events } = await db
-    .from('calendar_events')
-    .select('*')
-    .gte('start_time', new Date(fromMs - 86_400_000).toISOString())
-    .lt('start_time', new Date(toMs + 86_400_000).toISOString())
-
   // Derived from completions by title, not `habit_streaks` (#38).
-  const summaries = await fetchHabitSummaries(db, {
-    tz, today, weekStartDay: await fetchWeekStartDay(db), rows: (tasks ?? []) as Task[],
-  })
+  const summaries = summariesFor(
+    ((tasks ?? []) as Task[]).filter(t => t.type === 'habit' || t.type === 'recurring'),
+    completionDays, today, weekStartDay,
+  )
 
   const gcalWriteEnabled = (integration?.scopes ?? []).includes(
     'https://www.googleapis.com/auth/calendar.events'
