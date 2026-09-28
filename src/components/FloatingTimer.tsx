@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useTimer } from '@/contexts/TimerContext'
+import { useTimer, useTimerElapsed } from '@/contexts/TimerContext'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -17,7 +17,8 @@ function fmt(ms: number): string {
 // ── Reflection panel (shown when user taps "Done") ──────────────────────────
 
 function ReflectionPanel({ onBack }: { onBack: () => void }) {
-  const { task, elapsedMs, finish } = useTimer()
+  const { task, finish } = useTimer()
+  const elapsedMs = useTimerElapsed()
   const [accurate, setAccurate] = useState<boolean | null>(null)
   const [blocker,  setBlocker]  = useState('')
   const [saving,   setSaving]   = useState(false)
@@ -80,7 +81,8 @@ function ReflectionPanel({ onBack }: { onBack: () => void }) {
 // ── Main floating chip ────────────────────────────────────────────────────────
 
 export default function FloatingTimer() {
-  const { phase, task, elapsedMs, targetMs, pause, resume, abandon } = useTimer()
+  const { phase, task, targetMs, pause, resume, abandon } = useTimer()
+  const elapsedMs = useTimerElapsed()
   const [finishing, setFinishing] = useState(false)
 
   // Reset the reflection panel whenever the timer goes idle — the session
