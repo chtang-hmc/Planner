@@ -22,19 +22,22 @@
  * wrong day. The parsed *time* is returned separately rather than folded into
  * that timestamp, precisely so it can't corrupt the day.
  *
- * Dates, times and recurrence are covered. The metadata tokens (`#project`,
- * `p1`) are separate token types, already reserved in `TokenType`, so adding
- * them does not change this contract.
+ * Dates, times, recurrence, `#project`, `p1`–`p4` and `for 45m` are all read.
+ * In habit mode the grammar reads only what a habit has: a weekly target
+ * (`3x a week`), the days it repeats on, a session length and a priority.
+ * Everything else stays in the name.
  */
-import { addDays, dayOfWeek, localDayStr } from './day'
+import { addDays, dayOfWeek, localDayStr, localMinutesOfDay } from './day'
 import { weekStartOfDay, WEEK_START_DEFAULT, WeekStartDay } from './week'
 import { getFirstOccurrence } from './rrule-utils'
+import { cadence } from './habit-stats'
 
 export type TokenType =
-  | 'date' | 'time'
-  // Reserved for later stages — listed here so consumers can switch
-  // exhaustively now and not break when they start being produced.
-  | 'recurrence' | 'project' | 'priority' | 'duration' | 'label'
+  | 'date' | 'time' | 'recurrence' | 'project' | 'priority' | 'duration'
+  /** A habit's weekly target — `3x a week`. Habit mode only. */
+  | 'target'
+  // Reserved — listed so consumers can switch exhaustively now.
+  | 'label'
 
 export interface QuickAddToken {
   /** Offsets into the *original* text, so the input can highlight in place. */
@@ -47,6 +50,26 @@ export interface QuickAddToken {
   label: string
 }
 
+/**
+ * Something that looked like syntax and was not understood.
+ *
+ * Today only `#name`: a project that doesn't exist, or a prefix that matches
+ * more than one. The text still goes into the title — the grammar never
+ * invents a project — but the field can now say why, instead of leaving a
+ * typo to be discovered after the task is saved.
+ */
+export interface QuickAddMiss {
+  start: number
+  end: number
+  text: string
+  reason: 'no-project' | 'ambiguous-project'
+  /**
+   * For `ambiguous-project`, every project the prefix matches. For
+   * `no-project`, the nearest spelling if one is close enough, else empty.
+   */
+  candidates: { id: string; name: string }[]
+}
+
 export interface QuickAddResult {
   /** The text with every recognised token removed and whitespace tidied. */
   title: string
@@ -54,6 +77,12 @@ export interface QuickAddResult {
   tokens: QuickAddToken[]
   /** Local calendar day, `YYYY-MM-DD`, or null if no date was found. */
   dueDay: string | null
+  /**
+   * Where `dueDay` came from. `date` means it was typed. `recurrence` is a
+   * repeat's first occurrence; `time` is the day a bare time next comes round.
+   * The last two were implied rather than written, which the field shows.
+   */
+  dueFrom: 'date' | 'recurrence' | 'time' | null
   /** UTC midnight of `dueDay` — what goes in `tasks.due_date`. */
   dueISO: string | null
   /** Minutes from local midnight, or null for an all-day task. */
@@ -79,8 +108,12 @@ export interface QuickAddResult {
    * resolves to 4 here. See `PRIORITY_FROM_TOKEN`.
    */
   priority: 1 | 2 | 3 | 4 | null
-  /** `for 45m`, `for 2h` — minutes. */
+  /** `for 45m`, `for 2h` — minutes. A habit's session length in habit mode. */
   estimateMinutes: number | null
+  /** `3x a week` — habit mode only. */
+  weeklyTarget: number | null
+  /** In source order. Their text is still in the title. */
+  misses: QuickAddMiss[]
 }
 
 export interface QuickAddOptions {
@@ -98,6 +131,19 @@ export interface QuickAddOptions {
    * silently and there is no undo for that in the add flow.
    */
   projects?: { id: string; name: string }[]
+  /**
+   * `habit` reads only what a habit has — target, repeat days, session length,
+   * priority. A date, a time or a `#project` stays in the name, because a
+   * highlight promises the fragment will be used and a habit has nowhere to
+   * put them. Defaults to `task`.
+   */
+  mode?: 'task' | 'habit'
+  /**
+   * Spans of the original text to leave alone: fragments the person said to
+   * keep as words. They are blanked before any scan, so they can't match and
+   * nothing can match across them, and they stay in the title.
+   */
+  exclude?: { start: number; end: number }[]
 }
 
 // ── Vocabulary ───────────────────────────────────────────────────────────────
@@ -529,6 +575,56 @@ export const PRIORITY_FROM_TOKEN: Record<1 | 2 | 3 | 4, 1 | 2 | 3 | 4> = {
 const ESTIMATE_RE =
   /\bfor\s+(?:(\d{1,3})\s*(?:h|hr|hrs|hours?)\s*(?:(\d{1,2})\s*(?:m|min|mins|minutes?)?)?|(\d{1,4})\s*(?:m|min|mins|minutes?))\b/i
 
+/**
+ * A habit's weekly target: `3x`, `3× a week`, `3x/week`, `3 times per week`,
+ * `twice a week`. One to seven — a target is a count of days.
+ */
+const TARGET_RE =
+  /\b(?:([1-7])\s*(?:x|×|times)(?:\s*(?:a|per|each|\/)\s*(?:week|wk))?|(once|twice)\s+(?:a|per|each)\s+week)(?=$|[\s,.;!?])/i
+
+function targetFrom(m: RegExpMatchArray): number {
+  if (m[1]) return Number(m[1])
+  return m[2].toLowerCase() === 'once' ? 1 : 2
+}
+
+/** Edit distance, for suggesting the project a typo probably meant. */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = cur
+    }
+  }
+  return row[b.length]
+}
+
+/**
+ * The project a `#name` that matched nothing was probably meant to be.
+ *
+ * Compared against the name cut to the typed length, so a mistyped prefix
+ * (`#thsis`) finds Thesis as readily as a mistyped whole name. Two edits at
+ * most, and never on a one- or two-letter fragment, where everything is close.
+ */
+function nearestProject(
+  raw: string,
+  projects: { id: string; name: string }[],
+): { id: string; name: string } | null {
+  const q = raw.trim().toLowerCase()
+  if (q.length < 3) return null
+  let best: { p: { id: string; name: string }; d: number } | null = null
+  let tie = false
+  for (const p of projects) {
+    const d = editDistance(q, p.name.toLowerCase().slice(0, q.length))
+    if (!best || d < best.d) { best = { p, d }; tie = false }
+    else if (d === best.d) tie = true
+  }
+  return best && best.d <= 2 && !tie ? best.p : null
+}
+
 function estimateFrom(m: RegExpMatchArray): number | null {
   const [, h, hm, mins] = m
   const total = h ? Number(h) * 60 + (hm ? Number(hm) : 0) : Number(mins)
@@ -561,6 +657,31 @@ function firstMatch<T>(
 /** Blank out a span so a later scan can't match inside it, keeping offsets. */
 function mask(text: string, start: number, end: number): string {
   return text.slice(0, start) + ' '.repeat(end - start) + text.slice(end)
+}
+
+/**
+ * Blank out a span the person excluded. Not with spaces, like `mask`: a run
+ * of spaces is whitespace to every rule, so excluding "monday" from "every
+ * monday friday" would let `every` reach across the gap and read "every
+ * friday". A NUL is neither a word character nor whitespace, so nothing
+ * matches in it or through it.
+ */
+function blank(text: string, start: number, end: number): string {
+  return text.slice(0, start) + '\u0000'.repeat(end - start) + text.slice(end)
+}
+
+/**
+ * The title as it will be saved: whitespace tidied, and no space left in front
+ * of punctuation where a token used to be ("Pay rent by friday, before noon"
+ * would otherwise read "Pay rent , before noon"). A comma or colon stranded at
+ * either end goes too; a closing ? or ! is the person's and stays.
+ */
+function tidyTitle(title: string): string {
+  return title
+    .replace(/\s+/g, ' ')
+    .replace(/ ([,.;:!?])/g, '$1')
+    .replace(/^[\s,;:]+|[\s,;:]+$/g, '')
+    .trim()
 }
 
 // ── Labels ───────────────────────────────────────────────────────────────────
@@ -618,14 +739,32 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
     weekStart: opts.weekStart ?? WEEK_START_DEFAULT,
   }
 
+  const habit = opts.mode === 'habit'
   const tokens: QuickAddToken[] = []
+  const misses: QuickAddMiss[] = []
   let dueDay: string | null = null
+  let dueFrom: QuickAddResult['dueFrom'] = null
   let timeMinutes: number | null = null
   let recurrence: Recurrence | null = null
   let projectId: string | null = null
   let priority: 1 | 2 | 3 | 4 | null = null
   let estimateMinutes: number | null = null
+  let weeklyTarget: number | null = null
   let rest = text
+  for (const x of opts.exclude ?? []) {
+    const start = Math.max(0, x.start), end = Math.min(text.length, x.end)
+    if (end > start) rest = blank(rest, start, end)
+  }
+
+  if (habit) {
+    const m = rest.match(TARGET_RE)
+    if (m && m.index !== undefined) {
+      weeklyTarget = targetFrom(m)
+      const start = m.index, end = start + m[0].length
+      rest = mask(rest, start, end)
+      tokens.push({ start, end, type: 'target', text: text.slice(start, end), label: cadence(weeklyTarget).label })
+    }
+  }
 
   /**
    * The metadata tokens go first, before any of the date grammar.
@@ -636,18 +775,30 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
    * span keeps every later pass looking only at text nobody has spoken for —
    * the same discipline recurrence-before-date already follows.
    */
-  const projectMatch = rest.match(PROJECT_RE)
+  const projectMatch = habit ? null : rest.match(PROJECT_RE)
   if (projectMatch && projectMatch.index !== undefined) {
     const raw   = projectMatch[1] ?? projectMatch[2] ?? ''
-    const found = matchProject(raw, opts.projects ?? [])
+    const all   = opts.projects ?? []
+    const found = matchProject(raw, all)
+    const start = projectMatch.index, end = start + projectMatch[0].length
     if (found) {
       projectId = found.id
-      const start = projectMatch.index, end = start + projectMatch[0].length
       rest = mask(rest, start, end)
       tokens.push({ start, end, type: 'project', text: projectMatch[0], label: found.name })
+    } else {
+      // No match: the token stays in the title rather than becoming a project
+      // that does not exist — and now says why.
+      const q = raw.trim().toLowerCase()
+      const prefix = q ? all.filter(p => p.name.toLowerCase().startsWith(q)) : []
+      const exact  = all.filter(p => p.name.toLowerCase() === q)
+      const ambiguous = exact.length > 1 ? exact : prefix.length > 1 ? prefix : null
+      const near = ambiguous ? null : nearestProject(raw, all)
+      misses.push({
+        start, end, text: projectMatch[0],
+        reason: ambiguous ? 'ambiguous-project' : 'no-project',
+        candidates: ambiguous ?? (near ? [near] : []),
+      })
     }
-    // No match: the token stays in the title, visibly doing nothing, rather
-    // than becoming a project that does not exist.
   }
 
   const priorityMatch = rest.match(PRIORITY_RE)
@@ -697,10 +848,12 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
   }
 
   // Then the date, masked in turn so the time scan can't read the "27" of
-  // "jan 27" or the "3/4" of a numeric date as a clock time.
-  const dateHit = firstMatch(rest, DATE_RULES, ctx)
+  // "jan 27" or the "3/4" of a numeric date as a clock time. A habit has no
+  // due date or time, so neither is read in habit mode.
+  const dateHit = habit ? null : firstMatch(rest, DATE_RULES, ctx)
   if (dateHit) {
     dueDay = dateHit.value
+    dueFrom = 'date'
     rest = mask(rest, dateHit.start, dateHit.end)
     tokens.push({
       start: dateHit.start, end: dateHit.end, type: 'date',
@@ -708,7 +861,7 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
     })
   }
 
-  const timeHit = firstMatch(
+  const timeHit = habit ? null : firstMatch(
     rest,
     TIME_RULES.map(r => ({ re: r.re, resolve: (m: RegExpMatchArray) => r.resolve(m) })),
     ctx,
@@ -731,8 +884,22 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
    * An explicit date always wins, which is what makes "every day starting
    * friday" mean what it says.
    */
-  if (recurrence && !dueDay) {
+  if (recurrence && !dueDay && !habit) {
     dueDay = getFirstOccurrence(recurrence.rrule, ctx.today)
+    if (dueDay) dueFrom = 'recurrence'
+  }
+
+  /**
+   * A time with no day means the next one to come round: today if it hasn't
+   * passed, tomorrow if it has — the same reading a bare weekday gets. Without
+   * this, "Call mom at 5pm" lit up "at 5pm" and the add form then dropped it,
+   * because a time is only stored against a day.
+   */
+  if (timeMinutes !== null && !dueDay) {
+    dueDay = timeMinutes >= localMinutesOfDay(opts.now ?? new Date(), opts.tz)
+      ? ctx.today
+      : addDays(ctx.today, 1)
+    dueFrom = 'time'
   }
 
   tokens.sort((a, b) => a.start - b.start)
@@ -744,9 +911,10 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
   }
 
   return {
-    title: title.replace(/\s+/g, ' ').trim(),
+    title: tidyTitle(title),
     tokens,
     dueDay,
+    dueFrom,
     dueISO: dueDay ? `${dueDay}T00:00:00.000Z` : null,
     timeMinutes,
     rrule: recurrence?.rrule ?? null,
@@ -754,5 +922,7 @@ export function parseQuickAdd(text: string, opts: QuickAddOptions): QuickAddResu
     projectId,
     priority,
     estimateMinutes,
+    weeklyTarget,
+    misses,
   }
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   localDayStr, startOfLocalDay, localDayRange, addDays, dayOfWeek,
-  todayStr, isValidTimezone, DEFAULT_TZ,
+  todayStr, isValidTimezone, DEFAULT_TZ, localMinutesOfDay,
 } from './day'
 
 /**
@@ -36,6 +36,19 @@ describe('localDayStr', () => {
 
   it('accepts an ISO string as well as a Date', () => {
     expect(localDayStr('2026-09-16T02:00:00Z', LA)).toBe('2026-09-15')
+  })
+})
+
+describe('localMinutesOfDay', () => {
+  it('reads the local wall clock, not the UTC one', () => {
+    // 19:00Z is noon in Los Angeles (PDT), 04:00 the next day in Tokyo.
+    expect(localMinutesOfDay(new Date('2026-09-16T19:00:00Z'), LA)).toBe(12 * 60)
+    expect(localMinutesOfDay(new Date('2026-09-16T19:00:00Z'), TOKYO)).toBe(4 * 60)
+  })
+
+  it('handles a half-hour offset and midnight', () => {
+    expect(localMinutesOfDay(new Date('2026-09-14T18:45:00Z'), IST)).toBe(15)
+    expect(localMinutesOfDay(new Date('2026-09-16T00:00:00Z'), 'UTC')).toBe(0)
   })
 })
 

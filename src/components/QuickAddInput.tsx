@@ -32,6 +32,8 @@ const TOKEN_STYLE: Record<TokenType, string> = {
   date:       'bg-accent-100  dark:bg-accent-500/30  rounded-[3px]',
   time:       'bg-sky-100     dark:bg-sky-500/30     rounded-[3px]',
   recurrence: 'bg-violet-100  dark:bg-violet-500/30  rounded-[3px]',
+  // "How often" in habit mode, so it shares the repeat's colour.
+  target:     'bg-violet-100  dark:bg-violet-500/30  rounded-[3px]',
   project:    'bg-emerald-100 dark:bg-emerald-500/30 rounded-[3px]',
   priority:   'bg-amber-100   dark:bg-amber-500/30   rounded-[3px]',
   duration:   'bg-rose-100    dark:bg-rose-500/30    rounded-[3px]',

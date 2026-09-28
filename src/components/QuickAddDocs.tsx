@@ -43,7 +43,7 @@ const DATE_ROWS: Row[] = [
 ]
 
 const TIME_ROWS: Row[] = [
-  { syntax: ['5pm', '5 pm'] },
+  { syntax: ['5pm', '5 pm'], note: 'With no day, the next one to come round: today, or tomorrow if it has passed.' },
   { syntax: ['5:30pm'] },
   { syntax: ['at 17:00'] },
   { syntax: ['9:05'] },
@@ -74,6 +74,7 @@ const REPEAT_ROWS: Row[] = [
 const DEMO_PROJECTS = [
   { id: 'pp',    name: 'Public Policy' },
   { id: 'teach', name: 'Teaching' },
+  { id: 'thesis', name: 'Thesis' },
   { id: 'home',  name: 'Home' },
 ]
 
@@ -82,6 +83,19 @@ const META_ROWS: Row[] = [
   { syntax: ['#{Public Policy}'], note: 'Braces for a name with spaces.' },
   { syntax: ['p1', 'p2', 'p3', 'p4'], note: 'Todoist order — p1 is Critical, p4 is Low. The form\u2019s buttons count the other way.' },
   { syntax: ['for 45m', 'for 2h', 'for 1h30m'], note: 'An estimate.' },
+  { syntax: ['#Tecahing'], note: 'Not a project, so it stays in the title. The field says so, and offers the nearest name.' },
+  { syntax: ['#t'], note: 'Matches more than one project, so it picks none.' },
+]
+
+/** Read in habit mode, which is where these apply. */
+const HABIT_ROWS: Row[] = [
+  { syntax: ['3x', '3x a week', '3 times a week', '3x/week'], note: 'How many days a week. One to seven.' },
+  { syntax: ['twice a week', 'once a week'] },
+  { syntax: ['7x a week'], note: 'Seven is every day.' },
+  { syntax: ['every mon, wed and fri'], note: 'Which days it comes back on.' },
+  { syntax: ['for 45m'], note: 'The session length.' },
+  { syntax: ['p1'], note: 'A habit has no deadline, so priority decides who gets the good slot.' },
+  { syntax: ['tomorrow', 'at 5pm', '#Teaching'], note: 'None of these apply to a habit, so they stay in its name.' },
 ]
 
 const PREFIX_ROWS: Row[] = [
@@ -227,6 +241,14 @@ export default function QuickAddDocs() {
       </section>
 
       <section className="flex flex-col gap-3">
+        <SectionHead
+          title="Habits"
+          sub="Adding a habit reads a different, smaller set: only what a habit has."
+        />
+        <RefTable rows={HABIT_ROWS} tz={tz} kind="habit" />
+      </section>
+
+      <section className="flex flex-col gap-3">
         <SectionHead title="In a sentence" sub="Tokens can sit anywhere; the rest becomes the title." />
         <RefTable rows={PREFIX_ROWS} tz={tz} kind="full" />
       </section>
@@ -250,7 +272,7 @@ function SectionHead({ title, sub }: { title: string; sub?: string }) {
 function RefTable({ rows, tz, kind = 'date' }: {
   rows: Row[]
   tz: string
-  kind?: 'date' | 'time' | 'repeat' | 'meta' | 'full'
+  kind?: 'date' | 'time' | 'repeat' | 'meta' | 'full' | 'habit'
 }) {
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -260,19 +282,32 @@ function RefTable({ rows, tz, kind = 'date' }: {
             // Date and time rows are fragments, so give the parser a title to
             // strip — otherwise "today" alone yields an empty title and reads
             // oddly next to the others.
-            const probe  = kind === 'full' ? row.syntax[0] : `Task ${row.syntax[0]}`
-            const parsed = parseQuickAdd(probe, { tz, projects: DEMO_PROJECTS })
+            const probe  = kind === 'full' ? row.syntax[0] : `${kind === 'habit' ? 'Gym' : 'Task'} ${row.syntax[0]}`
+            const parsed = parseQuickAdd(probe, {
+              tz, projects: DEMO_PROJECTS, mode: kind === 'habit' ? 'habit' : 'task',
+            })
+            const miss = parsed.misses[0]
             const meta = kind !== 'meta' ? null
-              : [
-                  parsed.tokens.find(t => t.type === 'project')?.label,
-                  parsed.tokens.find(t => t.type === 'priority')?.label,
-                  parsed.tokens.find(t => t.type === 'duration')?.label,
-                ].filter(Boolean).join(' · ') || null
+              : miss
+                ? `Stays in the title${miss.reason === 'ambiguous-project'
+                    ? ` · matches ${miss.candidates.map(c => c.name).join(' and ')}`
+                    : miss.candidates[0] ? ` · nearest is ${miss.candidates[0].name}` : ''}`
+                : [
+                    parsed.tokens.find(t => t.type === 'project')?.label,
+                    parsed.tokens.find(t => t.type === 'priority')?.label,
+                    parsed.tokens.find(t => t.type === 'duration')?.label,
+                  ].filter(Boolean).join(' · ') || null
+            const habit = kind !== 'habit' ? null
+              : parsed.tokens.length
+                ? parsed.tokens.map(t => t.type === 'duration' ? `${t.label} sessions` : t.label).join(' · ')
+                : `Stays in the name · “${parsed.title}”`
 
             const resolved =
               kind === 'meta' ? meta :
+              kind === 'habit' ? habit :
               kind === 'time'
-                ? (parsed.timeMinutes === null ? null : formatTimeLabel(parsed.timeMinutes))
+                ? (parsed.timeMinutes === null ? null
+                    : `${formatTimeLabel(parsed.timeMinutes)} · ${parsed.dueDay ? formatDayLabel(parsed.dueDay, todayStr(tz)) : '—'}`)
                 : kind === 'repeat'
                   ? (parsed.rrule
                       ? `${parsed.tokens.find(t => t.type === 'recurrence')?.label} · starts `
