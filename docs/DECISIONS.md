@@ -475,6 +475,8 @@ When `completeTask()` is called on a task with an `rrule` or `type === 'habit'`:
 5. A new task row is inserted with the same title/project/priority/energy/estimate/rrule, `status: 'inbox'`, and `due_date` set to the next occurrence.
 6. Nothing streak-related is written. Streaks are derived from the completed rows, by title, wherever they're shown (see "Streaks are derived everywhere" below).
 
+**What runs in parallel (#98).** The task read and the timezone go together; the same-day check and the update stay in order after them, because the update depends on both. Once the update lands, closing subtasks, logging the focus session and updating the estimation profile start at once and run alongside the spawn chain: none of them reads what the others write. They are collected with `allSettled` so none can reject unhandled mid-spawn, and anything that threw is rethrown, which is how it behaved when they ran in sequence. A habit logged with a reflection went from about eleven sequential round trips to about five (counted from the code, 2026-09-28).
+
 ### "Not before" (defer date)
 
 `tasks.start_date` (migration `0013`) — the earliest a task may be scheduled. The deadline says when work must be *finished*; this says when it may *begin*.

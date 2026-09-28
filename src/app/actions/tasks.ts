@@ -53,16 +53,14 @@ export async function completeTask(
   const db = createServiceClient()
   const completedAt = opts?.completedAtISO ?? new Date().toISOString()
 
-  // Read once, shared with the spawn block below.
-  let tzCache: string | null = null
-  const getTz = async () => (tzCache ??= await fetchTimezone(db))
-
-  // Fetch the task so we know its rrule and template fields before marking done
-  const { data: taskRow } = await db
-    .from('tasks')
-    .select('*')
-    .eq('id', taskId)
-    .single()
+  // Fetch the task so we know its rrule and template fields before marking
+  // done — and the zone alongside it rather than after (#98). Habits and
+  // repeats need the zone twice below; a plain task doesn't need it at all,
+  // but reading it in parallel adds no wait.
+  const [{ data: taskRow }, tz] = await Promise.all([
+    db.from('tasks').select('*').eq('id', taskId).single(),
+    fetchTimezone(db),
+  ])
 
   /**
    * A habit records at most one completion per day, and this is the only path
@@ -80,7 +78,6 @@ export async function completeTask(
    */
   let closeAs: 'done' | 'cancelled' = 'done'
   if (taskRow?.type === 'habit') {
-    const tz = await getTz()
     const { startISO, endISO } = localDayRange(localDayStr(completedAt, tz), tz)
     const { data: sameDay } = await db
       .from('tasks')
@@ -145,59 +142,74 @@ export async function completeTask(
    * A failure here doesn't fail the action: the task itself is already done,
    * and throwing would tell the user their completion didn't land.
    */
-  const { error: subErr } = await db
-    .from('tasks')
-    .update({ status: closeAs, completed_at: completedAt })
-    .eq('parent_id', taskId)
-    .in('status', ['inbox', 'active'])
+  //
+  // This and the two writes below depend on nothing but the update above, and
+  // nothing downstream reads what they write, so they start now and run while
+  // the next occurrence is spawned (#98). Collected before returning.
+  const closeSubtasks = (async () => {
+    const { error: subErr } = await db
+      .from('tasks')
+      .update({ status: closeAs, completed_at: completedAt })
+      .eq('parent_id', taskId)
+      .in('status', ['inbox', 'active'])
 
-  if (subErr) console.error('completeTask: could not close subtasks:', subErr.message)
+    if (subErr) console.error('completeTask: could not close subtasks:', subErr.message)
+  })()
 
   // Log focus session with reflection — but only if the FloatingTimer hasn't
   // already written a session for this task in the last hour (to avoid duplicates).
-  if (actualMinutes != null || estimateAccurate != null) {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-    const { data: recentSession } = await db
-      .from('focus_sessions')
-      .select('id')
-      .eq('task_id', taskId)
-      .not('ended_at', 'is', null)
-      .gte('ended_at', oneHourAgo)
-      .maybeSingle()
+  const logSession = (async () => {
+    if (actualMinutes != null || estimateAccurate != null) {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      const { data: recentSession } = await db
+        .from('focus_sessions')
+        .select('id')
+        .eq('task_id', taskId)
+        .not('ended_at', 'is', null)
+        .gte('ended_at', oneHourAgo)
+        .maybeSingle()
 
-    if (!recentSession) {
-      await db.from('focus_sessions').insert({
-        task_id: taskId,
-        started_at: new Date().toISOString(),
-        ended_at: new Date().toISOString(),
-        duration_minutes: actualMinutes,
-        estimate_accurate: estimateAccurate,
-        blocker_note: blockerNote,
-      })
+      if (!recentSession) {
+        await db.from('focus_sessions').insert({
+          task_id: taskId,
+          started_at: new Date().toISOString(),
+          ended_at: new Date().toISOString(),
+          duration_minutes: actualMinutes,
+          estimate_accurate: estimateAccurate,
+          blocker_note: blockerNote,
+        })
+      }
     }
-  }
+  })()
 
   // Recalculate bias ratio for the task's project (reuse taskRow fetched above)
-  if (taskRow && actualMinutes != null && taskRow.estimated_minutes) {
-    const { data: profile } = await db
-      .from('estimation_profiles')
-      .select('*')
-      .eq('project_id', taskRow.project_id)
-      .single()
+  const updateBias = (async () => {
+    if (taskRow && actualMinutes != null && taskRow.estimated_minutes) {
+      const { data: profile } = await db
+        .from('estimation_profiles')
+        .select('*')
+        .eq('project_id', taskRow.project_id)
+        .single()
 
-    if (profile) {
-      const newCount = profile.sample_count + 1
-      // Running average of bias ratio
-      const newRatio = (profile.bias_ratio * profile.sample_count + actualMinutes / taskRow.estimated_minutes) / newCount
-      await db.from('estimation_profiles').update({ sample_count: newCount, bias_ratio: newRatio, updated_at: new Date().toISOString() }).eq('project_id', taskRow.project_id)
-    } else {
-      await db.from('estimation_profiles').insert({
-        project_id: taskRow.project_id,
-        sample_count: 1,
-        bias_ratio: actualMinutes / taskRow.estimated_minutes,
-      })
+      if (profile) {
+        const newCount = profile.sample_count + 1
+        // Running average of bias ratio
+        const newRatio = (profile.bias_ratio * profile.sample_count + actualMinutes / taskRow.estimated_minutes) / newCount
+        await db.from('estimation_profiles').update({ sample_count: newCount, bias_ratio: newRatio, updated_at: new Date().toISOString() }).eq('project_id', taskRow.project_id)
+      } else {
+        await db.from('estimation_profiles').insert({
+          project_id: taskRow.project_id,
+          sample_count: 1,
+          bias_ratio: actualMinutes / taskRow.estimated_minutes,
+        })
+      }
     }
-  }
+  })()
+
+  // allSettled, so none of the three can reject unhandled while the spawn
+  // runs; anything that threw is rethrown below, as it would have been when
+  // they ran one after another.
+  const sideWrites = Promise.allSettled([closeSubtasks, logSession, updateBias])
 
   // ── Recurring task / habit: spawn the next occurrence ───────────────────────
   const isHabit     = taskRow?.type === 'habit'
@@ -208,7 +220,6 @@ export async function completeTask(
     const now   = new Date().toISOString()
     // Habit days are the user's calendar days, so "which day did this close
     // out" and "when does the next one open" are both asked in their zone.
-    const tz          = await getTz()
     // Not `todayStr`: that name is a function imported from lib/day and used as
     // one throughout this file. Shadowing it here turns a later todayStr(tz)
     // call inside this block into a runtime TypeError.
@@ -324,6 +335,8 @@ export async function completeTask(
     // completion just retired, so it could only ever say 1; streaks are now
     // derived from completion days by title wherever they're shown (#38).
   }
+
+  for (const r of await sideWrites) if (r.status === 'rejected') throw r.reason
 
   revalidateTaskViews()
   revalidatePath('/habits')
