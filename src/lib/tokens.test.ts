@@ -21,8 +21,9 @@ const css = readFileSync('src/app/globals.css', 'utf8')
  * because it was not on the list. A hardcoded inventory has exactly the
  * failure mode it is here to prevent.
  */
-const DIR = 'src/components/ds'
-const SOURCES = readdirSync(DIR).filter(f => f.endsWith('.tsx')).map(f => `${DIR}/${f}`)
+const DIRS = ['src/components/ds', 'src/components/quick-add']
+const SOURCES = DIRS.flatMap(dir =>
+  readdirSync(dir).filter(f => f.endsWith('.tsx')).map(f => `${dir}/${f}`))
 
 /** Tokens Tailwind generates from @theme, so they never appear as --name:. */
 const FROM_THEME = /^(text|color|font|spacing)-/

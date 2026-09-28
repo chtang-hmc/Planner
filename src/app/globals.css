@@ -371,6 +371,113 @@ body {
     --today-edge:   var(--n-700);
 }
 
+/* ── Quick-add highlights ────────────────────────────────────────────────────
+   A small categorical palette of its own, used only inside the quick-add field
+   and its receipt — the way project colours are their own. One hue per
+   question a fragment answers (when, how often, which project, how important,
+   how long), and none of them on the accent, danger or ok hue: the accent is
+   for interaction only, so a date painted in it read as a control.
+
+   Each is a wash behind the glyphs plus a 2px rule under them. On a dark
+   ground a wash alone went muddy; the rule carries the hue. Picked separately
+   per theme, not lightened: text on every wash measured 7.6:1 or better and
+   every rule 4.0:1 or better against the field, in both themes (checked
+   2026-09-27, in the design's own contrast table).
+─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --qa-w-when:     oklch(0.93 0.045 250);
+  --qa-r-when:     oklch(0.55 0.15 255);
+  --qa-w-repeat:   oklch(0.93 0.05 305);
+  --qa-r-repeat:   oklch(0.53 0.17 305);
+  --qa-w-project:  oklch(0.93 0.045 180);
+  --qa-r-project:  oklch(0.52 0.10 185);
+  --qa-w-priority: oklch(0.93 0.07 90);
+  --qa-r-priority: oklch(0.58 0.13 78);
+  --qa-w-estimate: oklch(0.93 0.045 355);
+  --qa-r-estimate: oklch(0.55 0.17 355);
+  --qa-w-label:    var(--n-200);
+  --qa-r-label:    var(--n-500);
+  /* A fragment that looked like syntax and wasn't understood. */
+  --qa-miss:       var(--n-500);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --qa-w-when:     oklch(0.41 0.085 252);
+    --qa-r-when:     oklch(0.76 0.12 252);
+    --qa-w-repeat:   oklch(0.41 0.10 305);
+    --qa-r-repeat:   oklch(0.76 0.13 305);
+    --qa-w-project:  oklch(0.40 0.065 185);
+    --qa-r-project:  oklch(0.76 0.10 185);
+    --qa-w-priority: oklch(0.43 0.08 80);
+    --qa-r-priority: oklch(0.82 0.13 85);
+    --qa-w-estimate: oklch(0.41 0.095 355);
+    --qa-r-estimate: oklch(0.76 0.13 355);
+    --qa-w-label:    var(--n-700);
+    --qa-r-label:    var(--n-400);
+    --qa-miss:       var(--n-400);
+  }
+}
+
+:root.dark {
+  --qa-w-when:     oklch(0.41 0.085 252);
+  --qa-r-when:     oklch(0.76 0.12 252);
+  --qa-w-repeat:   oklch(0.41 0.10 305);
+  --qa-r-repeat:   oklch(0.76 0.13 305);
+  --qa-w-project:  oklch(0.40 0.065 185);
+  --qa-r-project:  oklch(0.76 0.10 185);
+  --qa-w-priority: oklch(0.43 0.08 80);
+  --qa-r-priority: oklch(0.82 0.13 85);
+  --qa-w-estimate: oklch(0.41 0.095 355);
+  --qa-r-estimate: oklch(0.76 0.13 355);
+  --qa-w-label:    var(--n-700);
+  --qa-r-label:    var(--n-400);
+  --qa-miss:       var(--n-400);
+}
+
+/* A group class sets the pair; .qa-mark paints it. Paint only — a mark must
+   never carry padding, margin, border or a weight change, because the backdrop
+   has to lay text out exactly as the textarea above it does. */
+.qa-when {
+  --qa-w: var(--qa-w-when);
+  --qa-r: var(--qa-r-when);
+}
+.qa-repeat {
+  --qa-w: var(--qa-w-repeat);
+  --qa-r: var(--qa-r-repeat);
+}
+.qa-project {
+  --qa-w: var(--qa-w-project);
+  --qa-r: var(--qa-r-project);
+}
+.qa-priority {
+  --qa-w: var(--qa-w-priority);
+  --qa-r: var(--qa-r-priority);
+}
+.qa-estimate {
+  --qa-w: var(--qa-w-estimate);
+  --qa-r: var(--qa-r-estimate);
+}
+.qa-label {
+  --qa-w: var(--qa-w-label);
+  --qa-r: var(--qa-r-label);
+}
+.qa-mark {
+  border-radius: 3px;
+  background: var(--qa-w);
+  box-shadow: inset 0 -2px 0 var(--qa-r);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.qa-miss {
+  background-image: linear-gradient(90deg, var(--qa-miss) 55%, transparent 55%);
+  background-size: 6px 1.5px;
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* ── Density, shape and breakpoints ─────────────────────────────────────── */
 :root {
   --h-row-task:    44px;
