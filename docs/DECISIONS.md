@@ -992,6 +992,24 @@ a month for Pro, or an external scheduler — a GitHub Actions `schedule:` on
 this public repo is free — calling the same route with the same bearer token.
 The route does not care who calls it.
 
+**Hourly in GitHub Actions, daily in Vercel, both on purpose (2026-09-27).**
+Hourly is what the sync is worth and Hobby will not run it, so
+`.github/workflows/sync-calendar.yml` calls the same route with the same
+bearer token — Actions minutes are unmetered on a public repo. The Vercel cron
+was not replaced by it. It is the floor: GitHub disables scheduled workflows on
+a public repo after 60 days without commits, and a single scheduler that can
+switch itself off silently is worse than two that cannot both fail the same
+way. The schedule is `17 * * * *` rather than `0 * * * *` because GitHub's
+scheduler is congested on the hour.
+
+The workflow is **stricter than the route**. The route answers 200 on a failed
+pull so an expired Google token does not read as a broken deployment to a
+platform that reports nothing; the workflow inspects the body and fails the run
+on an `error` key, because a red Actions run is the only thing that will ever
+tell anyone the sync stopped working. `CRON_SECRET` therefore has to exist in
+two places — Vercel's environment variables and the repository's Actions
+secrets. They are separate stores and neither reads the other.
+
 **The cron route authenticates itself**, because a scheduled request carries no
 session and the edge gate would bounce it to `/login`. `proxy.ts` exempts
 `/api/cron/` by exact prefix and every route under it must do its own check;
@@ -1178,6 +1196,26 @@ it hands Google `GOOGLE_REDIRECT_URI` directly, that URI is registered in the
 console, and Google rejects private addresses — so *granting* calendar write
 only works from localhost. Tokens already granted keep working everywhere,
 which is why this does not block using the app from a phone.
+
+### The localhost fallback throws in production (2026-09-27)
+
+`originOrConfigured` ended in `?? 'http://localhost:3000'`. That is the right
+answer in development and the worst available one in production: a deployed
+sign-in with no derivable host would have redirected to whatever machine the
+person was holding, silently — the same failure as the entry above, reachable
+again from the other end.
+
+It now throws in production and keeps the localhost fallback in development.
+Both callers run on real HTTP requests, where `Host` is mandatory, so the throw
+should be unreachable; if it ever fires, a 500 that names the cause is worth
+more than a redirect nobody can follow. `NEXT_PUBLIC_SITE_URL` survives as an
+optional override for a proxy that strips the header, and is unset in
+production because nothing needs it.
+
+Considered and rejected: setting `NEXT_PUBLIC_SITE_URL` in Vercel to make the
+fallback moot. That is one more piece of configuration that has to be right
+forever, to guard a branch that cannot be reached — and if it were ever wrong
+it would fail exactly as quietly as the localhost default did.
 
 ## Navigation
 

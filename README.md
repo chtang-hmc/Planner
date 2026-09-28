@@ -192,13 +192,25 @@ Deployed on Vercel. Beyond the variables above, production needs:
 - **`CRON_SECRET`** — the calendar cron route compares `Authorization` against
   it and **refuses every request when it is unset**, rather than defaulting
   open. Vercel sends this header to cron routes automatically.
-- **`NEXT_PUBLIC_SITE_URL`** — a fallback for the OAuth redirect origin, used
-  only when the request carries no `Host` header to derive it from.
+- **`NEXT_PUBLIC_SITE_URL`** — optional. An override for the OAuth redirect
+  origin, for a proxy that strips the `Host` header. Nothing needs it today,
+  and with it unset a deployed request that somehow arrives without a host
+  throws rather than quietly redirecting to `localhost`.
 
-`vercel.json` runs the calendar sync **daily**. Hourly was the intent, but the
-Hobby plan does not downgrade a sub-daily schedule — it refuses to create the
-deployment. Hourly needs Pro, or any external scheduler calling the same route
-with the same bearer token.
+The calendar syncs on **two** schedules, on purpose:
+
+| | where | how often |
+|---|---|---|
+| Hourly | `.github/workflows/sync-calendar.yml` | `:17` past each hour |
+| Daily | `vercel.json` | 13:00 UTC |
+
+Hourly lives in Actions because this account is on Hobby, where a Vercel cron
+runs at most once a day, and Actions minutes are unmetered on a public repo.
+The Vercel cron stays as the floor: GitHub disables scheduled workflows on a
+public repo after 60 days without commits, and the daily pull survives that.
+Both send the same bearer token; the route does not care which called it. The
+workflow needs `CRON_SECRET` as a **repository secret** as well as a Vercel
+environment variable — they are two different stores.
 
 Access control is enforced twice: edge middleware in `src/proxy.ts` gates every
 route, and `src/app/auth/callback/route.ts` rejects a non-`ALLOWED_EMAIL` user
