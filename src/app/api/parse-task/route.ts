@@ -2,83 +2,67 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { fetchTimezone, todayStr } from '@/lib/day'
+import { PARSE_SCHEMA, PARSE_SYSTEM, buildParsePrompt, normalizeParse } from '@/lib/parse-task'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-const SYSTEM_PROMPT = `You are a task parser for a personal productivity app. Parse natural-language task input into structured fields.
-
-Rules:
-- "today" = today's date, "tomorrow" = tomorrow's date, "next Monday" etc = compute correctly
-- Durations like "30 mins", "1 hour", "2h" → estimated_minutes as integer
-- Energy signals: "deep work", "focus", "hard", "think" → high; "quick", "easy", "small" → low; otherwise medium
-- project_hint: extract a project name if mentioned (e.g. "for CS class" → "CS", "job app for Google" → "job apps"), otherwise null
-- is_calendar_event: true if it sounds like a meeting/appointment/event with a specific time, not a task
-- Return ONLY valid JSON, no prose.`
 
 interface ParseRequest {
   text: string
   projects: { id: string; name: string }[]
 }
 
+/**
+ * ✦ Parse. The prompt, the schema and the checks all live in `lib/parse-task`,
+ * derived from one field table; this route only makes the call.
+ *
+ * The answer is constrained by `output_config.format`, so it is JSON of the
+ * right shape or the call fails — there is no code-fence stripping or hopeful
+ * `JSON.parse` of free text any more. What comes back is only a proposal: the
+ * modal merges it with `fillBlanks`, and the grammar wins wherever it matched.
+ */
 export async function POST(req: NextRequest) {
-  const { text, projects } = (await req.json()) as ParseRequest
+  const { text, projects = [] } = (await req.json()) as ParseRequest
 
   if (!text?.trim()) {
     return NextResponse.json({ error: 'No text provided' }, { status: 400 })
   }
 
   /**
-   * The user's today, not UTC's.
-   *
-   * This line is the whole basis for how the model resolves "tomorrow", and it
-   * read the UTC date — so from 5pm in Los Angeles it told Claude the date was
-   * already tomorrow, and every relative date came back a day late. Same bug
-   * the deterministic parser exists to avoid; it had simply never been fixed on
-   * this side.
+   * The user's today, not UTC's. From 5pm in Los Angeles the UTC date is
+   * already tomorrow, and every relative date would come back a day late.
    */
   const today = todayStr(await fetchTimezone(createServiceClient()))
-  const projectList = projects.map(p => p.name).join(', ') || 'none'
-
-  const userPrompt = `Today is ${today}.
-Available projects: ${projectList}
-
-Parse this task: "${text}"
-
-Respond with JSON matching this exact shape:
-{
-  "title": "clean concise task title",
-  "due_date": "YYYY-MM-DD or null",
-  "estimated_minutes": number_or_null,
-  "energy_required": "low" | "medium" | "high",
-  "project_hint": "project name fragment or null",
-  "is_calendar_event": boolean
-}`
 
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 256,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
+      max_tokens: 1024,
+      system: PARSE_SYSTEM,
+      messages: [{ role: 'user', content: buildParsePrompt(text, today, projects) }],
+      output_config: { format: { type: 'json_schema', schema: PARSE_SCHEMA } },
     })
 
-    const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : ''
-
-    // Strip markdown code fences if present
-    const json = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-    const parsed = JSON.parse(json)
-
-    // Fuzzy-match project_hint to an actual project id
-    let project_id: string | null = null
-    if (parsed.project_hint && projects.length > 0) {
-      const hint = parsed.project_hint.toLowerCase()
-      const match = projects.find(p => p.name.toLowerCase().includes(hint) || hint.includes(p.name.toLowerCase()))
-      if (match) project_id = match.id
+    // A refusal or a truncated answer need not match the schema.
+    if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') {
+      console.error('parse-task: stopped early:', response.stop_reason)
+      return NextResponse.json({ error: 'Parse failed' }, { status: 502 })
+    }
+    const block = response.content.find(b => b.type === 'text')
+    if (!block || block.type !== 'text') {
+      return NextResponse.json({ error: 'Parse failed' }, { status: 502 })
     }
 
-    return NextResponse.json({ ...parsed, project_id })
+    return NextResponse.json(normalizeParse(JSON.parse(block.text), { today, projects }))
   } catch (err) {
-    console.error('parse-task error:', err)
+    if (err instanceof Anthropic.RateLimitError) {
+      console.error('parse-task: rate limited')
+      return NextResponse.json({ error: 'Busy, try again' }, { status: 429 })
+    }
+    if (err instanceof Anthropic.APIError) {
+      console.error(`parse-task: API error ${err.status}:`, err.message)
+    } else {
+      console.error('parse-task error:', err)
+    }
     return NextResponse.json({ error: 'Parse failed' }, { status: 500 })
   }
 }

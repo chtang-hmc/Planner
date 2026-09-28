@@ -11,17 +11,8 @@ import RecurrencePicker from '@/components/RecurrencePicker'
 import QuickAddInput from '@/components/QuickAddInput'
 import { rruleToLabel } from '@/lib/rrule-utils'
 import { parseQuickAdd } from '@/lib/quick-add'
+import { fillBlanks, type ParsedTask } from '@/lib/parse-task'
 import { DEFAULT_TZ, isValidTimezone } from '@/lib/day'
-
-interface ParsedResult {
-  title: string
-  due_date: string | null
-  estimated_minutes: number | null
-  energy_required: EnergyLevel
-  project_hint: string | null
-  project_id: string | null
-  is_calendar_event: boolean
-}
 
 const PRIORITY_LABELS = ['', 'Low', 'Medium', 'High', 'Critical'] as const
 
@@ -74,7 +65,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
   }
 
   const [text, setText]             = useState('')
-  const [parsed, setParsed]         = useState<ParsedResult | null>(null)
+  const [parsed, setParsed]         = useState<ParsedTask | null>(null)
   const [parsing, setParsing]       = useState(false)
   const [parseError, setParseError] = useState<string | null>(null)
 
@@ -174,18 +165,29 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
         body: JSON.stringify({ text, projects: projects.map(p => ({ id: p.id, name: p.name })) }),
       })
       if (!res.ok) throw new Error('Parse failed')
-      const data: ParsedResult = await res.json()
+      const data: ParsedTask = await res.json()
+      // The grammar first, and it wins wherever it matched — it is what the
+      // field just highlighted. Claude only fills what it left empty (#17).
+      // The title is never Claude's: it is what was typed, minus what was read.
+      applyQuickAdd()
+      const fill = fillBlanks(quick, data)
+      setEnergy(fill.energy)
+      if (fill.dueDay) setDueDate(fill.dueDay)
+      if (fill.timeMinutes !== undefined) {
+        const h = Math.floor(fill.timeMinutes / 60), m = fill.timeMinutes % 60
+        setDueTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+      }
+      if (fill.rrule) setRrule(fill.rrule)
+      if (fill.rruleFromCompletion) setFromCompletion(true)
+      if (fill.projectId) setProject(fill.projectId)
+      if (fill.priority) setPriority(fill.priority)
+      if (fill.estimateMinutes) setEstimate(String(fill.estimateMinutes))
       setParsed(data)
-      // Pre-fill editable fields
-      setTitle(data.title)
-      if (data.project_id) setProject(data.project_id)
-      setEnergy(data.energy_required ?? 'medium')
-      if (data.estimated_minutes) setEstimate(String(data.estimated_minutes))
-      if (data.due_date) setDueDate(data.due_date)
     } catch {
-      setParseError('Could not parse — please fill fields manually')
+      // What the grammar read still stands; only the guesses are missing.
+      applyQuickAdd()
+      setParseError('Couldn’t reach Claude. What the field understood is applied; set the rest below.')
       setParsed(null)
-      setTitle(text.trim())
     } finally {
       setParsing(false)
     }
@@ -426,7 +428,7 @@ export default function AddTaskModal({ projects, initialProjectId, initialDueDat
                     ? '✓ Parsed — review below'
                     : quick.tokens.length > 0
                       ? 'Enter to apply'
-                      : 'Enter to apply · Parse for energy, project and estimate'}
+                      : 'Enter to apply · Parse to guess energy and anything left blank'}
                 </p>
                 <button
                   onClick={handleParse}

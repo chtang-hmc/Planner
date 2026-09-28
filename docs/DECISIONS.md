@@ -803,11 +803,22 @@ Typing the date into the task — "Email Rosner tomorrow at 5pm" — the way Tod
 
 ### Deterministic grammar beside the LLM parser, not instead of it
 
-The field already had a parser: `/api/parse-task` sends the text to Claude and fills in energy, project and an estimate. That stays, because a fixed grammar will never infer "deep work" from a phrase. But it is a network round trip behind a button, and the thing that makes quick-add feel like quick-add is watching the date light up *as you type*. So the two split by what each is good for:
+The field already had a parser: `/api/parse-task` sends the text to Claude, which guesses energy and anything else the text implies. That stays, because a fixed grammar will never infer "deep work" from a phrase. But it is a network round trip behind a button, and the thing that makes quick-add feel like quick-add is watching the date light up *as you type*. So the two split by what each is good for:
 
 - the grammar runs on every keystroke — pure, synchronous, free, and always the same answer twice
 - **Enter** applies what the grammar found, with no network at all
 - **✦ Parse** still calls the model for the fields the grammar has no opinion about
+
+### ✦ Parse fills blanks, and never overwrites (#17)
+
+The prompt was written on 13 September and not touched again while the grammar gained recurrence, `#project`, `p1`–`p4` and `for 45m`. So the button returned six fields, the modal copied them over its own, and anything the field had just highlighted that the model hadn't been asked for — a repeat, a time, a priority — was erased. Two changes, both in `src/lib/parse-task.ts`:
+
+- **One field table drives everything.** `FIELDS` names each field once. The JSON schema sent as `output_config.format`, the field list in the prompt and the validator are all derived from it, so a field is asked for, constrained and read, or it doesn't exist. Structured outputs (Haiku 4.5 supports them) replace the old strip-the-code-fences-and-hope `JSON.parse`. The validator still checks what a schema can't express: a real calendar day, a clock time, a rule that actually fires.
+- **The grammar wins wherever it matched.** `fillBlanks` hands Claude only the fields the grammar left null. The title is never Claude's, because the title is what was typed minus what was understood, and that is the one promise the field makes. The one exception is counting a repeat from completion: the grammar can say yes (`every!`) but has no way to say no, so its `false` means "not stated" and Claude may set it. That case was found in a live call, not predicted.
+
+Priority is asked for as a word (`critical`…`low`), never a digit. The app stores 4 as Critical while a typed `p1` means Critical, and a model handed numbers has to guess which scale it is on. A live call on 2026-09-27 showed why the grammar has to win: given `call mom every monday at 5pm p1`, Claude answered priority *High*. The merge kept the grammar's Critical.
+
+Considered and not done: sending Claude what the grammar found and asking it to agree. That costs tokens to reach the same answer less reliably. The grammar's reading is deterministic, so there is nothing to negotiate.
 
 ### Hand-rolled rather than `chrono-node`
 
@@ -1789,7 +1800,7 @@ import { updateTask } from '@/app/actions/tasks'
 
 ### Quick-add parsing (Claude API)
 
-Natural-language task input is parsed server-side via `@anthropic-ai/sdk`. The result (`ParsedQuickAdd`) includes `title`, `due_date`, `estimated_minutes`, `energy_required`, `project_hint`, and `is_calendar_event`. The Claude call happens in a Server Action so the API key never reaches the client.
+The one read that goes through an API route rather than a Server Action: the modal `fetch`es `/api/parse-task`, a Route Handler that calls `@anthropic-ai/sdk` server-side, so the key never reaches the client. It writes nothing. It returns a proposal (`ParsedTask`) that the modal merges; see [✦ Parse fills blanks](#-parse-fills-blanks-and-never-overwrites-17).
 
 ---
 
