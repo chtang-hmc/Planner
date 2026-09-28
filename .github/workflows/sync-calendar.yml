@@ -1,0 +1,66 @@
+# Pull the Google calendar every hour.
+#
+# Vercel's cron does this too, but the account is on Hobby, where a cron runs
+# at most once a day — see docs/DECISIONS.md. Actions minutes are unmetered on
+# a public repository, so the hourly pull lives here and the daily one in
+# `vercel.json` stays as the floor: if this workflow is ever disabled, the
+# calendar still syncs.
+#
+# Two things worth knowing about GitHub's scheduler:
+#   - It is congested on the hour. `:17` is chosen to miss that; a `0 * * * *`
+#     here routinely lands ten or twenty minutes late.
+#   - It disables scheduled workflows on a public repo after 60 days with no
+#     commits. The daily Vercel cron is what covers that.
+name: Sync calendar
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+# A slow sync should not stack up behind itself.
+concurrency:
+  group: sync-calendar
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Pull the calendar
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_ORIGIN: https://planner-nine-snowy.vercel.app
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::CRON_SECRET is not set on this repository."
+            echo "Settings -> Secrets and variables -> Actions -> New repository secret."
+            exit 1
+          fi
+
+          status=$(curl -sS --max-time 120 \
+            -o response.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_ORIGIN/api/cron/sync-calendar")
+
+          echo "HTTP $status"
+          cat response.json; echo
+
+          if [ "$status" != "200" ]; then
+            echo "::error::The sync route answered $status."
+            exit 1
+          fi
+
+          # The route deliberately answers 200 on a failed pull, so that one
+          # expired Google token does not read as a broken deployment to
+          # Vercel. Here it should be loud: a red run is the only notification
+          # anything sends about this.
+          if jq -e 'has("error")' response.json > /dev/null; then
+            echo "::error::Sync failed: $(jq -r '.error' response.json)"
+            exit 1
+          fi
+
+          echo "::notice::Synced $(jq -r '.synced | tostring' response.json)"

@@ -31,9 +31,31 @@ export function originFrom(h: Headers): string | null {
   return `${proto}://${host}`
 }
 
-/** The same, with the configured site as a fallback for requestless contexts. */
+/**
+ * The same, for the two callers that must have an origin: the sign-in action
+ * and the OAuth callback.
+ *
+ * **It throws in production rather than guessing.** It used to end in
+ * `?? 'http://localhost:3000'`, which is the right answer in development and
+ * the worst possible one in production: a deployed sign-in would have sent the
+ * user to their own laptop, silently, which is precisely the bug that made
+ * signing in from a phone impossible (see `originFrom` above). Both callers
+ * run on a real HTTP request, where `Host` is mandatory, so the throw should
+ * be unreachable — and if it ever fires, a 500 naming the cause beats a
+ * redirect nobody can follow.
+ *
+ * `NEXT_PUBLIC_SITE_URL` is an optional override for a proxy that strips the
+ * header. Nothing needs it today.
+ */
 export function originOrConfigured(h: Headers): string {
-  return originFrom(h)
-    ?? process.env.NEXT_PUBLIC_SITE_URL
-    ?? 'http://localhost:3000'
+  const origin = originFrom(h) ?? process.env.NEXT_PUBLIC_SITE_URL
+  if (origin) return origin
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Cannot determine the request origin: no Host or X-Forwarded-Host header, ' +
+      'and NEXT_PUBLIC_SITE_URL is unset.',
+    )
+  }
+  return 'http://localhost:3000'
 }
