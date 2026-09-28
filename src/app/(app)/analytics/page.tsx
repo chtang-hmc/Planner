@@ -29,6 +29,16 @@ import InsightsView from './AnalyticsView'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * The task columns Insights reads. Typed as a `Pick` so that reading a field
+ * not listed here is a compile error rather than a silent `undefined`.
+ */
+type InsightTask = Pick<Task,
+  'id' | 'project_id' | 'parent_id' | 'status' | 'type' |
+  'estimated_minutes' | 'adjusted_minutes' | 'due_date' | 'completed_at' | 'urgency_score'>
+const INSIGHT_COLUMNS =
+  'id, project_id, parent_id, status, type, estimated_minutes, adjusted_minutes, due_date, completed_at, urgency_score'
+
 /** Gaps shorter than this are not usable time and are not counted as free. */
 const MIN_GAP_MINUTES = 15
 
@@ -61,8 +71,10 @@ export default async function InsightsPage() {
     db.from('user_daily_breaks').select('*').order('start_hour').then(r => r, () => ({ data: null })),
     db.from('calendar_events').select('*').lt('start_time', untilISO).gt('end_time', startISO),
     /* Every task at every status: progress and the done column need the
-       finished ones, exactly as the projects table does. */
-    db.from('tasks').select('*'),
+       finished ones, exactly as the projects table does (a standing cost, see
+       TODO.md). But only the columns the findings read (#99) — not every
+       description and scheduling field of every task ever made. */
+    db.from('tasks').select(INSIGHT_COLUMNS),
     db.from('projects').select('*').eq('archived', false).order('name'),
     db.from('estimation_profiles').select('*'),
     db.from('focus_sessions').select('estimate_accurate').not('estimate_accurate', 'is', null),
@@ -85,7 +97,7 @@ export default async function InsightsPage() {
     cooldownMinutes: r.cooldown_minutes,
   }))
 
-  const tasks    = (taskRows ?? []) as Task[]
+  const tasks    = (taskRows ?? []) as InsightTask[]
   const projects = (projectRows ?? []) as Project[]
   const links    = (linkRows ?? []) as { task_id: string; event_id: string; status: string }[]
   const confirmed = links.filter(l => l.status === 'confirmed')

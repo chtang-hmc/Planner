@@ -88,12 +88,14 @@ broken; the page simply knows less than it eventually will, and now says so.
 
 ## Standing costs, accepted deliberately
 
-### `/projects` fetches every task ever, at every status
+### `/projects` and Insights fetch every task ever, at every status
 
 `buildProjectRows` needs the completed tasks — progress is
 `done / (active + done)`, and "stalled" is measured from the last completion —
-so the page reads the whole `tasks` table rather than the open ones. 71 rows on
-2026-09-21, which is nothing; it grows by one per completion and never shrinks.
+so both pages read the whole `tasks` table rather than the open ones. 104 rows
+on 2026-09-28 (71 on 2026-09-21); it grows by one per completion and never
+shrinks. Insights reads only the ten columns it uses (#99): 29 KB instead of
+85 KB for `select('*')`, measured on 2026-09-28. `/projects` still reads `*`.
 
 Accepted because the app is single-user and the alternative is two aggregate
 queries that would have to keep agreeing with `buildProjectRows` in
