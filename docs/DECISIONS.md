@@ -66,6 +66,19 @@
 
 Server Actions use `createServiceClient()` because they run in trusted server context and don't carry a user session cookie by default.
 
+### The settings row is read once per request (#96)
+
+`fetchUserConfig()` in `src/lib/user-config.ts` reads the one `user_scheduling_config` row and is wrapped in React's `cache()`. The layout and the page render in parallel and both call it, so they share one query. It takes no arguments deliberately: `cache` keys on its arguments, and a fresh Supabase client every call would miss every time.
+
+Before this, `fetchTimezone` and `fetchWeekStartDay` each read the same row, and pages called them one after another. `/tasks` read it three times in sequence, and Home's landing path was four sequential round trips. Pages now read the row first and put everything else in one `Promise.all`: two round trips for Home, `/tasks` and a project page (checked 2026-09-28 by reading each loader).
+
+Two things made the second trip possible:
+
+- **Completion days are fetched unfiltered.** `fetchCompletionDays` reads every habit and repeating completion (41 rows on 2026-09-28) instead of waiting for the task list's titles, so it goes in the same batch. `summariesFor` matches titles in memory.
+- **`fetchTodaysHabits` joins Home's batch.** It only needed the zone and the week start, which now arrive with the settings row.
+
+`fetchTimezone(db)` and `fetchWeekStartDay(db)` stay for server actions and route handlers, which read the row once each anyway.
+
 ### Row Level Security
 
 RLS is enabled on every table. The current policy is trivially permissive for authenticated users (`using (true)`) because this is a single-user app — data isolation is enforced at the **application layer** instead:

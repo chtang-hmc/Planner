@@ -1,8 +1,8 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project, CalendarEvent } from '@/types'
 import TaskList from './TaskList'
-import { fetchWeekStartDay } from '@/lib/week'
-import { addDays, fetchTimezone, todayStr as todayIn, startOfLocalDay } from '@/lib/day'
+import { addDays, todayStr as todayIn, startOfLocalDay } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import { normalizeRelevance } from '@/lib/relevance'
 import {
   freeGaps, localMidnight, workWindowFor,
@@ -10,7 +10,7 @@ import {
 } from '@/lib/scheduler'
 import { capacityFromGaps } from '@/lib/capacity'
 import { MIN_GAP_MINUTES } from '@/lib/home'
-import { fetchHabitSummaries } from '@/lib/habits'
+import { fetchCompletionDays, summariesFor } from '@/lib/habits'
 
 /** How far the date groups reach. Two weeks is what Upcoming will want too. */
 const HORIZON_DAYS = 15
@@ -19,7 +19,10 @@ export const dynamic = 'force-dynamic'
 
 export default async function TasksPage() {
   const db = createServiceClient()
-  const tz = await fetchTimezone(db)
+  // One read of the settings row, shared with the layout (#96): the timezone,
+  // the week start and the relevance filter all come from it.
+  const config = await fetchUserConfig()
+  const tz = config.timezone
   const today = todayIn(tz)
   const startISO   = startOfLocalDay(today, tz).toISOString()
   const horizonISO = startOfLocalDay(addDays(today, HORIZON_DAYS), tz).toISOString()
@@ -31,6 +34,7 @@ export default async function TasksPage() {
     { data: integration },
     { data: whRows },
     { data: breakRows },
+    completionDays,
   ] = await Promise.all([
     // Habits live on /habits and are excluded here so they don't clutter the
     // task list with untimed, non-urgent recurring work.
@@ -57,6 +61,7 @@ export default async function TasksPage() {
       .maybeSingle(),
     db.from('user_working_hours').select('*'),
     db.from('user_daily_breaks').select('*').then(r => r, () => ({ data: null })),
+    fetchCompletionDays(db, tz),
   ])
 
   if (te) console.error('Tasks fetch error:', te.message)
@@ -64,13 +69,14 @@ export default async function TasksPage() {
 
   const calEvents = (events ?? []) as CalendarEvent[]
 
-  const weekStartDay = await fetchWeekStartDay(db)
+  const weekStartDay = config.weekStartDay
 
   // Streaks for the repeating tasks on screen, derived from completions by
   // title — not from `habit_streaks`, which could only ever say 1 (#38).
-  const summaries = await fetchHabitSummaries(db, {
-    tz, today, weekStartDay, rows: (tasks ?? []) as Task[],
-  })
+  const summaries = summariesFor(
+    ((tasks ?? []) as Task[]).filter(t => t.type === 'habit' || t.type === 'recurring'),
+    completionDays, today, weekStartDay,
+  )
 
 
   /**
@@ -123,12 +129,10 @@ export default async function TasksPage() {
     'https://www.googleapis.com/auth/calendar.events'
   )
 
-  // select('*') so a pre-0017 database returns the row without the columns;
-  // normalizeRelevance then falls back to the constants the filter used before
-  // they were settings.
-  const { data: relevanceRow } = await db
-    .from('user_scheduling_config').select('*').limit(1).maybeSingle()
-  const relevance = normalizeRelevance(relevanceRow)
+  // The raw row, so a pre-0017 database without the columns makes
+  // normalizeRelevance fall back to the constants the filter used before they
+  // were settings.
+  const relevance = normalizeRelevance(config.row)
 
   return (
     /* The calendar rail is gone. Between the group headers' capacity meters and

@@ -14,8 +14,8 @@
  */
 
 import { createServiceClient } from '@/lib/supabase/server'
-import { addDays, fetchTimezone, todayStr as todayIn, localDayRange, localDayStr, startOfLocalDay } from '@/lib/day'
-import { fetchWeekStartDay } from '@/lib/week'
+import { addDays, todayStr as todayIn, localDayRange, localDayStr, startOfLocalDay } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import { fetchTodaysHabits } from '@/lib/habits'
 import {
   freeGaps, localMidnight, workWindowFor,
@@ -24,7 +24,7 @@ import {
 } from '@/lib/scheduler'
 import {
   buildHome, dayReason, describeAge, formatClock, freeTimeBasis, isCandidate,
-  resolveAgainstParent, MIN_GAP_MINUTES, DEFAULT_BUFFER_MINUTES, type HomeEvent, type HomeTask,
+  resolveAgainstParent, MIN_GAP_MINUTES, type HomeEvent, type HomeTask,
 } from '@/lib/home'
 import { capacityFromGaps, dueMinutesFor } from '@/lib/capacity'
 import { suggestTaskEventLinks, topSuggestion } from '@/lib/task-events'
@@ -39,7 +39,13 @@ export const dynamic = 'force-dynamic'
 
 export default async function HomePage() {
   const db = createServiceClient()
-  const tz = await fetchTimezone(db)
+  // The settings row, read once and shared with the layout (#96). It holds
+  // the zone, the week start and the buffer, which is everything the batch
+  // below needs up front — so Home is two round trips, not four.
+  const config = await fetchUserConfig()
+  const configRow = config.row
+  const tz = config.timezone
+  const weekStartDay = config.weekStartDay
   const today = todayIn(tz)
   const { startISO, endISO } = localDayRange(today, tz)
 
@@ -64,17 +70,16 @@ export default async function HomePage() {
   const [
     { data: whRows },
     { data: esRows },
-    { data: configRow },
     { data: breakRows },
     { data: eventRows },
     { data: taskRows },
     { data: projectRows },
     { data: integration },
     { data: linkRows },
+    { habits, doneTodayIds, summaries },
   ] = await Promise.all([
     db.from('user_working_hours').select('*'),
     db.from('user_energy_schedule').select('*'),
-    db.from('user_scheduling_config').select('*').limit(1).maybeSingle(),
     // Missing table (pre-0008) resolves to null rather than throwing, exactly
     // as it does for the scheduler — the day is then simply drawn without meals.
     db.from('user_daily_breaks').select('*').order('start_hour').then(r => r, () => ({ data: null })),
@@ -96,6 +101,7 @@ export default async function HomePage() {
     // Missing table (pre-0019) resolves to null.
     db.from('task_event_links').select('task_id, event_id, status')
       .then(r => r, () => ({ data: null })),
+    fetchTodaysHabits(db, { tz, today, weekStartDay }),
   ])
 
   const workingHours: WorkingHours[] = (whRows ?? []).map(r => ({
@@ -118,7 +124,7 @@ export default async function HomePage() {
     cooldownMinutes: r.cooldown_minutes,
   }))
 
-  const bufferMinutes = configRow?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES
+  const bufferMinutes = config.bufferMinutes
 
   const rows = (taskRows ?? []) as (Task & { project: Project | null; parent?: { id: string; title: string } | null })[]
 
@@ -398,9 +404,8 @@ export default async function HomePage() {
   // that — Home read `habit_streaks.completions_this_week` directly at first,
   // which is keyed by an id that a completion replaces, and showed Piano at 0/7
   // in a week it had been played six times. Its streaks come from there too,
-  // derived by title rather than read from the table (#38).
-  const weekStartDay = await fetchWeekStartDay(db)
-  const { habits, doneTodayIds, summaries } = await fetchTodaysHabits(db, { tz, today, weekStartDay })
+  // derived by title rather than read from the table (#38). Fetched in the
+  // main batch above; it only needs the zone and the week start.
 
   const gcalWriteEnabled = ((integration?.scopes ?? []) as string[]).includes(
     'https://www.googleapis.com/auth/calendar.events'

@@ -1,6 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Task, Project } from '@/types'
-import { fetchTimezone, todayStr } from '@/lib/day'
+import { todayStr } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import ProjectsView from './ProjectsView'
 
 export const dynamic = 'force-dynamic'
@@ -9,7 +10,8 @@ export default async function ProjectsPage() {
   const db = createServiceClient()
 
   const [tz, { data: projects }, { data: tasks }] = await Promise.all([
-    fetchTimezone(db),
+    // Shared with the layout's read of the settings row (#96).
+    fetchUserConfig().then(c => c.timezone),
     db.from('projects').select('*').order('name'),
     /**
      * Every task at every status, not just the open ones.

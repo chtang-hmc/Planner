@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Project } from '@/types'
-import { fetchWeekStartDay } from '@/lib/week'
-import { fetchTimezone, todayStr } from '@/lib/day'
+import { todayStr } from '@/lib/day'
+import { fetchUserConfig } from '@/lib/user-config'
 import { fetchTodaysHabits } from '@/lib/habits'
 import HabitsView from './HabitsView'
 
@@ -13,9 +13,8 @@ export default async function HabitsPage() {
   // The user's day. Habit days are local days (src/lib/day.ts): an evening
   // session belongs to the evening you had, not to whatever date it already is
   // in UTC.
-  const tz    = await fetchTimezone(db)
+  const { timezone: tz, weekStartDay } = await fetchUserConfig()
   const today = todayStr(tz)
-  const weekStartDay = await fetchWeekStartDay(db)
 
   const [{ habits, doneTodayIds, summaries, completionMap }, { data: projects }, { data: integration }] =
     await Promise.all([
