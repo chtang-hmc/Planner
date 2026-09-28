@@ -355,15 +355,6 @@ export function dayReason(basis: FreeTimeBasis, gaps: DayGaps): DayReason {
   return basis.observed ? gaps.reason : 'unknown'
 }
 
-/**
- * True only when the day had time and something else took all of it.
- *
- * The one case where "no working time left today" is a true sentence.
- */
-export function isConsumed(reason: DayReason): boolean {
-  return reason === 'consumed'
-}
-
 export type FreeTimeBasis =
   | { observed: true }
   | { observed: false; reason: 'no-calendar' | 'never-synced' }

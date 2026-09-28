@@ -79,7 +79,7 @@ sync.
   - `createServiceClient()` — service-role, for all server action mutations; never import in client components
 - **`computeUrgency()`** in `src/types/index.ts` is the single source of truth for urgency logic — used by the frontend, server actions, and must stay in sync with the PL/pgSQL function in migration 0001.
 - **All-day calendar event dates:** always append `T00:00:00Z` (UTC midnight), never bare `T00:00:00` (local time).
-- **No HTTP self-calls in server actions** — call the shared lib function directly (e.g. `syncCalendarEvents()` not `fetch('/api/calendar/sync')`).
+- **No HTTP self-calls in server actions** — call the shared lib function directly (e.g. `syncCalendarEvents()` not `fetch('/api/cron/sync-calendar')`).
 - TypeScript strict mode is on. `npx tsc --noEmit` must pass before committing.
 - **`npm test` must pass before committing.** Vitest, covering the pure logic: the scheduler, urgency, and the date helpers in `src/lib/day.ts` and `src/lib/week.ts`. Nothing there touches the database, the network or the DOM.
 - **Changing the urgency formula means changing two things.** `computeUrgency()` in `src/types/index.ts` and `recompute_urgency_scores()` in a migration have to agree, or the nightly job overwrites every correct score. `src/types/urgency.test.ts` pins the shared behaviour.

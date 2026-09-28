@@ -34,8 +34,6 @@ export interface Capacity {
   freeAfterCutoff:   number
 }
 
-export const NO_CAPACITY: Capacity = { dueTotal: 0, freeBeforeCutoff: 0, freeAfterCutoff: 0 }
-
 /** Total free time, however late it is. */
 export function freeTotal(c: Capacity): number {
   return c.freeBeforeCutoff + c.freeAfterCutoff
@@ -76,11 +74,6 @@ export interface CapacitySegments {
   fitsLate: number
   /** Does not fit at all. Solid. */
   overflow: number
-}
-
-/** What the three segments leave: slack, drawn as bare track. 0 when over. */
-export function slackWidth(seg: CapacitySegments): number {
-  return Math.max(0, 1 - seg.fits - seg.fitsLate - seg.overflow)
 }
 
 export function capacitySegments(c: Capacity): CapacitySegments | null {

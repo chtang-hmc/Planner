@@ -270,7 +270,7 @@ Tokens are stored in `user_integrations` (server-side only). The service-role cl
 
 ### Sync (read)
 
-`syncCalendarEvents()` lives in `src/lib/google-calendar.ts` (not in the API route). This means both the Route Handler (`POST /api/calendar/sync`) and the Server Action (`triggerCalendarSync`) can call it directly, avoiding HTTP self-calls that fail in serverless environments when `NEXT_PUBLIC_SITE_URL` is unset.
+`syncCalendarEvents()` lives in `src/lib/google-calendar.ts` (not in the API route). This means every entry point — the Sync button's Server Action (`triggerCalendarSync`), the scheduled `/api/cron/sync-calendar` and the OAuth callbacks — calls it directly, avoiding HTTP self-calls that fail in serverless environments when `NEXT_PUBLIC_SITE_URL` is unset.
 
 All-day event dates from the Google Calendar API are `YYYY-MM-DD` strings (no time). We append `T00:00:00Z` (UTC midnight) — **not** `T00:00:00` (local midnight). The distinction matters on any server not in UTC.
 
@@ -1014,7 +1014,7 @@ Subscribing also picks up the `storage` event, so two windows of the app stay in
 
 `set-state-in-effect` and `purity` were warnings while ten instances were outstanding, which meant they blocked nothing and were read by nobody. Every instance is now fixed or disabled inline with a reason at the site, so the rules can catch the next one.
 
-What stays disabled is the handful the rules genuinely cannot distinguish: resetting state when a prop changes (`FloatingTimer` clearing its reflection panel when the timer goes idle, `SearchModal` clearing the last query on open — where the reset belongs with a DOM focus call that has to be in an effect anyway), and `Date.now()` in an async Server Component, which renders once per request.
+What stays disabled is the handful the rules genuinely cannot distinguish: resetting state when a prop changes (`FloatingTimer` clearing its reflection panel when the timer goes idle), and `Date.now()` in an async Server Component, which renders once per request.
 
 ### Unused-variable warnings, narrowed to discards
 

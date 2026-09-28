@@ -56,16 +56,6 @@ export interface Task {
   subtasks?: Task[]
 }
 
-export interface FocusSession {
-  id: string
-  task_id: string
-  started_at: string
-  ended_at: string | null
-  duration_minutes: number | null
-  estimate_accurate: boolean | null  // post-task reflection
-  blocker_note: string | null
-}
-
 export interface EstimationProfile {
   id: string
   project_id: string
@@ -73,22 +63,6 @@ export interface EstimationProfile {
   bias_ratio: number      // actual ÷ estimated  (1.0 = accurate, 1.4 = 40% under)
   updated_at: string
 }
-
-export interface EnergyLog {
-  id: string
-  logged_at: string
-  level: 1 | 2 | 3 | 4 | 5
-  task_id: string | null
-}
-
-export interface EnergyPattern {
-  hour_of_day: number    // 0–23
-  day_of_week: number    // 0–6 (0 = Sunday)
-  avg_level: number
-  sample_count: number
-  computed_at: string
-}
-
 
 export interface CalendarEvent {
   id: string
@@ -98,15 +72,6 @@ export interface CalendarEvent {
   end_time: string
   all_day: boolean
   source: 'google_calendar' | 'gmail_parsed'
-}
-
-export interface WeeklyReview {
-  id: string
-  week_start: string     // Monday date
-  completed_at: string
-  completed_count: number
-  postponed_count: number
-  notes: string | null
 }
 
 // ── Urgency computation ─────────────────────────────────────────────────────
@@ -218,11 +183,3 @@ export const INBOX_PROJECT: Project = {
 
 // ── Quick-add parsed result (from Claude API) ───────────────────────────────
 
-export interface ParsedQuickAdd {
-  title: string
-  due_date: string | null         // ISO date
-  estimated_minutes: number | null
-  energy_required: EnergyLevel | null
-  project_hint: string | null     // project name fragment, fuzzy-matched
-  is_calendar_event: boolean      // "dentist appt 3pm Thursday" → true
-}

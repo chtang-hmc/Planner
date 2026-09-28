@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freeGaps, localMidnight, workWindowFor, type WorkingHours, type BreakWindow } from '@/lib/scheduler'
 import {
-  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge, freeTimeBasis, dayReason, isConsumed,
+  buildHome, rankForGap, rightNowFrom, rightNowSentence, resolveAgainstParent, edgeBuffer, collapseChains, formatClock, describeAge, freeTimeBasis, dayReason,
   type HomeTask, type HomeEvent,
 } from '@/lib/home'
 
@@ -616,12 +616,6 @@ describe('absence of data and data showing absence are different facts', () => {
     const seen = freeGaps({ dayStr: DAY, tz: TZ, workingHours: hours(true), busy: [] })
     expect(dayReason({ observed: false, reason: 'no-calendar' }, seen)).toBe('unknown')
     expect(dayReason({ observed: true }, seen)).toBe('available')
-  })
-
-  it('leaves exactly one cause that has been spent', () => {
-    expect(isConsumed('consumed')).toBe(true)
-    expect(isConsumed('dayOff')).toBe(false)
-    expect(isConsumed('unknown')).toBe(false)
   })
 })
 

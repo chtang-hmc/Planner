@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { bandKind, bandCopy, gapShape, type BandInput } from '@/lib/band'
-import { NO_CAPACITY, type Capacity } from '@/lib/capacity'
+import type { Capacity } from '@/lib/capacity'
 import type { Interval } from '@/lib/scheduler'
+
+const NO_CAPACITY: Capacity = { dueTotal: 0, freeBeforeCutoff: 0, freeAfterCutoff: 0 }
 
 const cap = (o: Partial<Capacity>): Capacity => ({ ...NO_CAPACITY, ...o })
 const mins = (m: number, from = 0): Interval => [from * 60_000, (from + m) * 60_000]
