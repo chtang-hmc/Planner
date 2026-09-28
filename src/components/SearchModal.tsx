@@ -230,7 +230,7 @@ export default function SearchModal({ allProjects }: Props) {
         <TaskDetail
           task={{ ...selected, project: selected.project ?? INBOX_PROJECT }}
           projects={allProjects}
-          streak={null}
+          summary={null}
           gcalWriteEnabled={false}
           onClose={() => setSelected(null)}
         />

@@ -3,7 +3,8 @@
 import { useState, useTransition, useEffect, useRef } from 'react'
 import { EnergyIcon, CalendarIcon } from '@/components/icons'
 import { Flame } from 'lucide-react'
-import { Task, Project, UrgencyCurve, EnergyLevel, HabitStreak, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
+import { Task, Project, UrgencyCurve, EnergyLevel, INBOX_PROJECT, computeUrgency, computeUrgencyBreakdown } from '@/types'
+import { streakWords, type HabitSummary } from '@/lib/habit-stats'
 import { updateTask, getSubtasks, createSubtask, toggleSubtask, deleteSubtask, updateSubtaskFields, deleteHabit, duplicateTask, setHabitExclusiveLink, setHabitAvoidAfterBreaks, setTaskPlacement, listHabitExclusivity, type HabitExclusivity, type SubtaskRow } from '@/app/actions/tasks'
 import { scheduleTask, unscheduleTask } from '@/app/actions/calendar'
 import { useTimer } from '@/contexts/TimerContext'
@@ -435,12 +436,12 @@ interface Props {
   /** `project` is null for tasks with no project_id — the join returns null. */
   task: Task & { project: Project | null }
   projects: Project[]
-  streak: HabitStreak | null
+  summary: HabitSummary | null
   gcalWriteEnabled: boolean
   onClose: () => void
 }
 
-export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, onClose }: Props) {
+export default function TaskDetail({ task, projects, summary, gcalWriteEnabled, onClose }: Props) {
   const timer = useTimer()
   const isTimingThis = timer.phase !== 'idle' && timer.task?.id === task.id
 
@@ -923,40 +924,47 @@ export default function TaskDetail({ task, projects, streak, gcalWriteEnabled, o
               <p className="text-xs font-medium text-violet-500 dark:text-violet-400 uppercase tracking-wide">Habit streak</p>
 
               {/* Streak stats */}
-              {streak ? (
+              {/* Derived from every completion of this title, like the
+                  Habits page — never from the retired `habit_streaks` table,
+                  which could only ever say 1 (#38). */}
+              {summary?.streak ? (
                 <div className="flex items-end justify-between">
                   <div>
                     <div className="flex items-baseline gap-1.5">
                       <span className="text-3xl font-bold text-violet-700 dark:text-violet-300 font-mono tabular-nums leading-none">
-                        {streak.current_streak}
+                        {summary.streak.value}
                       </span>
                       <span className="text-sm text-violet-500 dark:text-violet-400">
-                        {streak.current_streak === 1 ? 'day' : 'days'}
-                        {streak.current_streak >= 7 &&
+                        {streakWords(summary.streak).replace(/^\d+ /, '')}
+                        {summary.streak.unit === 'd' && summary.streak.value >= 7 &&
                           <Flame size={12} className="inline-block ml-1 -mt-px text-orange-500" />}
                       </span>
                     </div>
                     <p className="text-xs text-violet-400 dark:text-violet-500 mt-1">
-                      Last: {new Date(streak.last_completed + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {summary.lastDone
+                        ? <>Last: {new Date(summary.lastDone + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}</>
+                        : 'Not done yet'}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-violet-400 dark:text-violet-500">Best</p>
                     <p className="text-lg font-semibold font-mono tabular-nums text-violet-400 dark:text-violet-500">
-                      {streak.longest_streak}
+                      {summary.best ? `${summary.best.value}${summary.best.unit}` : '—'}
                     </p>
                   </div>
                 </div>
               ) : (
                 <p className="text-xs text-violet-400 dark:text-violet-500">
-                  Complete this task to start your streak.
+                  {summary
+                    ? 'No weekly target, so there’s no streak to keep. Set one to start counting.'
+                    : 'Complete this task to start your streak.'}
                 </p>
               )}
 
               {/* Weekly goal */}
               {(() => {
                 const target = task.weekly_target
-                const done   = streak?.completions_this_week ?? 0
+                const done   = summary?.thisWeek ?? 0
                 return (
                   <div className="border-t border-violet-100 dark:border-violet-900 pt-3">
                     <p className="text-xs font-medium text-violet-500 dark:text-violet-400 mb-2">Weekly goal</p>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  cadence, weekProgress, habitStreak, dotStrip, weekGrid,
+  cadence, weekProgress, habitStreak, dotStrip, weekGrid, longestStreak, habitSummary, streakWords,
   weekRangeLabel, habitsHeadline, STRIP_DAYS,
 } from '@/lib/habit-stats'
 
@@ -90,6 +90,55 @@ describe('habitStreak', () => {
 
   it('will not invent a streak for a habit with no cadence', () => {
     expect(streak(null, daysBack(TODAY, [0, 1, 2]))).toBeNull()
+  })
+})
+
+describe('longestStreak', () => {
+  const best = (weeklyTarget: number | null, days: string[]) =>
+    longestStreak({ weeklyTarget, days: [...days].sort(), todayStr: TODAY, weekStartDay: MONDAY })
+
+  it('finds the longest run of days, not the current one', () => {
+    // A six-day run a fortnight ago, then a two-day run ending today.
+    expect(best(7, daysBack(TODAY, [0, 1, 14, 15, 16, 17, 18, 19]))).toEqual({ value: 6, unit: 'd' })
+  })
+
+  it('counts weeks that met the target for a weekly habit', () => {
+    // Weeks starting 31 Aug, 7 Sep, 14 Sep each have two sessions; 21 Sep has one.
+    const days = ['2026-08-31', '2026-09-02', '2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16', '2026-09-21']
+    expect(best(2, days)).toEqual({ value: 3, unit: 'w' })
+  })
+
+  it('is broken by a week that fell short', () => {
+    const days = ['2026-08-31', '2026-09-02', '2026-09-07', '2026-09-14', '2026-09-16']
+    expect(best(2, days)).toEqual({ value: 1, unit: 'w' })
+  })
+
+  it('is zero before anything is done, and null for an anytime habit', () => {
+    expect(best(7, [])).toEqual({ value: 0, unit: 'd' })
+    expect(best(null, daysBack(TODAY, [0]))).toBeNull()
+  })
+})
+
+describe('habitSummary', () => {
+  it('says the streak, the best, this week and the last day in one place', () => {
+    const days = daysBack(TODAY, [0, 1, 2, 10, 11, 12, 13]).sort()
+    expect(habitSummary({ weeklyTarget: 7, days, todayStr: TODAY, weekStartDay: MONDAY })).toEqual({
+      streak: { value: 3, unit: 'd' },
+      best: { value: 4, unit: 'd' },
+      thisWeek: 1,          // TODAY is the Monday the week starts on
+      lastDone: TODAY,
+    })
+  })
+
+  it('reads a never-done habit as nothing yet', () => {
+    expect(habitSummary({ weeklyTarget: 3, days: [], todayStr: TODAY, weekStartDay: MONDAY }))
+      .toEqual({ streak: { value: 0, unit: 'w' }, best: { value: 0, unit: 'w' }, thisWeek: 0, lastDone: null })
+  })
+
+  it('words a streak in its own unit', () => {
+    expect(streakWords({ value: 1, unit: 'd' })).toBe('1 day')
+    expect(streakWords({ value: 14, unit: 'd' })).toBe('14 days')
+    expect(streakWords({ value: 2, unit: 'w' })).toBe('2 weeks')
   })
 })
 

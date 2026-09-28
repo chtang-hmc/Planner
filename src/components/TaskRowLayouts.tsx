@@ -10,7 +10,8 @@
  */
 
 import React from 'react'
-import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
+import { Task, Project, INBOX_PROJECT } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import { formatMinutes, formatDue, dueToneClass } from '@/lib/task-format'
 import type { TaskLayoutId } from '@/lib/task-layouts'
 
@@ -27,7 +28,7 @@ export interface TaskRowProps {
   kidCount: number
   /** Its subtasks are currently hidden. */
   collapsed: boolean
-  streak?: HabitStreak | null
+  summary?: HabitSummary | null
   onToggleFold: () => void
   onOpen: () => void
   onDone: (e: React.MouseEvent) => void
@@ -87,15 +88,15 @@ function Fold({ isChild, kidCount, collapsed, onToggleFold, className = '' }: {
 }
 
 /** someday / repeats, as words rather than emoji. */
-function KindTag({ task, streak }: { task: LayoutTask; streak?: HabitStreak | null }) {
+function KindTag({ task, summary }: { task: LayoutTask; summary?: HabitSummary | null }) {
   if (task.type === 'someday') {
     return <span className="text-[10px] text-slate-400 shrink-0">someday</span>
   }
   if (task.type === 'recurring') {
-    const n = streak?.current_streak ?? 0
+    const s = summary?.streak
     return (
       <span className="text-[10px] text-slate-400 shrink-0">
-        repeats{n > 0 ? ` · ${n}` : ''}
+        repeats{s && s.value > 0 ? ` · ${s.value}${s.unit}` : ''}
       </span>
     )
   }
@@ -160,7 +161,7 @@ function RailRow(p: TaskRowProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate">{task.title}</span>
-          <KindTag task={task} streak={p.streak} />
+          <KindTag task={task} summary={p.summary} />
         </div>
         <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-400">
           <ProjectDot task={task} dim />
@@ -221,7 +222,7 @@ function LedgerRow(p: TaskRowProps) {
           <span className="text-[10px] text-slate-400 shrink-0">+{p.kidCount}</span>
         )}
         <span className="text-[10px] text-slate-400 shrink-0 hidden sm:flex items-center gap-2">
-          <KindTag task={task} streak={p.streak} />
+          <KindTag task={task} summary={p.summary} />
           <ParentCrumb task={task} isChild={p.isChild} />
         </span>
       </div>
@@ -270,7 +271,7 @@ function AiryRow(p: TaskRowProps) {
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <p className="text-[15px] leading-snug text-slate-800 dark:text-slate-100 truncate">{task.title}</p>
-          <KindTag task={task} streak={p.streak} />
+          <KindTag task={task} summary={p.summary} />
         </div>
         <div className="flex items-center gap-2 mt-1 text-[12px] text-slate-400 flex-wrap">
           <span className="flex items-center gap-1.5"><ProjectDot task={task} />{projectName(task)}</span>
@@ -337,7 +338,7 @@ function EditorialRow(p: TaskRowProps) {
           {est && <>{dash}<span>{formatMinutes(est)}</span></>}
           {p.kidCount > 0 && p.collapsed && <>{dash}<span>{p.kidCount} steps</span></>}
           {task.parent && !p.isChild && <>{dash}<ParentCrumb task={task} isChild={p.isChild} /></>}
-          <KindTag task={task} streak={p.streak} />
+          <KindTag task={task} summary={p.summary} />
         </p>
       </div>
     </div>

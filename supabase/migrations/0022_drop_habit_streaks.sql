@@ -1,0 +1,22 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 0022 — drop habit_streaks (#38)
+--
+-- The table kept a streak per task_id. A habit is a family of rows: completing
+-- one closes it and spawns the next occurrence with a new id. So every streak
+-- was written to an id that was about to be retired, and the open row never
+-- had one. On 2026-09-28 the table held 25 rows and the highest current and
+-- longest streak in any of them was 1.
+--
+-- Streaks, the weekly count and the last day done are now derived from the
+-- completed rows themselves, by title (`lib/habit-stats.ts`, `lib/habits.ts`),
+-- which is the input the Habits page had already been using correctly. Nothing
+-- in the app reads or writes this table any more.
+--
+-- Run it after the deploy that stops using it. The previous build still reads
+-- and writes this table on every habit completion; supabase-js returns those
+-- errors rather than throwing and that code ignored them, so running it early
+-- would not break a completion, but after the deploy is the clean order.
+-- Nothing is lost: the 25 rows say nothing the completed tasks don't.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+drop table if exists habit_streaks;

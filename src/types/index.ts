@@ -89,14 +89,6 @@ export interface EnergyPattern {
   computed_at: string
 }
 
-export interface HabitStreak {
-  task_id: string              // PK — habit is a recurring task
-  current_streak: number
-  longest_streak: number
-  last_completed: string       // date string YYYY-MM-DD
-  completions_this_week: number  // resets each Monday; tracks weekly goal progress
-  week_start: string | null    // Monday of the current tracking week (YYYY-MM-DD)
-}
 
 export interface CalendarEvent {
   id: string

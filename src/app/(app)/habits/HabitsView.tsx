@@ -12,7 +12,8 @@
 
 import { useState, useEffect, useTransition } from 'react'
 import { CalendarIcon } from '@/components/icons'
-import { Task, Project, HabitStreak } from '@/types'
+import { Task, Project } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import { completeTask, setHabitCompletion, syncScheduledHabits } from '@/app/actions/tasks'
 import AddTaskModal from '@/components/AddTaskModal'
 import LogHabitModal from '@/components/LogHabitModal'
@@ -31,7 +32,7 @@ interface Props {
   completionMap:    Record<string, string[]>
   doneToday:        string[]   // habit ids already done today
   projects:         Project[]
-  streaks:          Record<string, HabitStreak>
+  summaries:          Record<string, HabitSummary>
   gcalWriteEnabled: boolean
   weekStartDay:     number
   /** The user's timezone, so the page and the server agree on what "today" is. */
@@ -42,7 +43,7 @@ const clock = (minutes: number | null) =>
   minutes == null ? null : formatTimeOfDay(minutes).toLowerCase().replace(' ', '')
 
 export default function HabitsView({
-  habits, completionMap, doneToday: serverDoneToday, projects, streaks, gcalWriteEnabled, weekStartDay, tz,
+  habits, completionMap, doneToday: serverDoneToday, projects, summaries, gcalWriteEnabled, weekStartDay, tz,
 }: Props) {
   // Track which habits got completed this session (optimistic)
   const [sessionDone, setSessionDone] = useState<Set<string>>(new Set(serverDoneToday))
@@ -202,9 +203,9 @@ export default function HabitsView({
         : null),
       days,
       week:   weekProgress({ weeklyTarget: habit.weekly_target, days, weekStartStr }),
-      /* Computed here, not read from `habit_streaks`. That table is keyed by
-         task_id and a habit is a family of rows: on 2026-09-21 every row in it
-         said `current_streak: 1`, including Piano's, which had run 14 days. */
+      /* Derived from completion days by title, as every streak now is. The
+         `habit_streaks` table was keyed by task_id and a habit is a family of
+         rows, so it could only ever say 1 (#38; dropped in migration 0022). */
       streak: habitStreak({
         weeklyTarget: habit.weekly_target, days, todayStr, weekStartDay,
       }),
@@ -344,7 +345,7 @@ export default function HabitsView({
         <TaskDetail
           task={detailTask}
           projects={projects}
-          streak={streaks[detailTask.id] ?? null}
+          summary={summaries[detailTask.id] ?? null}
           gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => setDetailTask(null)}
         />

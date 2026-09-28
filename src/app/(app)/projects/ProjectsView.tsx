@@ -240,7 +240,7 @@ export default function ProjectsView({
         <TaskDetail
           task={detailTask}
           projects={projects}
-          streak={null}
+          summary={null}
           gcalWriteEnabled={false}
           onClose={() => setDetailTask(null)}
         />

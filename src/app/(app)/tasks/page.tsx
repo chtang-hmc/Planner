@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/lib/supabase/server'
-import { Task, Project, CalendarEvent, HabitStreak } from '@/types'
+import { Task, Project, CalendarEvent } from '@/types'
 import TaskList from './TaskList'
 import { fetchWeekStartDay } from '@/lib/week'
 import { addDays, fetchTimezone, todayStr as todayIn, startOfLocalDay } from '@/lib/day'
@@ -10,6 +10,7 @@ import {
 } from '@/lib/scheduler'
 import { capacityFromGaps } from '@/lib/capacity'
 import { MIN_GAP_MINUTES } from '@/lib/home'
+import { fetchHabitSummaries } from '@/lib/habits'
 
 /** How far the date groups reach. Two weeks is what Upcoming will want too. */
 const HORIZON_DAYS = 15
@@ -28,7 +29,6 @@ export default async function TasksPage() {
     { data: projects,   error: pe },
     { data: events },
     { data: integration },
-    { data: streakRows },
     { data: whRows },
     { data: breakRows },
   ] = await Promise.all([
@@ -55,7 +55,6 @@ export default async function TasksPage() {
       .select('id, scopes')
       .eq('provider', 'google')
       .maybeSingle(),
-    db.from('habit_streaks').select('*'),
     db.from('user_working_hours').select('*'),
     db.from('user_daily_breaks').select('*').then(r => r, () => ({ data: null })),
   ])
@@ -63,15 +62,15 @@ export default async function TasksPage() {
   if (te) console.error('Tasks fetch error:', te.message)
   if (pe) console.error('Projects fetch error:', pe.message)
 
-  // Index streaks by task_id for O(1) lookup in TaskList / TaskDetail
-  const streaks: Record<string, HabitStreak> = {}
-  for (const s of streakRows ?? []) {
-    streaks[s.task_id] = s as HabitStreak
-  }
-
   const calEvents = (events ?? []) as CalendarEvent[]
 
   const weekStartDay = await fetchWeekStartDay(db)
+
+  // Streaks for the repeating tasks on screen, derived from completions by
+  // title — not from `habit_streaks`, which could only ever say 1 (#38).
+  const summaries = await fetchHabitSummaries(db, {
+    tz, today, weekStartDay, rows: (tasks ?? []) as Task[],
+  })
 
 
   /**
@@ -140,7 +139,7 @@ export default async function TasksPage() {
         <TaskList
           tasks={(tasks ?? []) as (Task & { project: Project })[]}
           projects={(projects ?? []) as Project[]}
-          streaks={streaks}
+          summaries={summaries}
           events={calEvents}
           gcalWriteEnabled={gcalWriteEnabled}
           weekStartDay={weekStartDay}

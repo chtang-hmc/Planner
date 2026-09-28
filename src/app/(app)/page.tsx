@@ -397,15 +397,10 @@ export default async function HomePage() {
   // titles rather than ids. `fetchTodaysHabits` is the one place that knows
   // that — Home read `habit_streaks.completions_this_week` directly at first,
   // which is keyed by an id that a completion replaces, and showed Piano at 0/7
-  // in a week it had been played six times.
-  //
-  // One week of completions is all this needs; /habits asks the same function
-  // for sixteen because it also draws a calendar from them.
+  // in a week it had been played six times. Its streaks come from there too,
+  // derived by title rather than read from the table (#38).
   const weekStartDay = await fetchWeekStartDay(db)
-  const { habits, doneTodayIds, streaks } = await fetchTodaysHabits(db, {
-    tz, today, weekStartDay,
-    completionsSinceISO: startOfLocalDay(addDays(today, -14), tz).toISOString(),
-  })
+  const { habits, doneTodayIds, summaries } = await fetchTodaysHabits(db, { tz, today, weekStartDay })
 
   const gcalWriteEnabled = ((integration?.scopes ?? []) as string[]).includes(
     'https://www.googleapis.com/auth/calendar.events'
@@ -429,7 +424,7 @@ export default async function HomePage() {
       tasks={rows.map(t => ({ ...t, project: t.project ?? INBOX_PROJECT }))}
       habits={habits}
       habitsDoneToday={doneTodayIds}
-      streaks={streaks}
+      summaries={summaries}
       projects={(projectRows ?? []) as Project[]}
       gcalWriteEnabled={gcalWriteEnabled}
       calendarConnected={!!integration}

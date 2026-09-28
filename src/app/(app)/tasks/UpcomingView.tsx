@@ -362,7 +362,7 @@ export default function UpcomingView({
             isChild={t.id !== task.id}
             kidCount={t.id === task.id ? kids.length : 0}
             collapsed={!open}
-            streak={null}
+            summary={null}
             onToggleFold={() => toggleExpanded(task.id)}
             onOpen={() => onTaskClick(t)}
             onDone={e => onTaskDone(t, e)}

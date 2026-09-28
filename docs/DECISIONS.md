@@ -85,7 +85,6 @@ focus_sessions    — per-timer-run log; estimate_accurate + blocker_note from r
 estimation_profiles — per-project bias_ratio (actual ÷ estimated, running average)
 energy_logs       — manual 1–5 energy check-ins
 energy_patterns   — nightly rollup of energy_logs by (hour, day_of_week)
-habit_streaks     — current/longest streak for recurring tasks
 calendar_events   — synced from Google Calendar; gcal_id unique key for upserts
 weekly_reviews    — one row per Monday; completed/postponed counts + notes
 user_integrations — server-side OAuth tokens (Google Calendar); never sent to client
@@ -451,7 +450,6 @@ The "did it fit" check is scoped to the blocks a single candidate added (`schedu
 
 - `tasks.rrule` — iCal RRULE string (e.g. `FREQ=WEEKLY;BYDAY=MO`), `null` for non-recurring tasks.
 - `tasks.type` — `'recurring'` when rrule is non-null; `'habit'` for habit-type tasks; `'task'` or `'someday'` otherwise.
-- `habit_streaks` — one row per recurring task id; tracks `current_streak`, `longest_streak`, `last_completed` (YYYY-MM-DD).
 
 ### Completion flow
 
@@ -462,7 +460,7 @@ When `completeTask()` is called on a task with an `rrule` or `type === 'habit'`:
 3. `getNextOccurrence(rrule, anchor)` computes the date strictly after the anchor using the `rrule` library.
 4. For **anytime habits** (`rrule` is null, `type === 'habit'`): next occurrence spawns for tomorrow so the card reappears daily.
 5. A new task row is inserted with the same title/project/priority/energy/estimate/rrule, `status: 'inbox'`, and `due_date` set to the next occurrence.
-6. `habit_streaks` is upserted: consecutive completion (last_completed === yesterday) increments the streak; otherwise resets to 1.
+6. Nothing streak-related is written. Streaks are derived from the completed rows, by title, wherever they're shown (see "Streaks are derived everywhere" below).
 
 ### "Not before" (defer date)
 
@@ -503,9 +501,29 @@ represent twelve piano sessions. What survives is what is acted on.
 **The streak is computed, not read from `habit_streaks`.** That table is keyed
 by `task_id` and a habit is a family of rows, so the id on screen is usually an
 occurrence created *after* the completions being counted. On 2026-09-21 every
-row in it said `current_streak: 1` — including Piano's, which had run fourteen
-days. `habitStreak` derives it from the same completion days the dot strip
-draws, so the number and the picture cannot disagree.
+row in it said `current_streak: 1` — including Piano's, which had run twelve
+days (8–19 September; the "fourteen" first written here counted a session that
+was later cancelled — re-checked 2026-09-28). `habitStreak` derives it from the
+same completion days the dot strip draws, so the number and the picture cannot
+disagree.
+
+**Streaks are derived everywhere, and the table is gone (#38, 2026-09-28).**
+The Habits page was the only reader doing it right. Home, the task list, a
+project's page and the task detail panel still read `habit_streaks`, so the
+same habit said `14d` in one place and `1` in another. All of them now get a
+`HabitSummary` — current streak, best streak, count this week, last day done —
+from `lib/habit-stats`, computed from completion days by title
+(`summariesFor` / `fetchHabitSummaries` in `lib/habits`). `completeTask` no
+longer writes streaks and migration 0022 drops the table.
+
+- **Every completion is read, not a window.** The best streak needs the whole
+  history, and a window cuts long current streaks short: `/habits` read 112
+  days, so a 120-day run would have read 112. It is two narrow columns for one
+  person — 41 completed habit and repeating rows on 2026-09-28.
+- **The best streak is computed, not kept as a high-water mark.** Keeping one
+  would have been a third of the table back, with the same id problem.
+- **A repeating task with no weekly target has no streak**, the same rule as an
+  anytime habit. The table used to show those a `1` too.
 
 **Counted in the habit's own unit, and the unit is in the cell.** `14d` for a
 daily habit, `1w` for a weekly-target one — consecutive weeks that met the
@@ -610,7 +628,7 @@ The original note justified UTC as matching all-day calendar events. That rule s
 
 `tasks.weekly_target` (integer, nullable) holds "how many times per week".
 
-**Progress is derived, not stored.** `habit_streaks` has `completions_this_week` / `week_start` columns, but they are **not** the source of truth: that table is keyed by `task_id` while every occurrence is a *new row with a new id*, so the counter for the pending row on screen has never been incremented and always reads 0. Both the scheduler and the habits page instead count **distinct completion days this week, grouped by title** — title being the habit's real identity here, as it already is for the streak calendar. The habits page patches the real count into the `HabitStreak` object it hands to `TaskDetail`.
+**Progress is derived, not stored.** The old `habit_streaks.completions_this_week` was keyed by `task_id` while every occurrence is a *new row with a new id*, so the counter for the row on screen was never incremented. The scheduler and every page instead count **distinct completion days this week, grouped by title** — title being the habit's real identity, as it is for the streak. It is `HabitSummary.thisWeek`.
 
 Counting *days* rather than completions is deliberate: "gym 4× a week" means four days, so two sessions on one day count once.
 
@@ -620,7 +638,7 @@ Habits are excluded from the `/tasks` query (`neq('type','habit')`) — they liv
 
 `completeTask` refuses to spawn a next occurrence when another pending row with the same title already exists. Without the guard, completing a habit twice in one day spawned two rows for tomorrow — the habit then showed and scheduled twice on the same day.
 
-Same-day completion is also a no-op for the streak. The consecutive-day check is `last_completed === yesterday`; on a second completion today `last_completed` is already *today*, which read as "not consecutive" and reset a long streak to 1.
+Same-day completion doesn't move the streak either: streaks count distinct local days, so a second session today is the same day.
 
 ### Habits have no deadlines
 
@@ -656,7 +674,7 @@ The premise can be wrong — a blocked session you skipped gets logged as done. 
 
 Both act on the **title**, since a habit is a chain of rows rather than one row:
 
-- `deleteHabit(title)` removes every occurrence, its streak rows, and any Google Calendar blocks. Calendar events are deleted *first* — once the rows are gone their event ids are unrecoverable and the blocks would linger forever. This deletes history, which is what delete means here.
+- `deleteHabit(title)` removes every occurrence and any Google Calendar blocks. Calendar events are deleted *first* — once the rows are gone their event ids are unrecoverable and the blocks would linger forever. This deletes history, which is what delete means here.
 - `setHabitCompletion(title, date, done)` logs or un-logs a past day from the heatmap. It inserts a *completed* occurrence rather than touching the pending row, so today's card stays actionable and the spawn chain is untouched. `completed_at` is noon UTC so slicing the date back out can't drift, the write is idempotent (one completion per day), and future dates are rejected.
 
 ### Scheduling habits

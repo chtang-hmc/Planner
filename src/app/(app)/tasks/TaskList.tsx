@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import { useStored } from '@/lib/use-stored'
-import { Task, Project, EnergyLevel, HabitStreak, CalendarEvent, INBOX_PROJECT } from '@/types'
+import { Task, Project, EnergyLevel, CalendarEvent, INBOX_PROJECT } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import { useSearch } from '@/contexts/SearchContext'
 import { getStoredDefaultView } from '@/app/(app)/settings/SettingsView'
 import { completeTask } from '@/app/actions/tasks'
@@ -28,7 +29,7 @@ export type TaskRow = Task & { project: Project; parent?: { id: string; title: s
 interface Props {
   tasks: TaskRow[]
   projects: Project[]
-  streaks: Record<string, HabitStreak>
+  summaries: Record<string, HabitSummary>
   events: CalendarEvent[]
   gcalWriteEnabled: boolean
   weekStartDay: number
@@ -49,7 +50,7 @@ interface Props {
 }
 
 export default function TaskList({
-  tasks, projects, streaks, events, gcalWriteEnabled, weekStartDay,
+  tasks, projects, summaries, events, gcalWriteEnabled, weekStartDay,
   relevance = RELEVANCE_DEFAULT, todayStr, freeByDay, gapsByDay,
 }: Props) {
   const { query } = useSearch()
@@ -600,7 +601,7 @@ export default function TaskList({
                 <HabitRow
                   key={task.id}
                   task={task}
-                  streak={streaks[task.id] ?? null}
+                  summary={summaries[task.id] ?? null}
                   pending={pendingHabitIds.has(task.id)}
                   onOpen={() => setDetailTask({ ...task, project: task.project ?? INBOX_PROJECT })}
                   onDone={e => handleHabitDone(task, e)}
@@ -627,7 +628,7 @@ export default function TaskList({
         <TaskDetail
           task={detailTask}
           projects={projects}
-          streak={streaks[detailTask.id] ?? null}
+          summary={summaries[detailTask.id] ?? null}
           gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => setDetailTask(null)}
         />

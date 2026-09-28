@@ -9,7 +9,8 @@
  */
 
 import React from 'react'
-import { Task, Project, HabitStreak } from '@/types'
+import { Task, Project } from '@/types'
+import { streakWords, type HabitSummary } from '@/lib/habit-stats'
 import { rruleToLabel } from '@/lib/rrule-utils'
 
 // ── Toolbar controls ─────────────────────────────────────────────────────────
@@ -84,9 +85,9 @@ export function Toggle({ on, onClick, title, children }: {
  * This was a violet-bordered card, which made habits look like a different app
  * bolted onto the list.
  */
-export function HabitRow({ task, streak, pending, doneToday = false, onOpen, onDone, onLogTime }: {
+export function HabitRow({ task, summary, pending, doneToday = false, onOpen, onDone, onLogTime }: {
   task: Task & { project: Project }
-  streak?: HabitStreak | null
+  summary?: HabitSummary | null
   pending: boolean
   /**
    * Already logged today. Filled circle, no second tap — the same state
@@ -99,7 +100,7 @@ export function HabitRow({ task, streak, pending, doneToday = false, onOpen, onD
   onLogTime: (e: React.MouseEvent) => void
 }) {
   const target = task.weekly_target
-  const done   = streak?.completions_this_week ?? 0
+  const done   = summary?.thisWeek ?? 0
   const met    = !!target && done >= target
 
   return (
@@ -149,12 +150,10 @@ export function HabitRow({ task, streak, pending, doneToday = false, onOpen, onD
           ) : (
             <span>Anytime</span>
           )}
-          {streak && streak.current_streak > 0 && (
+          {summary?.streak && summary.streak.value > 0 && (
             <>
               <span>·</span>
-              <span className="tabular-nums">
-                {streak.current_streak} day{streak.current_streak === 1 ? '' : 's'} running
-              </span>
+              <span className="tabular-nums">{streakWords(summary.streak)} running</span>
             </>
           )}
         </div>

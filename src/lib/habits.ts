@@ -6,21 +6,18 @@
  * identifier a habit has across a week is its **title**. Everything here is
  * keyed by title for that reason.
  *
- * That is also why `habit_streaks.completions_this_week` cannot answer "how
- * many times this week": the table is keyed by `task_id`, and the id on screen
- * is usually a row created *after* the completions you want to count. On
- * 2026-09-20 there was no `habit_streaks` row at all for any of the five open
- * habit rows, so a page trusting that column showed Piano at 0/7 in a week it
- * had been played six times.
- *
- * `/habits` worked this out and said so in a comment. Home then read the column
- * anyway. The logic lives here now so there is one answer rather than a comment
- * asking the next reader to remember.
+ * That is why there is no streak table any more (#38). `habit_streaks` was
+ * keyed by `task_id`, and the id on screen is always a row created *after* the
+ * completions you want to count, so it could only ever say 0 or 1 — on
+ * 2026-09-28 its 25 rows had a highest streak of 1. Streaks, the weekly count
+ * and the last day done are all derived from completion days by title, here
+ * and in `lib/habit-stats`, so there is one answer.
  */
 
-import type { HabitStreak, Project, Task } from '@/types'
+import type { Project, Task } from '@/types'
 import { addDays, localDayStr, startOfLocalDay } from '@/lib/day'
 import { weekStartOfDay } from '@/lib/week'
+import { habitSummary, type HabitSummary } from '@/lib/habit-stats'
 
 /** A completed habit row, as the completion queries return it. */
 interface CompletionRow {
@@ -52,18 +49,6 @@ export function completionDaysByTitle(
   return out
 }
 
-/** Distinct days completed on or after `weekStartStr`, per title. */
-export function weeklyDayCounts(
-  byTitle: Record<string, string[]>,
-  weekStartStr: string,
-): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const [title, days] of Object.entries(byTitle)) {
-    out[title] = days.filter(d => d >= weekStartStr).length
-  }
-  return out
-}
-
 /**
  * One row per habit, with the pending occurrence winning.
  *
@@ -85,30 +70,20 @@ export function oneRowPerTitle(
 }
 
 /**
- * Streaks keyed by the id actually on screen, with a weekly count that is true.
- *
- * The streak numbers are kept from whatever `habit_streaks` had for that id —
- * they are the only source for those — but the weekly count is recomputed, and
- * a habit with no streak row gets zeroes rather than nothing, so a component
- * never has to distinguish "no data" from "not started".
+ * A summary for each row on screen, keyed by its id but computed from its
+ * title — the id a completion retires never matters.
  */
-export function patchWeeklyProgress(
-  existing:     Record<string, HabitStreak>,
-  habits:       { id: string; title: string }[],
-  weeklyDays:   Record<string, number>,
-  weekStartStr: string,
-): Record<string, HabitStreak> {
-  const out: Record<string, HabitStreak> = { ...existing }
-  for (const h of habits) {
-    const prev = existing[h.id]
-    out[h.id] = {
-      task_id:               h.id,
-      current_streak:        prev?.current_streak ?? 0,
-      longest_streak:        prev?.longest_streak ?? 0,
-      last_completed:        prev?.last_completed ?? '',
-      week_start:            weekStartStr,
-      completions_this_week: weeklyDays[h.title] ?? 0,
-    }
+export function summariesFor(
+  rows:         { id: string; title: string; weekly_target: number | null }[],
+  byTitle:      Record<string, string[]>,
+  today:        string,
+  weekStartDay: number,
+): Record<string, HabitSummary> {
+  const out: Record<string, HabitSummary> = {}
+  for (const r of rows) {
+    out[r.id] = habitSummary({
+      weeklyTarget: r.weekly_target, days: byTitle[r.title] ?? [], todayStr: today, weekStartDay,
+    })
   }
   return out
 }
@@ -133,9 +108,9 @@ export interface TodaysHabits {
   habits:       HabitRowWithProject[]
   /** Ids among `habits` that are already done today. */
   doneTodayIds: string[]
-  /** Keyed by the ids in `habits`, with a real `completions_this_week`. */
-  streaks:      Record<string, HabitStreak>
-  /** Title → sorted unique local completion days, over the window fetched. */
+  /** Keyed by the ids in `habits`. */
+  summaries:    Record<string, HabitSummary>
+  /** Title → sorted unique local completion days, all time. */
   completionMap: Record<string, string[]>
   weekStartStr: string
 }
@@ -143,23 +118,22 @@ export interface TodaysHabits {
 /**
  * Everything a page needs to draw today's habits.
  *
- * `completionsSinceISO` sets how far back completions are read. Home wants the
- * current week; `/habits` wants sixteen, because it also draws a calendar from
- * the same rows. The weekly count is the same either way — it only ever looks
- * at days on or after the week start.
+ * Every completion is read, not a recent window: the best streak needs the
+ * whole history, and a current streak longer than the window would otherwise
+ * be cut short — `/habits` read sixteen weeks, so a 120-day run read 112. It is
+ * two narrow columns for one person (41 rows on 2026-09-28).
  */
 export async function fetchTodaysHabits(db: Db, opts: {
-  tz:                  string
-  today:               string
-  weekStartDay:        number
-  completionsSinceISO: string
+  tz:           string
+  today:        string
+  weekStartDay: number
 }): Promise<TodaysHabits> {
-  const { tz, today, weekStartDay, completionsSinceISO } = opts
+  const { tz, today, weekStartDay } = opts
   const available    = availableBefore(today, tz)
   const weekStartStr = weekStartOfDay(today, weekStartDay)
   const startOfDay   = startOfLocalDay(today, tz).toISOString()
 
-  const [{ data: pending }, { data: doneToday }, { data: completions }, { data: streakRows }] =
+  const [{ data: pending }, { data: doneToday }, { data: completions }] =
     await Promise.all([
       // Pending: due today or earlier. Tomorrow's spawned occurrence stays
       // hidden, or logging a habit makes it reappear as unticked immediately.
@@ -186,10 +160,7 @@ export async function fetchTodaysHabits(db: Db, opts: {
         .select('title, completed_at')
         .eq('type', 'habit')
         .eq('status', 'done')
-        .gte('completed_at', completionsSinceISO)
         .not('completed_at', 'is', null),
-
-      db.from('habit_streaks').select('*'),
     ])
 
   const { habits, doneTodayIds } = oneRowPerTitle(
@@ -198,16 +169,34 @@ export async function fetchTodaysHabits(db: Db, opts: {
   )
 
   const completionMap = completionDaysByTitle((completions ?? []) as CompletionRow[], tz)
-  const weeklyDays    = weeklyDayCounts(completionMap, weekStartStr)
-
-  const fromTable: Record<string, HabitStreak> = {}
-  for (const s of (streakRows ?? []) as HabitStreak[]) fromTable[s.task_id] = s
 
   return {
     habits,
     doneTodayIds,
-    streaks: patchWeeklyProgress(fromTable, habits, weeklyDays, weekStartStr),
+    summaries: summariesFor(habits, completionMap, today, weekStartDay),
     completionMap,
     weekStartStr,
   }
+}
+
+/**
+ * Summaries for whatever habits and repeating tasks a page happens to show —
+ * the task list, a project — which have no reason to fetch today's habits.
+ */
+export async function fetchHabitSummaries(db: Db, opts: {
+  tz:           string
+  today:        string
+  weekStartDay: number
+  rows:         { id: string; title: string; type: string; weekly_target: number | null }[]
+}): Promise<Record<string, HabitSummary>> {
+  const rows = opts.rows.filter(r => r.type === 'habit' || r.type === 'recurring')
+  if (!rows.length) return {}
+  const { data } = await db.from('tasks')
+    .select('title, completed_at')
+    .in('type', ['habit', 'recurring'])
+    .eq('status', 'done')
+    .in('title', [...new Set(rows.map(r => r.title))])
+    .not('completed_at', 'is', null)
+  const byTitle = completionDaysByTitle((data ?? []) as CompletionRow[], opts.tz)
+  return summariesFor(rows, byTitle, opts.today, opts.weekStartDay)
 }
