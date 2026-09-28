@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
 import { createServiceClient } from '@/lib/supabase/server'
-import { Task, Project, EstimationProfile, HabitStreak, CalendarEvent } from '@/types'
+import { Task, Project, EstimationProfile, CalendarEvent } from '@/types'
 import { fetchTimezone, todayStr, startOfLocalDay } from '@/lib/day'
+import { fetchWeekStartDay } from '@/lib/week'
+import { fetchHabitSummaries } from '@/lib/habits'
 import ProjectDetailView from './ProjectDetailView'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +23,6 @@ export default async function ProjectDetailPage({ params }: Props) {
     { data: tasks },
     { data: allProjects },
     { data: bias },
-    { data: streakRows },
     { data: integration },
     { data: links },
   ] = await Promise.all([
@@ -41,7 +42,6 @@ export default async function ProjectDetailPage({ params }: Props) {
       .order('urgency_score', { ascending: false }),
     db.from('projects').select('*').eq('archived', false).order('name'),
     db.from('estimation_profiles').select('*').eq('project_id', id).maybeSingle(),
-    db.from('habit_streaks').select('*'),
     db.from('user_integrations').select('scopes').eq('provider', 'google').maybeSingle(),
     /* Confirmed only. A suggestion is a guess, and the calendar block reads as
        a record of what is actually booked. */
@@ -64,8 +64,10 @@ export default async function ProjectDetailPage({ params }: Props) {
     .gte('start_time', new Date(fromMs - 86_400_000).toISOString())
     .lt('start_time', new Date(toMs + 86_400_000).toISOString())
 
-  const streaks: Record<string, HabitStreak> = {}
-  for (const s of streakRows ?? []) streaks[s.task_id] = s as HabitStreak
+  // Derived from completions by title, not `habit_streaks` (#38).
+  const summaries = await fetchHabitSummaries(db, {
+    tz, today, weekStartDay: await fetchWeekStartDay(db), rows: (tasks ?? []) as Task[],
+  })
 
   const gcalWriteEnabled = (integration?.scopes ?? []).includes(
     'https://www.googleapis.com/auth/calendar.events'
@@ -77,7 +79,7 @@ export default async function ProjectDetailPage({ params }: Props) {
       tasks={(tasks ?? []) as (Task & { project: Project })[]}
       allProjects={(allProjects ?? []) as Project[]}
       bias={bias as EstimationProfile | null}
-      streaks={streaks}
+      summaries={summaries}
       gcalWriteEnabled={gcalWriteEnabled}
       links={(links ?? []) as { task_id: string; event_id: string }[]}
       events={(events ?? []) as CalendarEvent[]}

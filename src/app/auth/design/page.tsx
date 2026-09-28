@@ -25,7 +25,8 @@ import { Project, Task } from '@/types'
 import { TASK_LAYOUT_IMPLS, type LayoutTask } from '@/components/TaskRowLayouts'
 import { TASK_LAYOUTS, type TaskLayoutId } from '@/lib/task-layouts'
 import { CONTROL, Segmented, Toggle, HabitRow, HabitList } from '@/components/TaskChrome'
-import { HabitStreak, CalendarEvent } from '@/types'
+import { CalendarEvent } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import QuickAddInput from '@/components/quick-add/QuickAddInput'
 import AddTaskModal from '@/components/AddTaskModal'
 import SettingsView, { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
@@ -107,11 +108,11 @@ const OTHERS: LayoutTask[] = [
 
 const HABITS = [
   { t: task({ title: 'Gym',   project: HOME, type: 'habit', weekly_target: 2, estimated_minutes: 90 }),
-    s: { task_id: '1', current_streak: 3, longest_streak: 9, last_completed: '', week_start: '', completions_this_week: 2 } },
+    s: { streak: { value: 3, unit: 'w' }, best: { value: 9, unit: 'w' }, thisWeek: 2, lastDone: day(-1).slice(0, 10) } },
   { t: task({ title: 'Piano', project: HOME, type: 'habit', weekly_target: 7, estimated_minutes: 60, rrule: 'FREQ=DAILY' }),
-    s: { task_id: '2', current_streak: 12, longest_streak: 12, last_completed: '', week_start: '', completions_this_week: 4 } },
+    s: { streak: { value: 12, unit: 'd' }, best: { value: 12, unit: 'd' }, thisWeek: 4, lastDone: day(0).slice(0, 10) } },
   { t: task({ title: 'Learn Language', project: HOME, type: 'habit' }), s: null },
-] as { t: LayoutTask; s: HabitStreak | null }[]
+] as { t: LayoutTask; s: HabitSummary | null }[]
 
 /** Fixed at module load: a fixture date, not a clock read during render. */
 const FIXTURE_TODAY = new Date().toISOString().slice(0, 10)
@@ -209,7 +210,7 @@ function LayoutPreview({ id, expanded, onToggle }: {
           isChild={isChild}
           kidCount={kids}
           collapsed={!expanded}
-          streak={null}
+          summary={null}
           onToggleFold={onToggle}
           onOpen={() => {}}
           onDone={e => e.stopPropagation()}
@@ -478,7 +479,7 @@ function HomePreview() {
           habits={HABITS.map(h => h.t)}
           /* One already logged, so the ticked state is on screen too. */
           habitsDoneToday={[HABITS[1].t.id]}
-          streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
+          summaries={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
           projects={[PP, TEACH, CLIN, HOME, COURSE]}
           gcalWriteEnabled
           calendarConnected
@@ -746,7 +747,7 @@ function TaskListPreview() {
         <TaskList
           tasks={rows}
           projects={[PP, TEACH, CLIN, HOME, COURSE, INBOX]}
-          streaks={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
+          summaries={Object.fromEntries(HABITS.filter(h => h.s).map(h => [h.t.id, h.s!]))}
           events={[]}
           gcalWriteEnabled
           weekStartDay={1}
@@ -954,7 +955,7 @@ function ProjectDetailSpecimen() {
         allProjects={[project]}
         bias={{ id: 'b', project_id: 'clinic', sample_count: 1, bias_ratio: 1.25,
                 updated_at: '2026-09-15T00:00:00Z' }}
-        streaks={{}}
+        summaries={{}}
         gcalWriteEnabled={false}
         links={[{ task_id: 'sow', event_id: 'e1' }, { task_id: 'rep', event_id: 'e2' }]}
         events={events}
@@ -1026,7 +1027,7 @@ function HabitsSpecimen() {
         completionMap={completionMap}
         doneToday={['piano', 'gym']}
         projects={[project]}
-        streaks={{}}
+        summaries={{}}
         gcalWriteEnabled={false}
         weekStartDay={1}
         tz={tz}
@@ -1323,7 +1324,7 @@ export default function DesignPreview() {
                 </div>
                 <HabitList count={HABITS.length}>
                   {HABITS.map(h => (
-                    <HabitRow key={h.t.id} task={h.t} streak={h.s} pending={false}
+                    <HabitRow key={h.t.id} task={h.t} summary={h.s} pending={false}
                       onOpen={() => {}} onDone={e => e.stopPropagation()} onLogTime={e => e.stopPropagation()} />
                   ))}
                 </HabitList>

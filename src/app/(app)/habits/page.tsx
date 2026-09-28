@@ -1,7 +1,7 @@
 import { createServiceClient } from '@/lib/supabase/server'
 import { Project } from '@/types'
 import { fetchWeekStartDay } from '@/lib/week'
-import { fetchTimezone, todayStr, startOfLocalDay, addDays } from '@/lib/day'
+import { fetchTimezone, todayStr } from '@/lib/day'
 import { fetchTodaysHabits } from '@/lib/habits'
 import HabitsView from './HabitsView'
 
@@ -17,13 +17,9 @@ export default async function HabitsPage() {
   const today = todayStr(tz)
   const weekStartDay = await fetchWeekStartDay(db)
 
-  // Sixteen weeks back, for the completion calendar. Home reads the same
-  // function with a one-week window; the weekly count is identical either way.
-  const cutoff = startOfLocalDay(addDays(today, -112), tz).toISOString()
-
-  const [{ habits, doneTodayIds, streaks, completionMap }, { data: projects }, { data: integration }] =
+  const [{ habits, doneTodayIds, summaries, completionMap }, { data: projects }, { data: integration }] =
     await Promise.all([
-      fetchTodaysHabits(db, { tz, today, weekStartDay, completionsSinceISO: cutoff }),
+      fetchTodaysHabits(db, { tz, today, weekStartDay }),
       db.from('projects').select('*').eq('archived', false).order('name'),
       db.from('user_integrations').select('id, scopes').eq('provider', 'google').maybeSingle(),
     ])
@@ -38,7 +34,7 @@ export default async function HabitsPage() {
       completionMap={completionMap}
       doneToday={doneTodayIds}
       projects={(projects ?? []) as Project[]}
-      streaks={streaks}
+      summaries={summaries}
       gcalWriteEnabled={gcalWriteEnabled}
       weekStartDay={weekStartDay}
       tz={tz}

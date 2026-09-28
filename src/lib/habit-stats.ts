@@ -130,6 +130,86 @@ export function habitStreak(opts: {
   return { value: n, unit: 'w' }
 }
 
+/**
+ * The longest streak ever, in the same unit as `habitStreak`.
+ *
+ * Needs the whole completion history, not a recent window — which is why the
+ * pages read every completion rather than the last few weeks. For a single
+ * user that is a few rows a day (41 in total on 2026-09-28).
+ */
+export function longestStreak(opts: {
+  weeklyTarget: number | null
+  days:         string[]
+  todayStr:     string
+  weekStartDay: number
+}): Streak | null {
+  const { weeklyTarget, days, todayStr, weekStartDay } = opts
+  const c = cadence(weeklyTarget)
+  if (c.kind === 'anytime') return null
+  if (!days.length) return { value: 0, unit: c.kind === 'daily' ? 'd' : 'w' }
+
+  if (c.kind === 'daily') {
+    let best = 0, run = 0, prev: string | null = null
+    for (const d of days) {
+      run = prev !== null && addDays(prev, 1) === d ? run + 1 : 1
+      best = Math.max(best, run)
+      prev = d
+    }
+    return { value: best, unit: 'd' }
+  }
+
+  const target = c.target!
+  const perWeek = new Map<string, number>()
+  for (const d of days) {
+    const w = weekStartOfDay(d, weekStartDay)
+    perWeek.set(w, (perWeek.get(w) ?? 0) + 1)
+  }
+  let best = 0, run = 0
+  const last = weekStartOfDay(todayStr, weekStartDay)
+  for (let w = weekStartOfDay(days[0], weekStartDay); w <= last; w = addDays(w, 7)) {
+    run = (perWeek.get(w) ?? 0) >= target ? run + 1 : 0
+    best = Math.max(best, run)
+  }
+  return { value: best, unit: 'w' }
+}
+
+/**
+ * Everything a habit row or its detail panel says about a habit, derived from
+ * its completion days. Replaces the `habit_streaks` table, which was keyed by
+ * an occurrence id that every completion retired and so could only ever say 0
+ * or 1 (#38).
+ */
+export interface HabitSummary {
+  /** Null for a habit with no weekly target: nothing to be consecutive in. */
+  streak:   Streak | null
+  best:     Streak | null
+  /** Distinct days done since the start of the current week. */
+  thisWeek: number
+  /** The most recent local day it was done, or null if never. */
+  lastDone: string | null
+}
+
+export function habitSummary(opts: {
+  weeklyTarget: number | null
+  days:         string[]
+  todayStr:     string
+  weekStartDay: number
+}): HabitSummary {
+  const weekStart = weekStartOfDay(opts.todayStr, opts.weekStartDay)
+  return {
+    streak:   habitStreak(opts),
+    best:     longestStreak(opts),
+    thisWeek: opts.days.filter(d => d >= weekStart).length,
+    lastDone: opts.days.length ? opts.days[opts.days.length - 1] : null,
+  }
+}
+
+/** "12 days", "1 week". */
+export function streakWords(s: Streak): string {
+  const word = s.unit === 'd' ? 'day' : 'week'
+  return `${s.value} ${word}${s.value === 1 ? '' : 's'}`
+}
+
 export interface StripDay {
   day:  string
   done: boolean

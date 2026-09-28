@@ -10,7 +10,8 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Task, Project, HabitStreak, INBOX_PROJECT } from '@/types'
+import { Task, Project, INBOX_PROJECT } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import { useTimer } from '@/contexts/TimerContext'
 import { WarningIcon } from '@/components/icons'
 import { HabitRow, HabitList, CONTROL } from '@/components/TaskChrome'
@@ -41,7 +42,7 @@ interface Props {
   habits:            TaskRow[]
   /** Ids among `habits` already logged today — drawn ticked, not hidden. */
   habitsDoneToday:   string[]
-  streaks:           Record<string, HabitStreak>
+  summaries:           Record<string, HabitSummary>
   projects:          Project[]
   gcalWriteEnabled:  boolean
   calendarConnected: boolean
@@ -77,7 +78,7 @@ interface Props {
 }
 
 export default function HomeView({
-  data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, streaks, projects,
+  data, dayStr, tz, allDayEvents, tasks, habits, habitsDoneToday, summaries, projects,
   gcalWriteEnabled, calendarConnected, syncAge, freeTime, band,
   railItems, railSort, windowLabel,
 }: Props) {
@@ -434,7 +435,7 @@ export default function HomeView({
                   <HabitRow
                     key={h.id}
                     task={h}
-                    streak={streaks[h.id] ?? null}
+                    summary={summaries[h.id] ?? null}
                     pending={pendingHabits.has(h.id)}
                     doneToday={habitDone(h.id)}
                     onOpen={() => setDetail({ ...h, project: h.project ?? INBOX_PROJECT })}
@@ -465,7 +466,7 @@ export default function HomeView({
         <TaskDetail
           task={detail}
           projects={projects}
-          streak={streaks[detail.id] ?? null}
+          summary={summaries[detail.id] ?? null}
           gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => { setDetail(null); router.refresh() }}
         />

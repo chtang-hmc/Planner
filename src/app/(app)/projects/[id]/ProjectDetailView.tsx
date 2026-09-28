@@ -15,7 +15,8 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Task, Project, EstimationProfile, HabitStreak, CalendarEvent } from '@/types'
+import { Task, Project, EstimationProfile, CalendarEvent } from '@/types'
+import type { HabitSummary } from '@/lib/habit-stats'
 import { isActiveTask, isDoneTask } from '@/lib/projects'
 import {
   projectStats, projectContext, repeatingTasks, linkedEvents, calendarTotal,
@@ -43,7 +44,7 @@ interface Props {
   tasks:            FullTask[]
   allProjects:      Project[]
   bias:             EstimationProfile | null
-  streaks:          Record<string, HabitStreak>
+  summaries:          Record<string, HabitSummary>
   gcalWriteEnabled: boolean
   links:            { task_id: string; event_id: string }[]
   events:           CalendarEvent[]
@@ -54,7 +55,7 @@ interface Props {
 }
 
 export default function ProjectDetailView({
-  project, tasks, allProjects, bias, streaks, gcalWriteEnabled,
+  project, tasks, allProjects, bias, summaries, gcalWriteEnabled,
   links, events, todayStr, tz, windowMs,
 }: Props) {
   const [detailTask,     setDetailTask]     = useState<(Task & { project: Project }) | null>(null)
@@ -226,7 +227,7 @@ export default function ProjectDetailView({
         <TaskDetail
           task={detailTask}
           projects={allProjects}
-          streak={streaks[detailTask.id] ?? null}
+          summary={summaries[detailTask.id] ?? null}
           gcalWriteEnabled={gcalWriteEnabled}
           onClose={() => setDetailTask(null)}
         />

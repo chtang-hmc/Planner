@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  completionDaysByTitle, weeklyDayCounts, oneRowPerTitle, patchWeeklyProgress, availableBefore,
+  completionDaysByTitle, oneRowPerTitle, summariesFor, availableBefore,
 } from '@/lib/habits'
-import type { HabitStreak, Project, Task } from '@/types'
+import type { Project, Task } from '@/types'
 
 const TZ = 'America/Los_Angeles'
 const PROJECT = { id: 'p', name: 'Home', color: '#000', archived: false, created_at: '' } as Project
@@ -41,18 +41,17 @@ describe('completion days are local days, per title', () => {
 })
 
 describe('weekly counts start at the configured week start', () => {
-  const map = { Piano: ['2026-09-13', '2026-09-14', '2026-09-17', '2026-09-19'] }
+  const map = { Piano: ['2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16'] }
+  const week = (weekStartDay: number) =>
+    summariesFor([{ id: 'p', title: 'Piano', weekly_target: 7 }], map, '2026-09-16', weekStartDay).p.thisWeek
 
-  it('excludes the day before the week began', () => {
-    expect(weeklyDayCounts(map, '2026-09-14').Piano).toBe(3)   // Monday start
+  it('counts from the week start the user chose', () => {
+    expect(week(1)).toBe(3)   // Monday start: the 13th is last week
+    expect(week(0)).toBe(4)   // Sunday start
   })
 
-  it('includes it when the week starts on Sunday', () => {
-    expect(weeklyDayCounts(map, '2026-09-13').Piano).toBe(4)
-  })
-
-  it('is zero for a habit with nothing this week', () => {
-    expect(weeklyDayCounts({ Run: ['2026-08-01'] }, '2026-09-14').Run).toBe(0)
+  it('counts nothing for a habit last done in a previous week', () => {
+    expect(summariesFor([{ id: 'r', title: 'Run', weekly_target: 3 }], { Run: ['2026-08-01'] }, '2026-09-16', 1).r.thisWeek).toBe(0)
   })
 })
 
@@ -84,39 +83,24 @@ describe('one row per habit', () => {
   })
 })
 
-describe('weekly progress is patched onto the row on screen', () => {
+describe('summaries follow the title, not the row', () => {
   /**
-   * The bug this file exists for. Completing a habit closes its row and spawns
-   * a new one, so `habit_streaks` — keyed by task_id — holds a count for an id
-   * that is no longer displayed. On 2026-09-20 there was no row at all for any
-   * open habit, and Home showed Piano at 0/7 in a week it had been played six
-   * times.
+   * #38. Completing a habit closes its row and spawns a new one, so a streak
+   * stored against the row's id was always written to an id that was about to
+   * be retired, and could never read more than 1. Derived from the title's
+   * completion days, the row on screen gets the history its predecessors made.
    */
-  it('gives the current row a count the old row earned', () => {
-    const streaks = patchWeeklyProgress(
-      { 'retired-id': { task_id: 'retired-id', current_streak: 6, longest_streak: 6, last_completed: '2026-09-19', week_start: '2026-09-14', completions_this_week: 6 } },
-      [{ id: 'todays-id', title: 'Piano' }],
-      { Piano: 6 },
-      '2026-09-14',
-    )
-    expect(streaks['todays-id'].completions_this_week).toBe(6)
-  })
-
-  it('zeroes rather than omits a habit with no streak row', () => {
-    const streaks = patchWeeklyProgress({}, [{ id: 'x', title: 'Run' }], {}, '2026-09-14')
-    expect(streaks.x).toMatchObject({ completions_this_week: 0, current_streak: 0 })
-  })
-
-  it('keeps the streak numbers, which only that table has', () => {
-    const prev: HabitStreak = {
-      task_id: 'x', current_streak: 12, longest_streak: 30,
-      last_completed: '2026-09-19', week_start: '2026-09-07', completions_this_week: 1,
-    }
-    const streaks = patchWeeklyProgress({ x: prev }, [{ id: 'x', title: 'Piano' }], { Piano: 6 }, '2026-09-14')
-    expect(streaks.x).toMatchObject({
-      current_streak: 12, longest_streak: 30, last_completed: '2026-09-19',
-      completions_this_week: 6, week_start: '2026-09-14',
+  it('gives today’s row the streak the retired rows earned', () => {
+    const days = ['2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15', '2026-09-16']
+    const s = summariesFor([{ id: 'todays-id', title: 'Piano', weekly_target: 7 }], { Piano: days }, '2026-09-16', 1)
+    expect(s['todays-id']).toEqual({
+      streak: { value: 5, unit: 'd' }, best: { value: 5, unit: 'd' }, thisWeek: 3, lastDone: '2026-09-16',
     })
+  })
+
+  it('gives a never-done habit zeroes rather than nothing', () => {
+    const s = summariesFor([{ id: 'x', title: 'Run', weekly_target: 3 }], {}, '2026-09-16', 1)
+    expect(s.x).toMatchObject({ thisWeek: 0, lastDone: null, streak: { value: 0, unit: 'w' } })
   })
 })
 

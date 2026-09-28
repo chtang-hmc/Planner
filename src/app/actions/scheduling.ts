@@ -167,10 +167,9 @@ async function buildHabitCandidates(
   // habit title. Two sessions on one day count once — a weekly target means
   // that many days, not that many completions.
   //
-  // Not read from habit_streaks.completions_this_week: that table is keyed by
-  // task_id, but every occurrence is a new row with a new id, so the counter
-  // for the current pending row is always 0 and the target would never shrink.
-  // Title is the habit's real identity here, as it is for the streak calendar.
+  // Title is the habit's real identity: every occurrence is a new row with a
+  // new id, which is why the old per-id counter in habit_streaks always read 0
+  // (the table is gone, #38).
   const { data: doneRows } = await db
     .from('tasks')
     .select('title, completed_at')

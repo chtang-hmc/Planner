@@ -5,7 +5,6 @@ import { revalidateTaskViews } from '@/lib/revalidate'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
 import { getNextOccurrence } from '@/lib/rrule-utils'
-import { weekStartOfDay, fetchWeekStartDay } from '@/lib/week'
 import {
   fetchTimezone, localDayStr, todayStr, localDayRange, startOfLocalDay,
   addDays as addDayStr,
@@ -321,46 +320,9 @@ export async function completeTask(
       })
     }
 
-    // Start of the current week, per the user's configured first day
-    const weekStartStr = weekStartOfDay(completedDay, await fetchWeekStartDay(db))
-
-    const { data: streak } = await db
-      .from('habit_streaks')
-      .select('*')
-      .eq('task_id', taskId)
-      .maybeSingle()
-
-    if (streak) {
-      // Already logged today: completing again is a no-op. Without this the
-      // streak check below sees last_completed === today (not yesterday),
-      // reads it as "not consecutive" and resets a long streak to 1.
-      if (streak.last_completed !== completedDay) {
-        // Consecutive-day streak
-        const consecutive = streak.last_completed === addDayStr(completedDay, -1)
-        const newStreak = consecutive ? streak.current_streak + 1 : 1
-
-        // Weekly count — reset if the stored week_start is from a different week
-        const sameWeek = streak.week_start === weekStartStr
-        const newWeeklyCount = sameWeek ? (streak.completions_this_week + 1) : 1
-
-        await db.from('habit_streaks').update({
-          current_streak:        newStreak,
-          longest_streak:        Math.max(newStreak, streak.longest_streak),
-          last_completed:        completedDay,
-          completions_this_week: newWeeklyCount,
-          week_start:            weekStartStr,
-        }).eq('task_id', taskId)
-      }
-    } else {
-      await db.from('habit_streaks').insert({
-        task_id:               taskId,
-        current_streak:        1,
-        longest_streak:        1,
-        last_completed:        completedDay,
-        completions_this_week: 1,
-        week_start:            weekStartStr,
-      })
-    }
+    // No streak bookkeeping here. `habit_streaks` was keyed by the id this
+    // completion just retired, so it could only ever say 1; streaks are now
+    // derived from completion days by title wherever they're shown (#38).
   }
 
   revalidateTaskViews()
@@ -580,8 +542,6 @@ export async function deleteHabit(title: string): Promise<{ error?: string }> {
       )
     }
   }
-
-  await db.from('habit_streaks').delete().in('task_id', ids)
 
   const { error } = await db.from('tasks').delete().in('id', ids)
   if (error) return { error: error.message }
