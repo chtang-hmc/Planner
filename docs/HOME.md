@@ -115,7 +115,8 @@ the list — sort to the very bottom. The scheduler already avoids this by readi
 made at creation. **Home must resolve the same way.**
 
 Subtasks are offered as a run where a chain fits, the same way the scheduler
-groups them: "2 readings" rather than one at a time.
+groups them: "2 readings" rather than one at a time, and costed the same way: one
+buffer pair around the run, as wide as its widest step's.
 
 ## Data and speed
 

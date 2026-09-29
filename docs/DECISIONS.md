@@ -787,7 +787,7 @@ Subtasks of one parent share a `chainGroup` and are placed as a run: **no buffer
 
 Each sitting takes the slot that fits the **most** members, not the tightest-fitting one — the goal is to group the chain as tightly as the week allows rather than scatter it one subtask at a time. Members still get their own block each, so each keeps its own calendar event and row; they are merely adjacent.
 
-The run is constrained by its strictest member: widest buffer, earliest deadline, any location that isn't `anywhere`. A run is capped at `maxSessionMinutes`, so five 20-minute readings against a 90-minute cap become 4 + 1 rather than one 100-minute block — raising the max session length groups more per sitting.
+The run is constrained by its strictest member: widest buffer, earliest deadline, any location that isn't `anywhere`. Home's "what fits this gap" follows the same rule (#44): it used to take the run's buffer from its first step, so readings ending at the post office were costed as if nobody left the desk and offered for a gap 30 minutes too short. First-step-in, last-step-out was considered and rejected: it makes a reading plus an errand cheaper than the errand alone. A run is capped at `maxSessionMinutes`, so five 20-minute readings against a 90-minute cap become 4 + 1 rather than one 100-minute block — raising the max session length groups more per sitting.
 
 ### Multi-stage work (fixed waits)
 

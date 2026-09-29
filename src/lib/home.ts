@@ -505,14 +505,21 @@ export function rankForGap(
 
   for (const members of chains.values()) {
     const ordered = [...members].sort((a, b) => a.chainIndex - b.chainIndex)
-    // One buffer pair around the whole run, none between the steps.
-    const edge = 2 * edgeBuffer(ordered[0], input.bufferMinutes)
+    // One buffer pair around the whole run, none between the steps — sized by
+    // the largest buffer of any step in it, not the first one's (#44). A run
+    // of readings ending at the post office still pays the trip out and back.
+    // The first step's buffer at the start and the last's at the end would
+    // sound fairer, but it makes a reading plus an errand cheaper than the
+    // errand alone, so the pair could fit a gap the errand cannot.
     const run: HomeTask[] = []
     let used = 0
+    let edge = 0
     for (const m of ordered) {
-      if (edge + used + m.minutes! > gapMinutes) break
+      const nextEdge = Math.max(edge, edgeBuffer(m, input.bufferMinutes))
+      if (2 * nextEdge + used + m.minutes! > gapMinutes) break
       run.push(m)
       used += m.minutes!
+      edge = nextEdge
     }
     if (run.length > 0) out.push(make(run, used))
   }
