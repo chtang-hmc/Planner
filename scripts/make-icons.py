@@ -54,7 +54,10 @@ def main() -> None:
     for name in ('apple-touch-icon.png', 'apple-touch-icon-precomposed.png'):
         touch.save(ROOT / 'public' / name, optimize=True)
     # The browser-tab icon, which was still the Next.js starter's triangle.
-    full.save(ROOT / 'src' / 'app' / 'favicon.ico', sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
+    # RGBA, not RGB: the ICO embeds its 256px image as a PNG, and Next's build
+    # refuses an ICO whose PNG has no alpha channel ("The PNG is not in RGBA
+    # format"), though the dev server serves it without complaint.
+    full.convert('RGBA').save(ROOT / 'src' / 'app' / 'favicon.ico', sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
     print('wrote', sorted(p.name for p in OUT.iterdir()))
 
 
