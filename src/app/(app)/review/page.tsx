@@ -11,6 +11,8 @@ export interface ReviewData {
   // Step 1: This week
   weeklyCompleted: (Task & { project: Project })[]
   weekStart: string   // ISO date of the current week's first day
+  /** Today in the configured zone, YYYY-MM-DD: what "overdue" is measured against. */
+  today: string
 
   // Step 2: Overdue
   overdue: (Task & { project: Project })[]
@@ -81,6 +83,7 @@ export default async function ReviewPage() {
       (completedThisWeek ?? []) as (Task & { project: Project | null })[]
     ),
     weekStart: weekStart,
+    today,
     overdue,
     inbox,
     upcoming,

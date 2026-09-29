@@ -30,13 +30,6 @@ function formatDate(iso: string) {
   })
 }
 
-/** Today where the user is, as YYYY-MM-DD — the same shape a due date slices to. */
-function localToday() {
-  const d = new Date()
-  return d.getFullYear() + '-'
-    + String(d.getMonth() + 1).padStart(2, '0') + '-'
-    + String(d.getDate()).padStart(2, '0')
-}
 
 // ── Step config ───────────────────────────────────────────────────────────────
 
@@ -55,9 +48,15 @@ interface TriageRowProps {
   task: Task & { project: Project }
   actions: { label: string; emoji: string; action: () => void; color?: string }[]
   triaged: boolean
+  /**
+   * Today from the server, in the configured zone (#48). This read the
+   * browser's clock and zone, which is a second answer to "what day is it":
+   * a phone set to another zone disagreed with the page's own overdue list.
+   */
+  today: string
 }
 
-function TaskTriageRow({ task, actions, triaged }: TriageRowProps) {
+function TaskTriageRow({ task, actions, triaged, today }: TriageRowProps) {
   if (triaged) return null
   const est = task.adjusted_minutes ?? task.estimated_minutes
 
@@ -74,7 +73,7 @@ function TaskTriageRow({ task, actions, triaged }: TriageRowProps) {
           </span>
           {est && <span className="text-xs text-slate-400 font-mono">{formatMinutes(est)}</span>}
           {task.due_date && (
-            <span className={`text-xs font-medium ${task.due_date.slice(0, 10) < localToday() ? 'text-red-500' : 'text-slate-400'}`}>
+            <span className={`text-xs font-medium ${task.due_date.slice(0, 10) < today ? 'text-red-500' : 'text-slate-400'}`}>
               {formatDate(task.due_date)}
             </span>
           )}
@@ -235,9 +234,10 @@ const VARIANT_CONFIG: Record<TriageVariant, {
   },
 }
 
-function TriageStep({ variant, tasks, onNext }: {
+function TriageStep({ variant, tasks, today, onNext }: {
   variant: TriageVariant
   tasks: (Task & { project: Project })[]
+  today: string
   onNext: () => void
 }) {
   const [triaged, setTriaged] = useState<Set<string>>(new Set())
@@ -267,6 +267,7 @@ function TriageStep({ variant, tasks, onNext }: {
             key={task.id}
             task={task}
             triaged={triaged.has(task.id)}
+            today={today}
             actions={cfg.actions(task.id, triage)}
           />
         ))
@@ -402,13 +403,13 @@ export default function ReviewView({ data }: { data: ReviewData }) {
       case 'recap':
         return <RecapStep completed={data.weeklyCompleted} weekStart={data.weekStart} onNext={next} />
       case 'overdue':
-        return <TriageStep variant="overdue" tasks={data.overdue} onNext={next} />
+        return <TriageStep variant="overdue" tasks={data.overdue} today={data.today} onNext={next} />
       case 'inbox':
-        return <TriageStep variant="inbox" tasks={data.inbox} onNext={next} />
+        return <TriageStep variant="inbox" tasks={data.inbox} today={data.today} onNext={next} />
       case 'upcoming':
-        return <TriageStep variant="upcoming" tasks={data.upcoming} onNext={next} />
+        return <TriageStep variant="upcoming" tasks={data.upcoming} today={data.today} onNext={next} />
       case 'someday':
-        return <TriageStep variant="someday" tasks={data.someday} onNext={next} />
+        return <TriageStep variant="someday" tasks={data.someday} today={data.today} onNext={next} />
       case 'done':
         return <DoneStep data={data} onSave={() => setSaved(true)} />
     }
