@@ -148,13 +148,14 @@ ANTHROPIC_API_KEY=
 ALLOWED_EMAIL=you@example.com
 ```
 
-Two more matter only in production, and are covered under *Deployment*:
-`CRON_SECRET` and `NEXT_PUBLIC_SITE_URL`.
+More matter only in production, and are covered under *Deployment*:
+`CRON_SECRET`, `NOTIFY_CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, and the Web Push
+keys `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT`.
 
 ### Database
 
 Apply everything in `supabase/migrations/` in filename order — `0001` through
-`0021` as of 2026-09-23. `0001` carries the full schema, the PL/pgSQL functions
+`0024` as of 2026-09-29. `0001` carries the full schema, the PL/pgSQL functions
 and RLS; the rest are additive. There is no `0003`.
 
 Then set up the nightly jobs once, in the Supabase SQL editor:
