@@ -1359,6 +1359,14 @@ The owner chose eleven notifications from a list of 23. Everything about a task'
 - **The scheduler is `pg_cron` + `pg_net`, every five minutes** (migration 0024), calling `/api/cron/notify` with `NOTIFY_CRON_SECRET` read from Supabase Vault. It has its own secret rather than reusing the calendar sync's `CRON_SECRET`, because Vercel won't display a sensitive variable after it's saved. Reusing it would have meant rotating it in three places, and breaking the working sync if one was missed. Vercel's cron can't do it on Hobby, which allows one run a day. GitHub Actions can't either: its schedule runs late by up to half an hour.
 - **Each send happens once because of `notification_log`.** The key is inserted before sending, and only the tick that wins the insert sends, so overlapping ticks can't double up. If every device fails, the key is deleted so the next tick in the 90-minute window retries. After the window closes, the send is skipped: a morning summary at lunchtime is worse than none.
 
+## Working from the phone (2026-09-29)
+
+The repo is set up for Claude Code cloud sessions: the Code tab in the Claude iPhone app, or claude.ai/code. A cloud session clones the repo into a fresh VM.
+
+- **`npm ci` runs from a committed SessionStart hook** (`scripts/cloud-setup.sh`) rather than only from the cloud environment's setup script. The hook travels with the repo, so any environment works, and the one-line guard on `CLAUDE_CODE_REMOTE` keeps it from reinstalling packages on the Mac.
+- **No secrets in the cloud environment, to start with.** Every check a PR needs (`tsc`, `eslint`, the tests) runs without them. Adding the Supabase service-role key would give a VM full database access for the sake of occasional live-data checks, which can stay on the Mac.
+- **The alternative is Remote Control**: driving a session on the Mac from the phone. It has everything the Mac has (`.env.local`, `ui/`, the database), but the Mac must stay on and awake. The two approaches don't conflict.
+
 ## Navigation
 
 ### Below 640px the sidebar is replaced, not shrunk (2026-09-21)

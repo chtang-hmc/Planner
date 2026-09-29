@@ -2,6 +2,15 @@
 
 # Planner — Claude Code Guidelines
 
+## How to reply
+
+Structure every substantive reply as three headings, in this order:
+**WHAT I DID:**, **WHAT I PLAN TO DO NEXT:**, **ACTION ITEMS FOR YOU:**.
+Findings, measurements and caveats go under the first. Anything that needs the
+owner's decision, review or a migration run goes under the last. Write
+"nothing" rather than dropping a heading. This is a standing instruction from
+the owner, kept here so a session on the phone or the web follows it too.
+
 ## Project orientation
 
 Personal productivity planner. Single-user. Next.js 16 App Router + Supabase + Google OAuth + Google Calendar sync.
@@ -69,6 +78,25 @@ Two trackers that overlap is how one of them stops being updated.
 When a `TODO.md` entry becomes actionable, open an issue and **delete** the
 entry. Do not leave a pointer behind — "see #24" is one more thing to keep in
 sync.
+
+## Sessions in the cloud (the phone and claude.ai/code)
+
+A cloud session clones this repo into a fresh machine. What it has and lacks:
+
+- **Packages install themselves.** `scripts/cloud-setup.sh` runs `npm ci`
+  from a SessionStart hook in `.claude/settings.json`, only when
+  `CLAUDE_CODE_REMOTE=true`. Locally it does nothing.
+- **`tsc`, `eslint` and `npm test` all work** with no secrets, because the
+  tests are pure. Checked 2026-09-29 in a fresh clone: 633 tests pass.
+- **There is no `.env.local`**, so there is no database, Google or Anthropic
+  access. Anything that reads live data (a dry run of the notification
+  scheduler, a row count) can't be done there. Say so, rather than guessing a
+  number.
+- **There is no `ui/` folder.** The designer's handoff is gitignored and
+  exists only on the Mac, at `ui/`. Don't reconstruct it from git history,
+  which holds an older copy.
+- **The work arrives as a branch.** Open a PR from it as usual; CI and the
+  Vercel preview run on it the same way.
 
 ## Code conventions
 
