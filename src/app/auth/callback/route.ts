@@ -2,6 +2,7 @@ import { NextResponse, after, type NextRequest } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
 import { originOrConfigured } from '@/lib/request-origin'
+import { isAllowed, ownsCalendar } from '@/lib/allowed-emails'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -35,8 +36,7 @@ export async function GET(request: NextRequest) {
        * matters — without it the cookies are already set and only the redirect
        * stands in the way.
        */
-      const allowedEmail = process.env.ALLOWED_EMAIL
-      if (allowedEmail && session.user.email !== allowedEmail) {
+      if (!isAllowed(session.user.email, process.env.ALLOWED_EMAIL)) {
         await supabase.auth.signOut()
         return NextResponse.redirect(`${origin}/403`)
       }
@@ -44,7 +44,12 @@ export async function GET(request: NextRequest) {
       // If the user granted calendar scope, store tokens and do an initial sync.
       // provider_token = Google access token; provider_refresh_token = Google refresh token.
       // Both are present when access_type: offline + prompt: consent were requested.
-      if (session.provider_token && session.provider_refresh_token) {
+      //
+      // Only for the account that owns the calendar: the first address in
+      // ALLOWED_EMAIL. A second allowed account signs in without replacing the
+      // connection, or its calendar would become the one every sync reads.
+      if (session.provider_token && session.provider_refresh_token
+          && ownsCalendar(session.user.email, process.env.ALLOWED_EMAIL)) {
         const db = createServiceClient()
         const tokenExpiry = session.expires_at
           ? new Date(session.expires_at * 1000).toISOString()

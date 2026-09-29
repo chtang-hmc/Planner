@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isAllowed } from '@/lib/allowed-emails'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -93,9 +94,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Enforce single-owner access: if ALLOWED_EMAIL is set, reject anyone else
-  const allowedEmail = process.env.ALLOWED_EMAIL
-  if (user && allowedEmail && user.email !== allowedEmail && !isAuthRoute) {
+  // Enforce owner-only access: if ALLOWED_EMAIL is set, reject anyone not on it
+  // (one address or a comma-separated list; see lib/allowed-emails).
+  if (user && !isAllowed(user.email, process.env.ALLOWED_EMAIL) && !isAuthRoute) {
     return NextResponse.redirect(new URL('/403', request.url))
   }
 
