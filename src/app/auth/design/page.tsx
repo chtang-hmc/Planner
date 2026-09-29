@@ -34,7 +34,6 @@ import { relevanceHint } from '@/lib/relevance'
 import { DEFAULT_PREFS } from '@/lib/notify'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
-import CalendarPanel from '@/components/CalendarPanel'
 import { TimerProvider } from '@/contexts/TimerContext'
 import HomeView from '@/app/(app)/HomeView'
 import TaskList from '@/app/(app)/tasks/TaskList'
@@ -163,16 +162,7 @@ function ToolbarPreview() {
   )
 }
 
-const EVENTS: CalendarEvent[] = [
-  { id: 'e1', gcal_id: 'e1', title: 'Clinic Overall Meeting', all_day: false, source: 'google_calendar',
-    start_time: new Date(Date.now() + 36e5).toISOString(),  end_time: new Date(Date.now() + 72e5).toISOString() },
-  { id: 'e2', gcal_id: 'e2', title: 'Piano', all_day: false, source: 'google_calendar',
-    start_time: new Date(Date.now() + 108e5).toISOString(), end_time: new Date(Date.now() + 144e5).toISOString() },
-  { id: 'e3', gcal_id: 'e3', title: 'Meeting w/ Castro', all_day: false, source: 'google_calendar',
-    start_time: new Date(Date.now() + 9e7).toISOString(),   end_time: new Date(Date.now() + 9.36e7).toISOString() },
-]
-
-/** Sidebar and calendar panel in place, at their real widths. */
+/** The sidebar in place, at its real width. */
 function ChromePreview() {
   const projects = [PP, TEACH, CLIN, HOME, COURSE]
   return (
@@ -185,7 +175,6 @@ function ChromePreview() {
         <div className="flex-1 bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
           <p className="text-[11px] text-slate-400">page content</p>
         </div>
-        <CalendarPanel events={EVENTS} connected />
       </div>
     </TimerProvider>
   )
@@ -1300,7 +1289,7 @@ export default function DesignPreview() {
               </section>
               <section>
                 <div className="flex items-baseline gap-3 mb-4">
-                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Sidebar &amp; calendar panel</h2>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Sidebar</h2>
                   <div className="flex-1 h-px bg-slate-200 dark:bg-slate-800" />
                 </div>
                 <ChromePreview />
