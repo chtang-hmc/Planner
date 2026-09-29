@@ -118,7 +118,6 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 
 - `0001_initial_schema.sql` — full schema + `recompute_urgency_scores()` + `recompute_energy_patterns()` PL/pgSQL functions + RLS policies
 - `0002_nullable_project_id.sql` — made `tasks.project_id` nullable so tasks can live in an "Inbox" (no project assigned)
-- `0003_scheduling_columns.sql` — added `gcal_event_id`, `scheduled_start`, `scheduled_end` to `tasks`
 - `0004_scheduling.sql` — `user_working_hours`, `user_energy_schedule`, `user_scheduling_config`; `scheduled_by` on `tasks`
 - `0005_habit_weekly_target.sql` — `tasks.weekly_target`; `completions_this_week` + `week_start` on `habit_streaks`
 - `0006_week_start_day.sql` — `user_scheduling_config.week_start_day` (0 = Sun, 1 = Mon, 6 = Sat)
@@ -131,6 +130,17 @@ These are null until the user explicitly blocks time from TaskDetail. `gcal_even
 - `0013_task_start_date.sql` — `tasks.start_date`; earliest a task may be scheduled ("not before")
 - `0014_user_timezone.sql` — `user_scheduling_config.timezone`; habit days are the user's calendar days, and the server needs to know which zone that is
 - `0015_task_due_time_and_completion_anchor.sql` — `tasks.due_time_minutes` (a wall-clock time beside the day, never inside it) and `tasks.rrule_from_completion` (`every!`)
+- `0016_one_habit_completion_per_day.sql` — a habit records at most one completion per local day, enforced in the database
+- `0017_relevance_settings.sql` — the window and minimum priority behind the "Relevant" filter
+- `0018_calendar_last_synced.sql` — when the calendar was last pulled, so Home can say how stale it is
+- `0019_task_event_links.sql` — which task a calendar event is already doing
+- `0020_rail_sort.sql` — how the unplaced rail is ordered
+- `0021_project_description.sql` — `projects.description`
+- `0022_drop_habit_streaks.sql` — drops `habit_streaks`; streaks are computed from completions
+- `0023_push_subscriptions.sql` — one row per browser/device receiving Web Push
+- `0024_notifications.sql` — `notification_prefs`, `notification_log`, and the `pg_cron` + `pg_net` job calling `/api/cron/notify`
+
+There is no `0003` file. The `tasks` columns it once added (`gcal_event_id`, `scheduled_start`, `scheduled_end`, shown above) appear in no migration in the repo — they were applied to the live database by hand (checked 2026-09-29 by grepping `supabase/migrations/`). A fresh database built from these files alone will be missing them.
 
 **Convention:** one migration file per logical change; never edit a deployed migration — add a new one.
 
@@ -1870,7 +1880,7 @@ Habits don't get a project picker — they're deliberately project-less.
 
 ## Tests
 
-`npm test` (vitest, `npm run test:watch` to iterate). 438 tests over the pure logic (checked 2026-09-21) — the scheduler, urgency, the day and week helpers, and everything the redesign added: capacity, the band, task↔event matching, the week strip, conflicts, the design tokens and the project rows.
+`npm test` (vitest, `npm run test:watch` to iterate). 633 tests in 27 files over the pure logic (checked 2026-09-29) — the scheduler, urgency, the day and week helpers, and everything the redesign added: capacity, the band, task↔event matching, the week strip, conflicts, the design tokens and the project rows.
 
 ### Why these four and nothing else
 
@@ -1891,9 +1901,9 @@ Several encode a specific incident, and say so in a comment: the 120-minute sess
 
 ### CI
 
-`.github/workflows/ci.yml` runs types, lint and tests on every pull request and on pushes to `main`. `npm ci` rather than `npm install`, so a green run means the tree the lockfile describes.
+`.github/workflows/ci.yml` runs types, lint, tests and a build on every pull request and on pushes to `main`. `npm ci` rather than `npm install`, so a green run means the tree the lockfile describes.
 
-**No CD.** Nothing is deployed — there is no Vercel, Docker or other hosting config, and the app runs from `next dev`. A deploy pipeline would be answering a question this project does not have; if it is ever hosted on Vercel, that platform deploys on push by itself.
+**No CD pipeline of its own.** The app is deployed on Vercel (see *Deployment*), which builds and deploys on push by itself. CI runs `next build` too, with no environment variables, so a page that would be prerendered against Supabase fails here rather than as a broken deployment.
 
 **The lint backlog was decided, not fixed.** Turning lint on surfaced 22 errors, one of which was real (a breadcrumb using `<a>` where `<Link>` belongs — a full page reload). The other 21 were two rules misfiring on deliberate patterns, so they were configured rather than worked around:
 
