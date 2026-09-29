@@ -20,6 +20,9 @@ export async function signInWithGoogle() {
       queryParams: {
         access_type: 'offline',
         prompt: 'consent',
+        // Return every calendar scope granted before, not just the one asked
+        // for here, so signing in again keeps write access (#116).
+        include_granted_scopes: 'true',
       },
     },
   })

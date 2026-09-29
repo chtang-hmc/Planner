@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
 import { originOrConfigured } from '@/lib/request-origin'
 import { isAllowed, ownsCalendar } from '@/lib/allowed-emails'
+import { grantedScopes, READ_SCOPE, signInAction } from '@/lib/google-scopes'
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -55,25 +56,40 @@ export async function GET(request: NextRequest) {
           ? new Date(session.expires_at * 1000).toISOString()
           : new Date(Date.now() + 3600 * 1000).toISOString()
 
-        // Upsert: delete any stale token then insert fresh one
-        await db.from('user_integrations').delete().eq('provider', 'google')
-        await db.from('user_integrations').insert({
-          provider:      'google',
-          access_token:  session.provider_token,
-          refresh_token: session.provider_refresh_token,
-          token_expiry:  tokenExpiry,
-          scopes:        ['https://www.googleapis.com/auth/calendar.readonly'],
-        })
+        /**
+         * Replace the stored connection only if this grant can do everything
+         * it could (#116). A plain sign-in used to overwrite a write-capable
+         * connection with a read-only one, so any re-sign-in (a reinstalled
+         * home-screen app, a new browser) quietly broke "Block today". If
+         * Google won't say what it granted, assume only what was asked for.
+         */
+        const [{ data: existing }, reported] = await Promise.all([
+          db.from('user_integrations').select('scopes').eq('provider', 'google').maybeSingle(),
+          grantedScopes(session.provider_token),
+        ])
+        const granted = (reported ?? [READ_SCOPE]).filter(s => s.includes('/auth/calendar'))
+        const action = signInAction((existing?.scopes as string[] | undefined) ?? null, granted)
 
-        /* `after`, not a bare promise. On a serverless host the function is
-           frozen the moment the response goes out, so a fire-and-forget sync
-           was silently killed mid-flight once this deployed. `after` is the
-           supported way to say "run this once the response is sent". */
-        after(() =>
-          syncCalendarEvents().catch(err =>
-            console.error('Initial calendar sync failed:', err)
+        if (action !== 'keep') {
+          await db.from('user_integrations').delete().eq('provider', 'google')
+          await db.from('user_integrations').insert({
+            provider:      'google',
+            access_token:  session.provider_token,
+            refresh_token: session.provider_refresh_token,
+            token_expiry:  tokenExpiry,
+            scopes:        granted,
+          })
+
+          /* `after`, not a bare promise. On a serverless host the function is
+             frozen the moment the response goes out, so a fire-and-forget sync
+             was silently killed mid-flight once this deployed. `after` is the
+             supported way to say "run this once the response is sent". */
+          after(() =>
+            syncCalendarEvents().catch(err =>
+              console.error('Initial calendar sync failed:', err)
+            )
           )
-        )
+        }
       }
 
       return NextResponse.redirect(`${origin}${next}`)
