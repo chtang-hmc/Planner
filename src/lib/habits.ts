@@ -50,18 +50,27 @@ export function completionDaysByTitle(
 }
 
 /**
- * One row per habit, with the pending occurrence winning.
+ * One row per habit, with today's completion winning.
  *
- * A habit that is somehow both pending and completed today stays actionable —
- * the alternative is a row you cannot tick.
+ * A habit is both pending and done today when its open row is left over from
+ * before: a chain that fell behind (Piano's next row was due 9-26 after being
+ * logged on 2026-09-28), or a day recorded from the heatmap or the log sheet,
+ * which write their own row. This used to prefer the pending row, "so it stays
+ * tickable", but ticking it again records nothing: one completion counts per
+ * day, and the second closes as a duplicate. So Home showed Piano as undone
+ * straight after logging it, and the 8pm reminder would have listed it.
+ *
+ * The leftover row is not lost. It is still open, and it is what tomorrow's
+ * tick closes; `completeTask` then skips a habit's next occurrence past the
+ * completion day, so the chain catches up in one step.
  */
 export function oneRowPerTitle(
   pending:   HabitRowWithProject[],
   doneToday: HabitRowWithProject[],
 ): { habits: HabitRowWithProject[]; doneTodayIds: string[] } {
   const byTitle = new Map<string, { row: HabitRowWithProject; done: boolean }>()
-  for (const h of doneToday) if (!byTitle.has(h.title)) byTitle.set(h.title, { row: h, done: true })
-  for (const h of pending) byTitle.set(h.title, { row: h, done: false })
+  for (const h of pending) if (!byTitle.has(h.title)) byTitle.set(h.title, { row: h, done: false })
+  for (const h of doneToday) if (!byTitle.get(h.title)?.done) byTitle.set(h.title, { row: h, done: true })
 
   return {
     habits: [...byTitle.values()].map(v => v.row).sort((a, b) => a.title.localeCompare(b.title)),

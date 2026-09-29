@@ -962,6 +962,13 @@ Due-date anchoring stays the default, and stays **correct** for anything with a 
 
 The flag is carried forward on every spawn. Without that the second occurrence would silently revert to due-date anchoring, and the bug would only appear one cycle in.
 
+### Habits never come back in the past (2026-09-28)
+
+Due-date anchoring was applied to habits too, and a habit is exactly the case where a missed day isn't owed. Piano's open row was due 9-22 when it was logged on 9-28, so the next row was due 9-23: still in the past, so still pending. Home then showed Piano undone straight after it was logged. Each tap to clear it closed another row as a same-day duplicate (9-23 to 9-25), and the chain crept forward one day per tap.
+
+- **A habit's next occurrence is the first one after both its due date and its completion day** (`getNextOccurrenceAfter`). The occurrences are still laid out from the due date, so the rule keeps its rhythm: a Monday habit done on Wednesday comes back the next Monday. Done on time or early, it gives the same answer as before. Repeating tasks keep plain due-date anchoring.
+- **Today's completion beats a leftover pending row** in `oneRowPerTitle`, reversing the earlier "pending wins, so it stays tickable" rule. A second tick records nothing, since one completion counts per day. The leftover row stays open and tomorrow's tick closes it, skipping straight to the day after. That self-heals the chains that are already behind, with no data migration.
+
 ### A due time is a deadline, not an appointment
 
 The scheduler treats `due_time_minutes` as the instant the work must be *finished*, not the instant it starts. "Due at 5pm" says when the thing is wanted; placing the work at 5pm because of it would stop the scheduler putting it anywhere earlier, which is usually exactly where it belongs. A chain is bound by its strictest member's hour, the same way it already is by the earliest deadline.

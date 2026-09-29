@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getNextOccurrence, getFirstOccurrence } from './rrule-utils'
+import { getNextOccurrence, getNextOccurrenceAfter, getFirstOccurrence } from './rrule-utils'
 
 /**
  * What anchor a repeat advances from.
@@ -88,5 +88,26 @@ describe('getFirstOccurrence vs getNextOccurrence', () => {
   it('returns null rather than throwing on a rule it cannot read', () => {
     expect(getFirstOccurrence('not a rule', '2026-09-16')).toBeNull()
     expect(getNextOccurrence('not a rule', day('2026-09-16'))).toBeNull()
+  })
+})
+
+describe('habits skip past the completion day', () => {
+  it('catches a chain that fell behind up in one step', () => {
+    // Piano, 2026-09-28: the open row was due the 22nd. Stepping one day from
+    // the due date gave the 23rd, still in the past, four times over.
+    expect(getNextOccurrence('FREQ=DAILY', day('2026-09-22'))).toBe('2026-09-23')
+    expect(getNextOccurrenceAfter('FREQ=DAILY', day('2026-09-22'), day('2026-09-28'))).toBe('2026-09-29')
+  })
+
+  it('keeps the rule\'s rhythm: a Monday habit done late comes back on Monday', () => {
+    // Due Monday 21st, done Wednesday 23rd: next Monday, not next Wednesday.
+    expect(getNextOccurrenceAfter('FREQ=WEEKLY;BYDAY=MO', day('2026-09-21'), day('2026-09-23'))).toBe('2026-09-28')
+    expect(getNextOccurrenceAfter('FREQ=WEEKLY', day('2026-09-21'), day('2026-09-23'))).toBe('2026-09-28')
+  })
+
+  it('behaves like the default when done on time or early', () => {
+    expect(getNextOccurrenceAfter('FREQ=DAILY', day('2026-09-28'), day('2026-09-28'))).toBe('2026-09-29')
+    // Early: still never re-spawns the occurrence just closed.
+    expect(getNextOccurrenceAfter('FREQ=WEEKLY;BYDAY=SU', day('2026-09-20'), day('2026-09-14'))).toBe('2026-09-27')
   })
 })
