@@ -6,6 +6,7 @@ import { ACCENTS, ACCENT_DEFAULT, AccentId, applyAccent, getStoredAccent } from 
 import { triggerCalendarSync, disconnectCalendar } from '@/app/actions/calendar'
 import SchedulingSettings from '@/components/SchedulingSettings'
 import NotificationsSection from './NotificationsSection'
+import type { NotifyPrefs } from '@/lib/notify'
 import type { WorkingHours, EnergyScheduleEntry } from '@/lib/scheduler'
 import type { DailyBreak } from '@/app/actions/scheduling'
 import { useStored, useHydrated, writeStored } from '@/lib/use-stored'
@@ -558,6 +559,7 @@ interface SettingsViewProps {
   weekStartDay:     number
   breaks:           DailyBreak[]
   relevance:        RelevanceConfig
+  notifyPrefs:      NotifyPrefs
 }
 
 /**
@@ -580,7 +582,7 @@ function storedTab(): SettingsTab {
 export default function SettingsView({
   gcalConnected, gcalHasWriteScope, gcalConnectedAt,
   workingHours, energySchedule, maxSession, bufferMinutes, weekStartDay, breaks,
-  relevance,
+  relevance, notifyPrefs,
 }: SettingsViewProps) {
   const tab = useStored(storedTab, 'simple' as SettingsTab)
 
@@ -616,7 +618,7 @@ export default function SettingsView({
             <Card><AccentSection /></Card>
             <Card><DefaultViewSection /></Card>
             <Card><TaskLayoutSection /></Card>
-            <Card className="xl:col-span-2"><NotificationsSection /></Card>
+            <Card className="xl:col-span-2"><NotificationsSection prefs={notifyPrefs} /></Card>
             <Card className="xl:col-span-2">
               <GoogleCalendarSection
                 connected={gcalConnected}

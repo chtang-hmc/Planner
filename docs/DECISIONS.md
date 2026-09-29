@@ -1339,7 +1339,17 @@ Standard Web Push with VAPID, sent with the `web-push` package: the one thing iO
 - **`VAPID_SUBJECT` is the app's URL, not an email address**, which the spec allows and keeps a personal address out of every push request's signed header. **The key pair is permanent**: subscriptions are bound to the public key, so rotating it means re-enabling on every device.
 - **TTL is an hour.** A reminder that arrives the next morning, after the phone was off overnight, is worse than one that never arrives.
 
-What sends them, and when, is the next step: a per-minute scheduler (Supabase `pg_cron` calling a `CRON_SECRET`-protected route), since the existing daily job is too coarse for "due at 5pm".
+### What gets sent, and when (2026-09-28)
+
+The owner chose eleven notifications from a list of 23. Everything about a task's exact due time, the timer and calendar events was declined.
+
+- **Three messages a day, not eleven.** Six of the chosen notifications are about the morning: due today, went overdue yesterday, critical tomorrow, weekly habit targets short on days, the inbox, and the weekly review. Six separate buzzes at 8am is how notifications get switched off, so they are **lines of one morning summary**, each with its own switch. There is also a habit reminder (8pm), an evening wrap-up (9pm), and two that go out as they happen: streak milestones, and the calendar sync breaking. All times and switches live in Settings, stored as `user_scheduling_config.notification_prefs` (jsonb; `normalizePrefs` fills in anything missing).
+- **The wording is pure** (`lib/notify.ts`, tested) and the I/O is separate (`lib/notify-run.ts`). "Due today" counts pieces of work the way Home does: a subtask without its own date takes its parent's, and a parent with its steps counts once.
+- **Weekly habits only nag when the week runs short.** A 2×-a-week habit is flagged once it has one day of slack or none, and not once it is out of reach. The same rule decides whether it appears in the evening reminder, so Gym is not "left today" on a Monday. Habits with no target are never nagged.
+- **Milestones are found, not hooked.** A habit can be logged from four places, so rather than adding a send to each, every tick computes streaks and sends any at 7/30/100/365 days or 4/12/26/52 weeks that were reached today or yesterday.
+- **A broken calendar is detected by age.** The sync runs hourly, so `last_synced_at` older than 6 hours means it has stopped, whatever the reason. It is reported once a day, only between the morning time and 10pm.
+- **The scheduler is `pg_cron` + `pg_net`, every five minutes** (migration 0024), calling `/api/cron/notify` with `CRON_SECRET` read from Supabase Vault. Vercel's cron can't do it on Hobby, which allows one run a day. GitHub Actions can't either: its schedule runs late by up to half an hour.
+- **Each send happens once because of `notification_log`.** The key is inserted before sending, and only the tick that wins the insert sends, so overlapping ticks can't double up. If every device fails, the key is deleted so the next tick in the 90-minute window retries. After the window closes, the send is skipped: a morning summary at lunchtime is worse than none.
 
 ## Navigation
 
