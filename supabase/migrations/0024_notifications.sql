@@ -10,11 +10,12 @@
 --
 -- ── Before running part 3 ────────────────────────────────────────────────────
 --
--- The job authenticates with the same CRON_SECRET the calendar sync uses. It
--- reads it from Supabase Vault, so the secret is never in this file. Once,
--- in the SQL editor, with the real value from Vercel's environment variables:
+-- The job authenticates with NOTIFY_CRON_SECRET: its own secret, not the
+-- calendar sync's CRON_SECRET, so either can be replaced alone. It reads it
+-- from Supabase Vault, so the value is never in this file. Once, in the SQL
+-- editor, with the same value that is in Vercel:
 --
---   select vault.create_secret('<the CRON_SECRET value>', 'cron_secret');
+--   select vault.create_secret('<the NOTIFY_CRON_SECRET value>', 'notify_cron_secret');
 --
 -- Without it the header is empty and the route answers 401: nothing is sent,
 -- nothing breaks.
@@ -61,7 +62,7 @@ select cron.schedule(
     url     := 'https://planner-nine-snowy.vercel.app/api/cron/notify',
     headers := jsonb_build_object(
       'Authorization',
-      'Bearer ' || coalesce((select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret'), '')
+      'Bearer ' || coalesce((select decrypted_secret from vault.decrypted_secrets where name = 'notify_cron_secret'), '')
     ),
     timeout_milliseconds := 30000
   );
