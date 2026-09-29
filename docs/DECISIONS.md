@@ -83,8 +83,9 @@ Two things made the second trip possible:
 
 RLS is enabled on every table. The current policy is trivially permissive for authenticated users (`using (true)`) because this is a single-user app — data isolation is enforced at the **application layer** instead:
 
-- `ALLOWED_EMAIL` env var in `.env.local` (and production env) contains the owner's email.
-- `src/proxy.ts` checks `user.email !== process.env.ALLOWED_EMAIL` on every request and redirects to `/403` if someone else logs in.
+- `ALLOWED_EMAIL` env var in `.env.local` (and production env) holds the owner's email, or several separated by commas (`lib/allowed-emails.ts`; since 2026-09-29 the owner's school and personal Google accounts). They are compared case-insensitively.
+- `src/proxy.ts` and the OAuth callback both check `isAllowed(email, ALLOWED_EMAIL)` and redirect to `/403` if someone else logs in.
+- **The first address owns the calendar.** Every Google sign-in requests calendar access, and the callback stores the signing-in account as *the* calendar connection, replacing the previous one. Only a sign-in by the first address does that now; a second allowed account gets a session and leaves the connection alone. Otherwise signing in on the personal account would quietly have switched every sync to the personal calendar. The Settings "Connect Google Calendar" button (`/api/auth/google`) is a separate, explicit flow and still connects whichever account you choose there.
 - The `/403` page signs the intruder out and shows an access-denied message.
 
 If multi-user support is ever needed, the right path is: add `user_id uuid references auth.users(id)` to every table, change RLS policies to `using (auth.uid() = user_id)`, and update all service-role queries to insert the user id. The `ALLOWED_EMAIL` gate can then be removed.
