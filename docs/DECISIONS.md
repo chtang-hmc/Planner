@@ -1334,6 +1334,7 @@ Planner installs to an iPhone's home screen as a web app rather than shipping as
 - **`src/app/manifest.ts`** makes it installable: standalone, paper-preset ground colours, icons in `public/icons/` drawn by `scripts/make-icons.py`.
 - **The icons are real `.png` paths**, not the `app/apple-icon` convention, which Next serves at `/apple-icon?<hash>` with no extension. The proxy only passes known static extensions through, so a signed-out fetch of that URL would have redirected to `/login`. `.webmanifest` joined the proxy's allow-list for the same reason.
 - **`viewport-fit=cover`**, with the tab bar padded by `env(safe-area-inset-bottom)`, so installed it clears the home indicator. The status bar is `default` (opaque), so the top needs no inset.
+- **One mark everywhere, from one script (2026-09-28).** `scripts/make-icons.py` also writes the browser-tab `src/app/favicon.ico`, which was still the Next.js starter's triangle until then. It writes `public/apple-touch-icon.png` and `-precomposed.png` too, the root paths iOS requests when a page doesn't name its icon. Change the icon by editing the script, never the PNGs.
 - **`InstallHint`** tells iOS Safari users where the button is, since iOS has no install prompt a page can trigger. It isn't shown inside the installed app or on desktop, and a dismissal is remembered per device.
 
 ### Push notifications (2026-09-28)
