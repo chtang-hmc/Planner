@@ -11,6 +11,21 @@ owner's decision, review or a migration run goes under the last. Write
 "nothing" rather than dropping a heading. This is a standing instruction from
 the owner, kept here so a session on the phone or the web follows it too.
 
+Under the headings:
+
+- **Bullets, each led by a few bold words** saying what it is about, then one
+  or two plain sentences. No walls of prose.
+- **Plain language over code words.** Say "the notification background
+  script", not `sw.js`; name a file only when the owner will need to open it.
+- **Say what was checked and what was not.** "Checked in the dev server",
+  "tests pass (639)", "not tested on the phone: needs your sign-in". An
+  unverified claim is labelled as one.
+- **Link every PR and issue** in full, as `[owner/repo#123](https://github.com/...)`.
+- **Action items are numbered and concrete**: exact values to paste, where to
+  click, in what order, and what to report back.
+- **Ask one clear question when a decision is the owner's**, with a
+  recommendation, rather than listing every option.
+
 ## Project orientation
 
 Personal productivity planner, organised around **capacity**: working hours,
