@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
+import { parseScopes, READ_SCOPE, WRITE_SCOPE } from '@/lib/google-scopes'
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/tasks?error=google-token-failed`)
   }
 
-  const { access_token, refresh_token, expires_in } = await tokenRes.json()
+  const { access_token, refresh_token, expires_in, scope } = await tokenRes.json()
   const token_expiry = new Date(Date.now() + expires_in * 1000).toISOString()
 
   const db = createServiceClient()
@@ -42,10 +43,10 @@ export async function GET(request: NextRequest) {
     access_token,
     refresh_token,
     token_expiry,
-    scopes:       [
-      'https://www.googleapis.com/auth/calendar.events',
-      'https://www.googleapis.com/auth/calendar.readonly',
-    ],
+    // What Google granted, not what was asked for: the consent screen lets a
+    // person untick a scope, and a hard-coded list would then claim write
+    // access the token doesn't have (#116).
+    scopes:       scope ? parseScopes(scope).filter(s => s.includes('/auth/calendar')) : [READ_SCOPE, WRITE_SCOPE],
     connected_at: new Date().toISOString(),
   })
 
