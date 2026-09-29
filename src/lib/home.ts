@@ -49,7 +49,15 @@ export const MIN_GAP_MINUTES = 15
 export interface HomeTask {
   id:              string
   title:           string
-  /** Set on a subtask — the work this is a step of. */
+  /**
+   * Set on a subtask whose parent is still open — the work this is a step of.
+   *
+   * Only ever an id the page can open: "Needs attention" names a collapsed
+   * chain after this id and opens it on click, so an id pointing at a parent
+   * that is already done would render a row that does nothing (#45).
+   * `resolveAgainstParent` clears it when there is no open parent to resolve
+   * against; `parentTitle` survives, since "part of X" is still true.
+   */
   parentId:        string | null
   parentTitle:     string | null
   type:            TaskType
@@ -242,12 +250,16 @@ export interface HomeData {
  * it is applied once here rather than remembered in three ranking functions.
  *
  * `own` wins only where the parent has nothing to say.
+ *
+ * With no open parent — it was completed without the cascade, or the step was
+ * added to work already done — the step stands alone: `parentId` is cleared so
+ * nothing downstream groups it under, or opens, a task that is not there.
  */
 export function resolveAgainstParent(
   own: HomeTask,
   parent: Pick<HomeTask, 'title' | 'priority' | 'urgencyScore' | 'dueDay' | 'startDay' | 'location'> | null,
 ): HomeTask {
-  if (!parent) return own
+  if (!parent) return own.parentId == null ? own : { ...own, parentId: null }
   return {
     ...own,
     parentTitle:  parent.title,
@@ -493,14 +505,21 @@ export function rankForGap(
 
   for (const members of chains.values()) {
     const ordered = [...members].sort((a, b) => a.chainIndex - b.chainIndex)
-    // One buffer pair around the whole run, none between the steps.
-    const edge = 2 * edgeBuffer(ordered[0], input.bufferMinutes)
+    // One buffer pair around the whole run, none between the steps — sized by
+    // the largest buffer of any step in it, not the first one's (#44). A run
+    // of readings ending at the post office still pays the trip out and back.
+    // The first step's buffer at the start and the last's at the end would
+    // sound fairer, but it makes a reading plus an errand cheaper than the
+    // errand alone, so the pair could fit a gap the errand cannot.
     const run: HomeTask[] = []
     let used = 0
+    let edge = 0
     for (const m of ordered) {
-      if (edge + used + m.minutes! > gapMinutes) break
+      const nextEdge = Math.max(edge, edgeBuffer(m, input.bufferMinutes))
+      if (2 * nextEdge + used + m.minutes! > gapMinutes) break
       run.push(m)
       used += m.minutes!
+      edge = nextEdge
     }
     if (run.length > 0) out.push(make(run, used))
   }

@@ -185,6 +185,31 @@ describe('what fits a gap', () => {
     expect(top.minutes).toBe(60)
   })
 
+  it('charges a run the largest buffer of its steps, not the first one', () => {
+    const chain = [
+      task({ id: 'read',  parentId: 'pp', minutes: 20, chainIndex: 0, location: 'anywhere', bufferMinutes: null }),
+      task({ id: 'print', parentId: 'pp', minutes: 20, chainIndex: 1, location: 'away',     bufferMinutes: null }),
+    ]
+    // 75m: the errand needs 30m either side, so 20 + 20 + 60 = 100 does not
+    // fit. Costed at the reading's 15m it would have been 70, and offered.
+    const gap75: [number, number] = [at('13:15'), at('14:30')]
+    expect(rankForGap(chain, gap75, BASE)[0].taskIds).toEqual(['read'])
+    // With room for the trip, both go as one run.
+    const gap2h: [number, number] = [at('13:00'), at('15:00')]
+    expect(rankForGap(chain, gap2h, BASE)[0].taskIds).toEqual(['read', 'print'])
+  })
+
+  it('never fits a run where its costliest step alone would not', () => {
+    const errand = task({ id: 'print', minutes: 20, location: 'away', bufferMinutes: null })
+    const gap70: [number, number] = [at('13:15'), at('14:25')]
+    expect(rankForGap([errand], gap70, BASE)).toHaveLength(0)
+    const chain = [
+      task({ id: 'read', parentId: 'pp', minutes: 5, chainIndex: 0, location: 'anywhere', bufferMinutes: null }),
+      { ...errand, parentId: 'pp', chainIndex: 1 },
+    ]
+    expect(rankForGap(chain, gap70, BASE).flatMap(s => s.taskIds)).not.toContain('print')
+  })
+
   it('says why it picked something', () => {
     const [top] = rankForGap([task({ id: 'Essay', dueDay: DAY })], gap90, BASE)
     expect(top.reasons[0]).toBe('fits your 1h 30m')
@@ -421,6 +446,19 @@ describe('needs attention collapses a chain', () => {
     const [row] = collapseChains([task({ id: 'solo', title: 'Solo', dueDay: DAY })])
     expect(row.stepsLabel).toBeNull()
     expect(row.openId).toBe('solo')
+  })
+
+  it('opens the step itself when its parent is no longer open', () => {
+    // A step added to work already done: the embed still names the parent,
+    // but the page only holds open rows, so the parent cannot be opened (#45).
+    const orphans = [0, 1].map(i => resolveAgainstParent(
+      task({ id: `o${i}`, title: `Step ${i}`, parentId: 'gone', parentTitle: 'Done work', dueDay: DAY, chainIndex: i }),
+      null,
+    ))
+    const rows = collapseChains(orphans)
+    expect(rows.map(r => r.openId).sort()).toEqual(['o0', 'o1'])
+    expect(rows.every(r => r.stepsLabel == null)).toBe(true)
+    expect(orphans[0].parentTitle).toBe('Done work')
   })
 
   it('reports no total when a step has no estimate', () => {
