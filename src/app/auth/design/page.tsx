@@ -31,6 +31,7 @@ import QuickAddInput from '@/components/quick-add/QuickAddInput'
 import AddTaskModal from '@/components/AddTaskModal'
 import SettingsView, { TaskLayoutSection } from '@/app/(app)/settings/SettingsView'
 import { relevanceHint } from '@/lib/relevance'
+import { DEFAULT_PREFS } from '@/lib/notify'
 import { parseQuickAdd, formatTimeLabel } from '@/lib/quick-add'
 import Sidebar from '@/components/Sidebar'
 import CalendarPanel from '@/components/CalendarPanel'
@@ -1243,6 +1244,7 @@ export default function DesignPreview() {
                     weekStartDay={1}
                     breaks={[]}
                     relevance={{ windowDays: 7, minPriority: 3 }}
+                    notifyPrefs={DEFAULT_PREFS}
                   />
                 </div>
               </section>

@@ -3,6 +3,7 @@ import { normalizeRelevance } from '@/lib/relevance'
 import SettingsView from './SettingsView'
 import { fetchUserConfig } from '@/lib/user-config'
 import { listDailyBreaks } from '@/app/actions/scheduling'
+import { normalizePrefs } from '@/lib/notify'
 
 export const metadata = { title: 'Settings — Planner' }
 
@@ -50,6 +51,7 @@ export default async function SettingsPage() {
       weekStartDay={config.weekStartDay}
       breaks={await listDailyBreaks()}
       relevance={normalizeRelevance(config.row)}
+      notifyPrefs={normalizePrefs(config.row?.notification_prefs)}
     />
   )
 }

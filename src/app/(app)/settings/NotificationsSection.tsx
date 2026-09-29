@@ -1,7 +1,12 @@
 'use client'
 
 import { useEffect, useState, useTransition } from 'react'
-import { removePushSubscription, savePushSubscription, sendTestPush, type SubscriptionJSON } from '@/app/actions/push'
+import {
+  previewNotifications, removePushSubscription, saveNotificationPrefs, savePushSubscription, sendTestPush,
+  type SubscriptionJSON,
+} from '@/app/actions/push'
+import { KIND_LABELS, NOTIFY_KINDS, formatSendTime, type NotifyKind, type NotifyPrefs } from '@/lib/notify'
+import type { PushMessage } from '@/lib/push'
 
 /**
  * Turning push notifications on for this device.
@@ -60,7 +65,7 @@ async function currentState(): Promise<State> {
   return sub && Notification.permission === 'granted' ? 'on' : 'off'
 }
 
-export default function NotificationsSection() {
+export default function NotificationsSection({ prefs }: { prefs: NotifyPrefs }) {
   const [state, setState]     = useState<State>('loading')
   const [message, setMessage] = useState<string | null>(null)
   const [busy, startBusy]     = useTransition()
@@ -170,7 +175,126 @@ export default function NotificationsSection() {
       )}
 
       {message && <p role="status" className="mt-3 text-xs text-slate-500 dark:text-slate-400">{message}</p>}
+
+      <Schedule initial={prefs} />
     </section>
+  )
+}
+
+// ── What gets sent, and when ─────────────────────────────────────────────────
+
+/**
+ * The switches, grouped by the message they belong to. Saved on every change:
+ * there is no form to submit, and a switch that needs a second tap to stick
+ * is one that gets left unsaved. Shared by every device, unlike the on/off
+ * above, because the schedule belongs to the account.
+ */
+const SLOTS: { id: 'morning' | 'habits' | 'wrapUp' | 'instant'; label: string; at?: 'morningAt' | 'habitsAt' | 'wrapUpAt' }[] = [
+  { id: 'morning', label: 'Morning summary', at: 'morningAt' },
+  { id: 'habits',  label: 'Habit reminder',  at: 'habitsAt'  },
+  { id: 'wrapUp',  label: 'Evening wrap-up', at: 'wrapUpAt'  },
+  { id: 'instant', label: 'As it happens' },
+]
+
+const toClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+const fromClock = (v: string) => { const [h, m] = v.split(':').map(Number); return h * 60 + m }
+
+function Schedule({ initial }: { initial: NotifyPrefs }) {
+  const [prefs, setPrefs]     = useState(initial)
+  const [status, setStatus]   = useState<string | null>(null)
+  const [preview, setPreview] = useState<PushMessage[] | null>(null)
+  const [pending, start]      = useTransition()
+
+  function save(next: NotifyPrefs) {
+    setPrefs(next)
+    setStatus(null)
+    start(async () => {
+      const r = await saveNotificationPrefs(next)
+      setStatus(r.error ?? 'Saved')
+    })
+  }
+
+  function toggle(k: NotifyKind) { save({ ...prefs, on: { ...prefs.on, [k]: !prefs.on[k] } }) }
+
+  function showPreview() {
+    start(async () => {
+      try { setPreview(await previewNotifications()) }
+      catch (err) { setStatus(`Couldn't build the preview: ${err instanceof Error ? err.message : String(err)}`) }
+    })
+  }
+
+  return (
+    <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-800">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">What to send</h3>
+        <span role="status" className="text-xs text-slate-400">{pending ? 'Saving…' : status}</span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {SLOTS.map(slot => {
+          const kinds = NOTIFY_KINDS.filter(k => KIND_LABELS[k].slot === slot.id)
+          return (
+            <fieldset key={slot.id} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{slot.label}</legend>
+              {slot.at && (
+                <label className="flex items-center gap-2 mb-2 text-sm text-slate-600 dark:text-slate-400">
+                  At
+                  <input
+                    type="time" step={300}
+                    value={toClock(prefs[slot.at])}
+                    onChange={e => { if (e.target.value) save({ ...prefs, [slot.at!]: fromClock(e.target.value) }) }}
+                    className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm tabular-nums"
+                  />
+                  <span className="text-xs text-slate-400">({formatSendTime(prefs[slot.at])})</span>
+                </label>
+              )}
+              <ul className="flex flex-col gap-1.5">
+                {kinds.map(k => (
+                  <li key={k}>
+                    <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                      <input type="checkbox" checked={prefs.on[k]} onChange={() => toggle(k)} className="mt-0.5 accent-accent-500" />
+                      <span className="flex-1">
+                        {KIND_LABELS[k].label}
+                        {k === 'inbox' && prefs.on.inbox && (
+                          <span className="ml-1 text-xs text-slate-400">
+                            at{' '}
+                            <input
+                              type="number" min={1} max={99}
+                              value={prefs.inboxThreshold}
+                              onChange={e => { const n = Number(e.target.value); if (Number.isInteger(n) && n >= 1) save({ ...prefs, inboxThreshold: n }) }}
+                              aria-label="Inbox size that triggers the line"
+                              className="w-12 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs tabular-nums"
+                            />{' '}or more
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          )
+        })}
+      </div>
+
+      <div className="mt-4">
+        <button type="button" onClick={showPreview} disabled={pending}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-600 dark:text-slate-400 hover:border-accent-400 hover:text-accent-600 disabled:opacity-40">
+          Preview today&apos;s messages
+        </button>
+        {preview && (
+          <ul className="mt-3 flex flex-col gap-2">
+            {preview.length === 0 && <li className="text-sm text-slate-400">Nothing would be sent today with these settings.</li>}
+            {preview.map(m => (
+              <li key={m.tag ?? m.title} className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800">
+                <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{m.title}</p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-line">{m.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   )
 }
 

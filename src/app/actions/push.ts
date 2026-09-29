@@ -1,7 +1,11 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase/server'
-import { sendToAll, type SendResult } from '@/lib/push'
+import { sendToAll, type SendResult, type PushMessage } from '@/lib/push'
+import { normalizePrefs, type NotifyPrefs } from '@/lib/notify'
+import { previewDay } from '@/lib/notify-run'
+import { DEFAULT_BUFFER_MINUTES } from '@/lib/home'
 
 /**
  * The browser's half of a subscription, as `PushSubscription.toJSON()` gives
@@ -44,4 +48,30 @@ export async function sendTestPush(): Promise<SendResult> {
     url:   '/settings',
     tag:   'test',
   })
+}
+
+/**
+ * Which notifications, and when. Normalized on the way in, so whatever the
+ * request says, what is stored is a complete and valid set.
+ */
+export async function saveNotificationPrefs(raw: NotifyPrefs): Promise<{ error?: string }> {
+  const prefs = normalizePrefs(raw)
+  const db = createServiceClient()
+  const { data } = await db.from('user_scheduling_config').select('id').limit(1).maybeSingle()
+  const { error } = data
+    ? await db.from('user_scheduling_config').update({ notification_prefs: prefs }).eq('id', data.id)
+    : await db.from('user_scheduling_config').insert({
+        max_session_minutes: 90, buffer_minutes: DEFAULT_BUFFER_MINUTES, notification_prefs: prefs,
+      })
+  if (error) {
+    console.error('saveNotificationPrefs:', error.message)
+    return { error: 'Could not save. Run migration 0024_notifications.sql first.' }
+  }
+  revalidatePath('/settings')
+  return {}
+}
+
+/** Everything today would send, whatever the time, for the preview in Settings. Sends nothing. */
+export async function previewNotifications(): Promise<PushMessage[]> {
+  return (await previewDay()).map(p => p.message)
 }

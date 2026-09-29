@@ -82,6 +82,16 @@ and tapping a notification into the app. The browser pane has notifications
 blocked, and Settings needs a sign-in. `push_subscriptions` needs migration
 0023, and production needs the three `VAPID_*` variables.
 
+### The notification scheduler has never ticked for real
+
+*Checked 2026-09-28, dry runs only:* `runTick` against the live database at a
+simulated 7:55, 8:00, 20:00, 21:00 and 03:00 Los Angeles time planned exactly
+the morning summary, habit reminder and wrap-up at their times and nothing at
+7:55 or 3am. The wording it produced is in PR #108. Not yet run: the pg_cron
+job, the Vault secret, a claim in `notification_log`, or a real send. Needs
+migrations 0023 and 0024, `NOTIFY_CRON_SECRET` in Vercel and as `notify_cron_secret` in Vault, and a subscribed
+device.
+
 ### `every!` — recurrence anchored on completion
 
 `completeTask` anchors on the completion day rather than the due date when
