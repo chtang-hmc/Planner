@@ -423,6 +423,19 @@ describe('needs attention collapses a chain', () => {
     expect(row.openId).toBe('solo')
   })
 
+  it('opens the step itself when its parent is no longer open', () => {
+    // A step added to work already done: the embed still names the parent,
+    // but the page only holds open rows, so the parent cannot be opened (#45).
+    const orphans = [0, 1].map(i => resolveAgainstParent(
+      task({ id: `o${i}`, title: `Step ${i}`, parentId: 'gone', parentTitle: 'Done work', dueDay: DAY, chainIndex: i }),
+      null,
+    ))
+    const rows = collapseChains(orphans)
+    expect(rows.map(r => r.openId).sort()).toEqual(['o0', 'o1'])
+    expect(rows.every(r => r.stepsLabel == null)).toBe(true)
+    expect(orphans[0].parentTitle).toBe('Done work')
+  })
+
   it('reports no total when a step has no estimate', () => {
     const mixed = [steps[0], { ...steps[1], minutes: null }]
     expect(collapseChains(mixed)[0].minutes).toBeNull()

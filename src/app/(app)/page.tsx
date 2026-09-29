@@ -240,8 +240,10 @@ export default async function HomePage() {
     .filter(t => !parentsWithOpenSubtasks.has(t.id))
     .map(t => {
       const own = toHomeTask(t, chainIndexOf.get(t.id) ?? 0)
+      // `rows` is inbox/active only, so a done parent is not found here and
+      // the step is left standing alone — see `resolveAgainstParent`.
       const parentRow = t.parent_id ? byId.get(t.parent_id) : null
-      return parentRow ? resolveAgainstParent(own, toHomeTask(parentRow, 0)) : own
+      return resolveAgainstParent(own, parentRow ? toHomeTask(parentRow, 0) : null)
     })
 
   /**
