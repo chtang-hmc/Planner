@@ -96,6 +96,33 @@ export function getNextOccurrence(rruleStr: string, afterDate: Date): string | n
   }
 }
 
+/**
+ * The first occurrence of a rule, laid out from `dtstart`, that falls strictly
+ * after `notBefore`. For a habit completed late.
+ *
+ * `getNextOccurrence(rule, due)` steps one occurrence past the due date, which
+ * for a habit left for a week is a date a week in the past: the next row is
+ * due immediately, so the habit still reads as undone after being logged, and
+ * every tap to clear it closes a row as a duplicate for the day (Piano, 9-22
+ * to 9-26, on 2026-09-28). A missed day of a habit is not owed, unlike a
+ * missed rent date, so a habit skips straight past the completion day.
+ *
+ * Laid out from the due date rather than the completion, so the rule keeps
+ * its rhythm: a Monday habit done on a Wednesday comes back on Monday.
+ * Returns YYYY-MM-DD, or null if the rule has ended.
+ */
+export function getNextOccurrenceAfter(rruleStr: string, dtstart: Date, notBefore: Date): string | null {
+  try {
+    const start = startOfDayUTC(dtstart)
+    const floor = startOfDayUTC(notBefore)
+    const rule  = rrulestr(rruleStr, { dtstart: start })
+    const next  = rule.after(floor > start ? floor : start, /* inc = */ false)
+    return next ? toYYYYMMDD(next) : null
+  } catch {
+    return null
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Midnight UTC on the same calendar day as d. */

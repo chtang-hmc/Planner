@@ -56,13 +56,20 @@ describe('weekly counts start at the configured week start', () => {
 })
 
 describe('one row per habit', () => {
-  it('prefers the pending occurrence over the one done today', () => {
-    // A habit that is somehow both must stay tickable.
+  it("shows today's completion over a leftover pending row", () => {
+    // Piano on 2026-09-28: logged, with an older open row still pending. A
+    // second tick records nothing, so the habit reads as done.
     const { habits, doneTodayIds } = oneRowPerTitle(
-      [habit('new', 'Gym')],
-      [habit('old', 'Gym', 'done')],
+      [habit('leftover', 'Piano')],
+      [habit('logged', 'Piano', 'done')],
     )
-    expect(habits.map(h => h.id)).toEqual(['new'])
+    expect(habits.map(h => h.id)).toEqual(['logged'])
+    expect(doneTodayIds).toEqual(['logged'])
+  })
+
+  it('shows the pending row when the habit is not done today', () => {
+    const { habits, doneTodayIds } = oneRowPerTitle([habit('open', 'Gym')], [])
+    expect(habits.map(h => h.id)).toEqual(['open'])
     expect(doneTodayIds).toEqual([])
   })
 

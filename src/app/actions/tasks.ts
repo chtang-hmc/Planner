@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { revalidateTaskViews } from '@/lib/revalidate'
 import { createServiceClient } from '@/lib/supabase/server'
 import { computeUrgency, Task } from '@/types'
-import { getNextOccurrence } from '@/lib/rrule-utils'
+import { getNextOccurrence, getNextOccurrenceAfter } from '@/lib/rrule-utils'
 import {
   fetchTimezone, localDayStr, todayStr, localDayRange, startOfLocalDay,
   addDays as addDayStr,
@@ -246,7 +246,13 @@ export async function completeTask(
       const anchor = taskRow.rrule_from_completion
         ? new Date(completedDay + 'T00:00:00Z')
         : (taskRow.due_date ? new Date(taskRow.due_date) : today)
-      const nextDate = getNextOccurrence(taskRow.rrule, anchor)
+      // A habit never comes back on or before the day it was done: a missed
+      // day is not owed, and a past-due next row reads as "still to do" the
+      // moment it is logged. Tasks keep due-date anchoring, where a missed
+      // date is still owed (see recurrence-anchor.test.ts).
+      const nextDate = isHabit
+        ? getNextOccurrenceAfter(taskRow.rrule, anchor, new Date(completedDay + 'T00:00:00Z'))
+        : getNextOccurrence(taskRow.rrule, anchor)
       if (nextDate) nextDue = new Date(nextDate + 'T00:00:00Z').toISOString()
     } else if (isHabit) {
       // The instant the user's next day begins. The habits page asks for
