@@ -2,15 +2,28 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
 import { parseScopes, READ_SCOPE, WRITE_SCOPE } from '@/lib/google-scopes'
+import { originOrConfigured } from '@/lib/request-origin'
+import { STATE_COOKIE } from '../route'
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
+  // From the headers, not `request.url`, which resolves to localhost behind a
+  // LAN address (see lib/request-origin). Must equal what the first leg sent
+  // Google, or the code exchange is refused.
+  const origin = originOrConfigured(request.headers)
   const code  = searchParams.get('code')
   const error = searchParams.get('error')
 
   if (error || !code) {
     console.error('Google OAuth error:', error)
-    return NextResponse.redirect(`${origin}/tasks?error=google-denied`)
+    return NextResponse.redirect(`${origin}/settings?error=google-denied`)
+  }
+
+  // The round trip must be the one this browser started (see ../route.ts).
+  const expected = request.cookies.get(STATE_COOKIE)?.value
+  if (!expected || searchParams.get('state') !== expected) {
+    console.error('Google OAuth: state missing or mismatched; refusing')
+    return NextResponse.redirect(`${origin}/settings?error=google-state`)
   }
 
   // Exchange authorisation code for tokens
@@ -21,14 +34,14 @@ export async function GET(request: NextRequest) {
       code,
       client_id:     process.env.GOOGLE_CLIENT_ID!,
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      redirect_uri:  process.env.GOOGLE_REDIRECT_URI!,
+      redirect_uri:  `${origin}/api/auth/google/callback`,
       grant_type:    'authorization_code',
     }),
   })
 
   if (!tokenRes.ok) {
     console.error('Token exchange failed:', await tokenRes.text())
-    return NextResponse.redirect(`${origin}/tasks?error=google-token-failed`)
+    return NextResponse.redirect(`${origin}/settings?error=google-token-failed`)
   }
 
   const { access_token, refresh_token, expires_in, scope } = await tokenRes.json()
@@ -56,5 +69,8 @@ export async function GET(request: NextRequest) {
      redirect goes out, and the sync was being killed mid-flight. */
   after(() => syncCalendarEvents().catch(console.error))
 
-  return NextResponse.redirect(`${origin}/tasks`)
+  // Back to where the button was, so the new state is the first thing seen.
+  const res = NextResponse.redirect(`${origin}/settings`)
+  res.cookies.delete({ name: STATE_COOKIE, path: '/api/auth/google' })
+  return res
 }

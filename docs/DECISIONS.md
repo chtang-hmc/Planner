@@ -1316,10 +1316,19 @@ that list is a dashboard step and the only remaining manual one.
 Supabase `/auth/v1/authorize` → Google → Supabase's own callback → back to
 `redirectTo`, so the only URI registered with Google is Supabase's. The
 separate calendar-write flow in `src/app/api/auth/google/` is not like this:
-it hands Google `GOOGLE_REDIRECT_URI` directly, that URI is registered in the
-console, and Google rejects private addresses — so *granting* calendar write
-only works from localhost. Tokens already granted keep working everywhere,
-which is why this does not block using the app from a phone.
+Google redirects straight back to the app, so the app's own callback URL must
+be registered in the Google Cloud console.
+
+**That flow now reads its origin from the request too (2026-09-30).** It used
+`GOOGLE_REDIRECT_URI`, which on the deployment pointed at
+`http://localhost:3000`, so "Upgrade access" on the phone came back to the
+laptop's address. Both legs now build `<origin>/api/auth/google/callback` from
+`originOrConfigured`, and the variable is no longer read. The URIs registered
+with Google are `http://localhost:3000/...` and the deployment's; Google
+rejects private addresses, so granting write access from a LAN address still
+can't work. The flow also carries a `state` value in a short-lived httpOnly
+cookie, so only a round trip started from the button can replace the
+connection, and it returns to `/settings` rather than `/tasks`.
 
 ### The localhost fallback throws in production (2026-09-27)
 
