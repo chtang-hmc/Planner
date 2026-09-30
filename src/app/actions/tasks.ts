@@ -10,6 +10,7 @@ import {
   addDays as addDayStr,
 } from '@/lib/day'
 import { getValidToken, deleteTaskBlock, createTaskBlock } from '@/lib/google-calendar'
+import { dueDateFor, movableToToday } from '@/lib/reschedule'
 
 // Fields whose changes require an urgency recompute
 const URGENCY_FIELDS = new Set(['priority', 'due_date', 'urgency_curve'])
@@ -1059,10 +1060,56 @@ export async function updateTask(taskId: string, data: Record<string, unknown>) 
   revalidatePath('/habits')   // habits are edited from /habits via TaskDetail
 }
 
+// ── Move overdue work to today ──────────────────────────────────────────────
+/**
+ * Re-date overdue tasks to today, in the configured zone.
+ *
+ * Each id is moved on its own, not through its parent. `updateTask` on a
+ * parent cascades the date to every step, including steps due later in the
+ * week, so a "Today" tap on a late chain would have dragged its future steps
+ * back too. The steps that are late are in the row's ids; a step with no date
+ * of its own follows its parent, which is in the ids when it is late itself.
+ *
+ * Only rows that are still open and still overdue move (`movableToToday`),
+ * since the page asking may be stale. The due time, if any, is kept: work due
+ * at 5pm yesterday is due at 5pm today. Urgency is recomputed from the new
+ * date, as `updateTask` does.
+ */
+export async function moveToToday(taskIds: string[]): Promise<{ moved: number }> {
+  if (!Array.isArray(taskIds) || taskIds.length === 0) return { moved: 0 }
+  const db = createServiceClient()
+  const today = todayStr(await fetchTimezone(db))
+
+  const { data: rows, error } = await db
+    .from('tasks')
+    .select('id, status, type, due_date, priority, urgency_curve, created_at')
+    .in('id', taskIds.filter(id => typeof id === 'string').slice(0, 200))
+  if (error) throw new Error(error.message)
+
+  const ids = new Set(movableToToday(rows ?? [], today))
+  const due_date = dueDateFor(today)
+  const results = await Promise.all((rows ?? []).filter(r => ids.has(r.id)).map(r =>
+    db.from('tasks').update({
+      due_date,
+      urgency_score: computeUrgency({
+        priority: r.priority, urgency_curve: r.urgency_curve, due_date, created_at: r.created_at,
+      }),
+    }).eq('id', r.id),
+  ))
+  const failed = results.find(r => r.error)
+  if (failed?.error) throw new Error(failed.error.message)
+
+  revalidateTaskViews()
+  revalidatePath('/review')
+  revalidatePath('/projects')
+  return { moved: ids.size }
+}
+
 // ── Quick triage (no reflection) — used in weekly review ────────────────────
-export type TriageAction = 'done' | 'someday' | 'cancel' | 'activate'
+export type TriageAction = 'done' | 'someday' | 'cancel' | 'activate' | 'today'
 
 export async function triageTask(taskId: string, action: TriageAction) {
+  if (action === 'today') { await moveToToday([taskId]); return }
   const db = createServiceClient()
   const now = new Date().toISOString()
   let patch: Record<string, unknown>

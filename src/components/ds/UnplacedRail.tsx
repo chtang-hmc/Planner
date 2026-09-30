@@ -47,7 +47,7 @@ export function sortRail(items: RailItem[], sort: RailSort): RailItem[] {
 }
 
 export function UnplacedRail({
-  items, overdue, sort, totalMinutes, onSort, onOpen,
+  items, overdue, sort, totalMinutes, onSort, onOpen, onToday, busy = false,
 }: {
   items:        RailItem[]
   /** Pinned above the tabs, in their own container, never re-sorted. */
@@ -56,6 +56,12 @@ export function UnplacedRail({
   totalMinutes: number
   onSort?:      (s: RailSort) => void
   onOpen?:      (taskId: string) => void
+  /**
+   * Re-date late work to today: one row, or every overdue row at once. A
+   * button rather than a drag, because drag does nothing on a phone.
+   */
+  onToday?:     (rows: AttentionRow[]) => void
+  busy?:        boolean
 }) {
   const column = RAIL_SORTS.find(s => s.id === sort)!.column
   const ordered = sortRail(items, sort)
@@ -80,19 +86,42 @@ export function UnplacedRail({
               {/* Said out loud, because pinning you can only discover by
                   sorting is pinning nobody knows about. */}
               <span className="text-micro text-ink-ghost ml-auto">always first</span>
+              {onToday && overdue.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onToday(overdue)}
+                  disabled={busy}
+                  className="text-micro font-medium px-2 py-0.5 rounded-chip text-danger hover:bg-surface-quiet disabled:opacity-40 transition-colors"
+                >
+                  All to today
+                </button>
+              )}
             </div>
             {overdue.map(r => (
-              <button
-                key={r.key}
-                onClick={() => onOpen?.(r.openId)}
-                className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-surface-quiet transition-colors"
-              >
-                <span className="text-[13px] text-ink truncate flex-1">{r.title}</span>
-                {r.stepsLabel && <span className="text-micro text-ink-faint shrink-0">{r.stepsLabel}</span>}
-                <span className="num text-micro text-ink-2 shrink-0 w-[52px] text-right">
-                  {formatDuration(r.minutes)}
-                </span>
-              </button>
+              <div key={r.key} className="flex items-center hover:bg-surface-quiet transition-colors">
+                <button
+                  type="button"
+                  onClick={() => onOpen?.(r.openId)}
+                  className="flex-1 min-w-0 flex items-center gap-3 pl-4 pr-2 py-2 text-left"
+                >
+                  <span className="text-[13px] text-ink truncate flex-1">{r.title}</span>
+                  {r.stepsLabel && <span className="text-micro text-ink-faint shrink-0">{r.stepsLabel}</span>}
+                  <span className="num text-micro text-ink-2 shrink-0 w-[52px] text-right">
+                    {formatDuration(r.minutes)}
+                  </span>
+                </button>
+                {onToday && (
+                  <button
+                    type="button"
+                    onClick={() => onToday([r])}
+                    disabled={busy}
+                    aria-label={`Move ${r.title} to today`}
+                    className="shrink-0 mr-2 px-3 min-h-[34px] rounded-chip text-micro font-medium text-ink-2 border border-line bg-surface hover:text-ink disabled:opacity-40 transition-colors"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
