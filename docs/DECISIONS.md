@@ -2074,3 +2074,16 @@ Two things came with the extraction, both of which Home had wrong:
 `revalidatePath('/tasks')` calls. Home and `/tasks` read the same rows, and
 "remember to add a second line at each of twenty-six sites" is not a rule
 anyone keeps. The next surface that reads tasks changes one function.
+
+### Moving overdue work to today (2026-09-30)
+
+Upcoming already let you drag a task onto another day, but drag and drop does nothing on a touch screen, so from the phone the only way to re-date a late task was to open it and edit the date. There are now three buttons, all backed by `moveToToday`:
+
+- **Home:** a "Today" button on each overdue row of the rail, plus "All to today" once there's more than one.
+- **Upcoming:** "Move all to today" on the Overdue group.
+- **The weekly review:** a "Today" action in the overdue step.
+
+- **Each late task moves itself, not its parent.** `updateTask` on a parent cascades the date to every step, including steps due later in the week, so a chain row would have dragged its future steps back to today. A collapsed row sends its own `taskIds`: the late steps, plus the parent when the parent is late too (a step with no date of its own follows it).
+- **The server re-checks** that each task is still open, still overdue, and not a habit (`lib/reschedule.ts`), because the page asking may be stale.
+- **The due time is kept.** Work due at 5pm yesterday is due at 5pm today, and urgency is recomputed from the new date.
+- **A repeating task keeps its rule but moves its anchor.** Its next occurrence is counted from the new date, the same as dragging it in Upcoming always did.
