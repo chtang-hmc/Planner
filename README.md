@@ -139,12 +139,15 @@ SUPABASE_SERVICE_ROLE_KEY=
 # Google Calendar OAuth (for /api/auth/google — separate from Supabase Auth)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
+# No redirect URI variable: it is built from the request. Register
+# <origin>/api/auth/google/callback in the Google Cloud console for each origin
+# (http://localhost:3000 and the deployment).
 
 # Claude API
 ANTHROPIC_API_KEY=
 
-# Access control — only this email can sign in
+# Access control — only these emails can sign in (comma-separated; the first
+# owns the calendar connection)
 ALLOWED_EMAIL=you@example.com
 ```
 
