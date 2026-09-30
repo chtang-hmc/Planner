@@ -4,7 +4,7 @@ import { useState, useTransition } from 'react'
 import { StatsIcon, OverdueIcon, InboxIcon, CalendarIcon, ArchiveIcon, DoneIcon, CelebrateIcon } from '@/components/icons'
 import { Task, Project } from '@/types'
 import { ReviewData } from './page'
-import { triageTask, saveWeeklyReview } from '@/app/actions/tasks'
+import { triageTask, saveWeeklyReview, type TriageAction } from '@/app/actions/tasks'
 import AddTaskModal from '@/components/AddTaskModal'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -192,14 +192,15 @@ const VARIANT_CONFIG: Record<TriageVariant, {
   title: string
   sub: string
   emptyMsg: string
-  actions: (id: string, triage: (id: string, action: 'done' | 'someday' | 'cancel' | 'activate') => void) => { label: string; emoji: string; action: () => void; color?: string }[]
+  actions: (id: string, triage: (id: string, action: TriageAction) => void) => { label: string; emoji: string; action: () => void; color?: string }[]
 }> = {
   overdue: {
     title: 'Overdue tasks',
-    sub: 'These missed their deadline. Mark done, push to someday, or cancel.',
+    sub: 'These missed their deadline. Mark done, move to today, push to someday, or cancel.',
     emptyMsg: 'No overdue tasks',
     actions: (id, triage) => [
       { label: 'Done', emoji: '✓', action: () => triage(id, 'done'),    color: 'border-accent-200 dark:border-accent-800 text-accent-600 dark:text-accent-400 hover:bg-accent-50 dark:hover:bg-accent-950' },
+      { label: 'Today', emoji: '↻', action: () => triage(id, 'today') },
       { label: 'Someday', emoji: '→', action: () => triage(id, 'someday') },
       { label: 'Cancel', emoji: '✕', action: () => triage(id, 'cancel'),  color: 'border-red-100 dark:border-red-900 text-red-400 hover:bg-red-50 dark:hover:bg-red-950' },
     ],
@@ -244,7 +245,7 @@ function TriageStep({ variant, tasks, today, onNext }: {
   const [, startTransition] = useTransition()
   const cfg = VARIANT_CONFIG[variant]
 
-  function triage(id: string, action: 'done' | 'someday' | 'cancel' | 'activate') {
+  function triage(id: string, action: TriageAction) {
     setTriaged(prev => new Set([...prev, id]))
     startTransition(async () => { await triageTask(id, action) })
   }

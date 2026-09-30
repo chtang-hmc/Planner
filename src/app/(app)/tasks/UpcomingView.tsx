@@ -5,7 +5,7 @@ import { useStored } from '@/lib/use-stored'
 import { Task, Project, CalendarEvent } from '@/types'
 import { daysSinceWeekStart } from '@/lib/week'
 import { useSearch } from '@/contexts/SearchContext'
-import { updateTask } from '@/app/actions/tasks'
+import { moveToToday, updateTask } from '@/app/actions/tasks'
 import { TASK_LAYOUT_IMPLS } from '@/components/TaskRowLayouts'
 import { getStoredTaskLayout, DEFAULT_TASK_LAYOUT } from '@/lib/task-layouts'
 import { WeekStrip } from '@/components/ds/WeekStrip'
@@ -444,9 +444,22 @@ export default function UpcomingView({
               setDraggingId(null)
             }}
           >
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between gap-3 mb-2">
               <h2 className="text-sm font-semibold text-red-500">Overdue</h2>
-              <span className="text-xs text-red-400">{overdueTasks.length} task{overdueTasks.length > 1 ? 's' : ''}</span>
+              <span className="text-xs text-red-400 mr-auto">{overdueTasks.length} task{overdueTasks.length > 1 ? 's' : ''}</span>
+              {/* Dragging onto today does this one at a time, and not at all
+                  on a phone, where drag and drop does nothing. */}
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = overdueTasks.map(t => t.id)
+                  setRescheduled(prev => ({ ...prev, ...Object.fromEntries(ids.map(id => [id, todayStr])) }))
+                  startTransition(async () => { await moveToToday(ids) })
+                }}
+                className="text-xs font-medium px-2.5 py-1 rounded-lg border border-red-100 dark:border-red-900/40 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+              >
+                Move all to today
+              </button>
             </div>
             <div className={`flex flex-col divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900 rounded-xl border overflow-hidden transition-colors ${
               dropTarget === 'overdue'

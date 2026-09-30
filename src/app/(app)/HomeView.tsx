@@ -25,11 +25,11 @@ import { UnplacedRail, type RailItem, type RailSort } from '@/components/ds/Unpl
 import { saveRailSort } from '@/app/actions/scheduling'
 import { confirmTaskEventLink, rejectTaskEventLink } from '@/app/actions/links'
 import { bandKind, type BandInput } from '@/lib/band'
-import { completeTask } from '@/app/actions/tasks'
+import { completeTask, moveToToday } from '@/app/actions/tasks'
 import { triggerCalendarSync } from '@/app/actions/calendar'
 import { proposeSchedule, type ExistingItem } from '@/app/actions/scheduling'
 import type { SchedulerTask } from '@/lib/scheduler'
-import { rightNowSentence, type FreeTimeBasis, type HomeData } from '@/lib/home'
+import { rightNowSentence, type AttentionRow, type FreeTimeBasis, type HomeData } from '@/lib/home'
 
 type TaskRow = Task & { project: Project }
 
@@ -170,6 +170,25 @@ export default function HomeView({
     if (t) setCompleting({ ...t, project: t.project ?? INBOX_PROJECT })
   }
   void markDone
+
+  /**
+   * Overdue rows moved to today, hidden at once and brought back by the
+   * refresh, which puts them on the day where they now belong.
+   */
+  const [movedKeys, setMovedKeys] = useState<Set<string>>(new Set())
+  const [moving, startMoving] = useTransition()
+  function moveRowsToToday(rows: AttentionRow[]) {
+    setMovedKeys(prev => new Set([...prev, ...rows.map(r => r.key)]))
+    startMoving(async () => {
+      try {
+        await moveToToday(rows.flatMap(r => r.taskIds))
+      } catch (err) {
+        console.error('moveToToday:', err)
+        setMovedKeys(prev => { const n = new Set(prev); rows.forEach(r => n.delete(r.key)); return n })
+      }
+      router.refresh()
+    })
+  }
 
   async function logHabit(task: TaskRow) {
     if (pendingHabits.has(task.id)) return
@@ -419,7 +438,7 @@ export default function HomeView({
           <div className="lg:col-span-2 flex flex-col gap-5 min-w-0">
             <UnplacedRail
               items={railItems}
-              overdue={data.overdue.filter(r => !r.taskIds.every(id => doneIds.has(id)))}
+              overdue={data.overdue.filter(r => !r.taskIds.every(id => doneIds.has(id)) && !movedKeys.has(r.key))}
               sort={sort}
               totalMinutes={
                 railItems.reduce((n, i) => n + (i.minutes ?? 0), 0)
@@ -427,6 +446,8 @@ export default function HomeView({
               }
               onSort={chooseSort}
               onOpen={openTask}
+              onToday={moveRowsToToday}
+              busy={moving}
             />
 
             {habits.length > 0 && (
