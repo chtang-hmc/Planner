@@ -139,7 +139,6 @@ SUPABASE_SERVICE_ROLE_KEY=
 # Google Calendar OAuth (for /api/auth/google — separate from Supabase Auth)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/google/callback
 
 # Claude API
 ANTHROPIC_API_KEY=
@@ -185,6 +184,13 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with Google.
 `calendar.events` scope, which covers both reading events and creating focus
 blocks. If you connected earlier with read-only access, Settings offers
 **Upgrade access**.
+
+Google sends you back to `/api/auth/google/callback` on whichever host you
+started from, so every host you grant from has to be registered as an
+**Authorized redirect URI** on the OAuth client in Google Cloud Console —
+`http://localhost:3000/api/auth/google/callback` for development and
+`https://<your-deployment>/api/auth/google/callback` for production. A private
+LAN address cannot be registered, so grant from localhost or the deployed site.
 
 ## Deployment
 

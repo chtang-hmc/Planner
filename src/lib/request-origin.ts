@@ -59,3 +59,22 @@ export function originOrConfigured(h: Headers): string {
   }
   return 'http://localhost:3000'
 }
+
+/**
+ * Where Google returns you after granting calendar access (Settings → Connect).
+ *
+ * Derived from the request, like sign-in's `redirectTo`, rather than read from
+ * a `GOOGLE_REDIRECT_URI` setting. A fixed setting holds one address, and the
+ * documented one was `http://localhost:3000/...`, so on the deployed site the
+ * consent screen sent you to your own machine (2026-10-07). Both legs — the
+ * redirect to Google and the code exchange — must send the identical string,
+ * and calling this from both is how they agree.
+ *
+ * Not an open redirect for the same reason sign-in is not: Google refuses any
+ * `redirect_uri` that is not registered on the OAuth client, so the console's
+ * list is the control. A private LAN address cannot be registered at all, so
+ * granting from a phone on the LAN still fails — at Google, out loud.
+ */
+export function calendarRedirectUri(h: Headers): string {
+  return `${originOrConfigured(h)}/api/auth/google/callback`
+}
