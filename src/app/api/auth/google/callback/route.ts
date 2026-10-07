@@ -2,9 +2,12 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { syncCalendarEvents } from '@/lib/google-calendar'
 import { parseScopes, READ_SCOPE, WRITE_SCOPE } from '@/lib/google-scopes'
+import { calendarRedirectUri, originOrConfigured } from '@/lib/request-origin'
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
+  // From the headers, not `request.url` — see `lib/request-origin`.
+  const origin = originOrConfigured(request.headers)
   const code  = searchParams.get('code')
   const error = searchParams.get('error')
 
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest) {
       code,
       client_id:     process.env.GOOGLE_CLIENT_ID!,
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      redirect_uri:  process.env.GOOGLE_REDIRECT_URI!,
+      redirect_uri:  calendarRedirectUri(request.headers),
       grant_type:    'authorization_code',
     }),
   })

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { originFrom, originOrConfigured } from './request-origin'
+import { calendarRedirectUri, originFrom, originOrConfigured } from './request-origin'
 
 const h = (init: Record<string, string>) => new Headers(init)
 
@@ -52,5 +52,16 @@ describe('originOrConfigured', () => {
     vi.stubEnv('NEXT_PUBLIC_SITE_URL', '')
     vi.stubEnv('NODE_ENV', 'development')
     expect(originOrConfigured(h({}))).toBe('http://localhost:3000')
+  })
+})
+
+describe('calendarRedirectUri', () => {
+  /* The bug it fixes: a fixed localhost URI sent the deployed consent screen
+     back to whatever machine you were holding. */
+  it('returns to the host you granted from', () => {
+    expect(calendarRedirectUri(h({ host: 'planner.example.com' })))
+      .toBe('https://planner.example.com/api/auth/google/callback')
+    expect(calendarRedirectUri(h({ host: 'localhost:3000' })))
+      .toBe('http://localhost:3000/api/auth/google/callback')
   })
 })

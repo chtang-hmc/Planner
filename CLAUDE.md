@@ -223,7 +223,7 @@ A cloud session clones this repo into a fresh machine. What it has and lacks:
 
 Required env vars (see README for details): `NEXT_PUBLIC_SUPABASE_URL`,
 `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `ANTHROPIC_API_KEY`,
+`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`,
 `ALLOWED_EMAIL`. Production also uses `CRON_SECRET`, `NOTIFY_CRON_SECRET`,
 `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` and
 optionally `NEXT_PUBLIC_SITE_URL`. The VAPID key pair is permanent — rotating

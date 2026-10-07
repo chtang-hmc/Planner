@@ -1316,10 +1316,28 @@ that list is a dashboard step and the only remaining manual one.
 Supabase `/auth/v1/authorize` → Google → Supabase's own callback → back to
 `redirectTo`, so the only URI registered with Google is Supabase's. The
 separate calendar-write flow in `src/app/api/auth/google/` is not like this:
-it hands Google `GOOGLE_REDIRECT_URI` directly, that URI is registered in the
-console, and Google rejects private addresses — so *granting* calendar write
-only works from localhost. Tokens already granted keep working everywhere,
-which is why this does not block using the app from a phone.
+it hands Google its own callback URI directly, so that URI has to be
+registered in the console, and Google rejects private addresses — so
+*granting* calendar write works from localhost and the deployed site, not from
+a LAN address. Tokens already granted keep working everywhere.
+
+### The calendar-connect return address comes from the request too (2026-10-07)
+
+The calendar flow used to send Google a fixed `GOOGLE_REDIRECT_URI`, documented
+as `http://localhost:3000/api/auth/google/callback`. One setting holds one
+address, so on the deployed site **Connect** / **Upgrade access** finished on
+the consent screen and then sent you to localhost. It surfaced once #116's fix
+left the stored connection read-only and Settings started offering Upgrade
+access. `calendarRedirectUri()` in `lib/request-origin.ts` now builds it from
+the request, and both legs (the redirect to Google and the code exchange, which
+must send the identical string) call it. The callback's own redirects moved off
+`request.url` to the headers for the reason above.
+
+Considered: keeping the env var and setting it to the production URL in Vercel.
+That breaks connecting from localhost, and it is one more value that has to be
+right forever — the same argument as `NEXT_PUBLIC_SITE_URL` below. The control
+against a forged `Host` is Google's registered-URI list, as Supabase's
+allow-list is for sign-in.
 
 ### The localhost fallback throws in production (2026-09-27)
 
